@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const API = "v22.0";
+const API = "v25.0";
 
 const ADSET_FIELDS = [
   "id","name","status","effective_status","campaign_id",

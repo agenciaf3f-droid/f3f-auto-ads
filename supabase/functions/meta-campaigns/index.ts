@@ -16,7 +16,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const url = `https://graph.facebook.com/v22.0/${ad_account_id}/campaigns?fields=id,name,status,objective,created_time&limit=100&access_token=${access_token}`;
+    const url = `https://graph.facebook.com/v25.0/${ad_account_id}/campaigns?fields=id,name,status,objective,created_time&limit=100&access_token=${access_token}`;
     const res = await fetch(url);
     const data = await res.json();
 

@@ -19,7 +19,7 @@ interface PhoneNumber {
 async function fetchPhoneNumbersFromWaba(wabaId: string, wabaName: string, accessToken: string, pageId: string): Promise<PhoneNumber[]> {
   const nums: PhoneNumber[] = [];
   const res = await fetch(
-    `https://graph.facebook.com/v22.0/${wabaId}/phone_numbers?fields=id,display_phone_number,verified_name,code_verification_status&limit=50&access_token=${accessToken}`
+    `https://graph.facebook.com/v25.0/${wabaId}/phone_numbers?fields=id,display_phone_number,verified_name,code_verification_status&limit=50&access_token=${accessToken}`
   );
   const data = await res.json();
   console.log(`[whatsapp] WABA ${wabaId} phone_numbers:`, JSON.stringify(data));
@@ -69,7 +69,7 @@ Deno.serve(async (req) => {
       console.log(`[whatsapp] Strategy 1: Page ${page_id} → whatsapp_business_account`);
       try {
         const res = await fetch(
-          `https://graph.facebook.com/v22.0/${page_id}?fields=whatsapp_business_account{id,name}&access_token=${access_token}`
+          `https://graph.facebook.com/v25.0/${page_id}?fields=whatsapp_business_account{id,name}&access_token=${access_token}`
         );
         const data = await res.json();
         console.log(`[whatsapp] Strategy 1 response:`, JSON.stringify(data));
@@ -91,7 +91,7 @@ Deno.serve(async (req) => {
       console.log(`[whatsapp] Strategy 2: Ad Account → Business → owned WABAs`);
       try {
         const bizRes = await fetch(
-          `https://graph.facebook.com/v22.0/${ad_account_id}?fields=business{id,name}&access_token=${access_token}`
+          `https://graph.facebook.com/v25.0/${ad_account_id}?fields=business{id,name}&access_token=${access_token}`
         );
         const bizData = await bizRes.json();
         console.log(`[whatsapp] Strategy 2 business:`, JSON.stringify(bizData));
@@ -101,7 +101,7 @@ Deno.serve(async (req) => {
 
           // Try owned WABAs
           const ownedRes = await fetch(
-            `https://graph.facebook.com/v22.0/${businessId}/owned_whatsapp_business_accounts?fields=id,name&limit=50&access_token=${access_token}`
+            `https://graph.facebook.com/v25.0/${businessId}/owned_whatsapp_business_accounts?fields=id,name&limit=50&access_token=${access_token}`
           );
           const ownedData = await ownedRes.json();
           console.log(`[whatsapp] Strategy 2 owned WABAs:`, JSON.stringify(ownedData));
@@ -117,7 +117,7 @@ Deno.serve(async (req) => {
           // Try client WABAs if still empty
           if (numbers.length === 0) {
             const clientRes = await fetch(
-              `https://graph.facebook.com/v22.0/${businessId}/client_whatsapp_business_accounts?fields=id,name&limit=50&access_token=${access_token}`
+              `https://graph.facebook.com/v25.0/${businessId}/client_whatsapp_business_accounts?fields=id,name&limit=50&access_token=${access_token}`
             );
             const clientData = await clientRes.json();
             console.log(`[whatsapp] Strategy 2 client WABAs:`, JSON.stringify(clientData));
@@ -141,7 +141,7 @@ Deno.serve(async (req) => {
       console.log(`[whatsapp] Strategy 3: scanning all pages for whatsapp_business_account`);
       try {
         const pagesRes = await fetch(
-          `https://graph.facebook.com/v22.0/me/accounts?fields=id,name,whatsapp_business_account{id,name}&limit=25&access_token=${access_token}`
+          `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,whatsapp_business_account{id,name}&limit=25&access_token=${access_token}`
         );
         const pagesData = await pagesRes.json();
         console.log(`[whatsapp] Strategy 3 pages count: ${pagesData.data?.length || 0}`);

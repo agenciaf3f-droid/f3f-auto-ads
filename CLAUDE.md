@@ -15,7 +15,7 @@ Ferramenta SaaS para criação e publicação automatizada de anúncios no Meta 
 | UI | shadcn/ui (Radix UI) + Tailwind CSS |
 | Auth | Supabase Auth (email/senha) |
 | Backend | Supabase Edge Functions (Deno/TypeScript) |
-| API Meta | Meta Graph API v22.0 |
+| API Meta | Meta Graph API v25.0 |
 
 ## Estrutura de diretórios
 

@@ -15,7 +15,7 @@ Deno.serve(async (req) => {
     // Action: get_pages — returns pages with instagram_business_account
     if (action === "get_pages") {
       const allPages: any[] = [];
-      let url: string | null = `https://graph.facebook.com/v22.0/me/accounts?fields=id,name,instagram_business_account{id}&limit=25&access_token=${access_token}`;
+      let url: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id}&limit=25&access_token=${access_token}`;
       while (url) {
         const pagesRes = await fetch(url);
         const pagesData = await pagesRes.json();
@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
       }
       // Step 1: Get IG accounts authorized for this ad account
       const igRes = await fetch(
-        `https://graph.facebook.com/v22.0/${ad_account_id}/instagram_accounts?fields=id,username&limit=25&access_token=${access_token}`
+        `https://graph.facebook.com/v25.0/${ad_account_id}/instagram_accounts?fields=id,username&limit=25&access_token=${access_token}`
       );
       const igData = await igRes.json();
       if (igData.error) {
@@ -59,7 +59,7 @@ Deno.serve(async (req) => {
 
       // Step 2: Get ALL pages (with full pagination) to find which page owns each IG account
       const allPages: any[] = [];
-      let pagesUrl: string | null = `https://graph.facebook.com/v22.0/me/accounts?fields=id,name,instagram_business_account{id},whatsapp_business_account{id,name}&limit=25&access_token=${access_token}`;
+      let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id},whatsapp_business_account{id,name}&limit=25&access_token=${access_token}`;
       while (pagesUrl) {
         const pagesRes = await fetch(pagesUrl);
         const pagesData = await pagesRes.json();
@@ -85,7 +85,7 @@ Deno.serve(async (req) => {
           try {
             const wabaId = matchedPage.whatsapp_business_account.id;
             const phoneRes = await fetch(
-              `https://graph.facebook.com/v22.0/${wabaId}/phone_numbers?fields=id,display_phone_number&limit=1&access_token=${access_token}`
+              `https://graph.facebook.com/v25.0/${wabaId}/phone_numbers?fields=id,display_phone_number&limit=1&access_token=${access_token}`
             );
             const phoneData = await phoneRes.json();
             if (phoneData.data?.length) {
@@ -114,7 +114,7 @@ Deno.serve(async (req) => {
     // Default action: list ad accounts
     const allAccounts: { id: string; name: string }[] = [];
 
-    let url: string | null = `https://graph.facebook.com/v22.0/me/adaccounts?fields=id,name&limit=50&access_token=${access_token}`;
+    let url: string | null = `https://graph.facebook.com/v25.0/me/adaccounts?fields=id,name&limit=50&access_token=${access_token}`;
 
     while (url) {
       const res = await fetch(url);

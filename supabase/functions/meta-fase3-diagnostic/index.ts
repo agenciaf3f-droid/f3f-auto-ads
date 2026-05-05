@@ -73,7 +73,7 @@ Deno.serve(async (req) => {
       access_token,
     };
 
-    const campaignRes = await fetch(`https://graph.facebook.com/v22.0/${ad_account_id}/campaigns`, {
+    const campaignRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/campaigns`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(campaignPayload),
@@ -207,7 +207,7 @@ Deno.serve(async (req) => {
       delete sanitized.access_token;
       logs.push(`full_payload: ${JSON.stringify(sanitized)}`);
 
-      const adsetRes = await fetch(`https://graph.facebook.com/v22.0/${ad_account_id}/adsets`, {
+      const adsetRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/adsets`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(adsetPayload),
@@ -254,7 +254,7 @@ Deno.serve(async (req) => {
     logs.push(`═══ CLEANUP ═══`);
     for (const adsetId of createdAdsetIds) {
       try {
-        const delRes = await fetch(`https://graph.facebook.com/v22.0/${adsetId}?access_token=${access_token}`, { method: "DELETE" });
+        const delRes = await fetch(`https://graph.facebook.com/v25.0/${adsetId}?access_token=${access_token}`, { method: "DELETE" });
         const delData = await delRes.json();
         logs.push(`Deleted adset ${adsetId}: ${JSON.stringify(delData)}`);
       } catch (e) {
@@ -262,7 +262,7 @@ Deno.serve(async (req) => {
       }
     }
     try {
-      const delRes = await fetch(`https://graph.facebook.com/v22.0/${campaignId}?access_token=${access_token}`, { method: "DELETE" });
+      const delRes = await fetch(`https://graph.facebook.com/v25.0/${campaignId}?access_token=${access_token}`, { method: "DELETE" });
       const delData = await delRes.json();
       logs.push(`Deleted campaign ${campaignId}: ${JSON.stringify(delData)}`);
     } catch (e) {

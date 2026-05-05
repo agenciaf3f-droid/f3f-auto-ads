@@ -34,7 +34,7 @@ const CAMPAIGN_FIELDS = [
 
 async function fetchMeta(path: string, token: string) {
   const sep = path.includes("?") ? "&" : "?";
-  const res = await fetch(`https://graph.facebook.com/v22.0/${path}${sep}access_token=${token}`);
+  const res = await fetch(`https://graph.facebook.com/v25.0/${path}${sep}access_token=${token}`);
   return res.json();
 }
 

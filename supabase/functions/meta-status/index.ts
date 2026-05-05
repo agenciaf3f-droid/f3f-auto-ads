@@ -75,7 +75,7 @@ Deno.serve(async (req) => {
     let metaName: string | null = null;
     if (forceVerify || expiresSoon) {
       console.log("[meta-status] Verifying token with Meta API (force:", forceVerify, ", expiresSoon:", expiresSoon, ")");
-      const meRes = await fetch(`https://graph.facebook.com/v22.0/me?fields=name&access_token=${conn.access_token}`);
+      const meRes = await fetch(`https://graph.facebook.com/v25.0/me?fields=name&access_token=${conn.access_token}`);
       const meData = await meRes.json();
 
       if (meData.error) {

@@ -81,7 +81,7 @@ export default function LoginPage() {
         </div>
 
         <p className="relative text-xs text-white/20 fade-in-up" style={{ animationDelay: "480ms" }}>
-          Meta Graph API v22.0 — FASE 1 &amp; FASE 3
+          Meta Graph API v25.0 — FASE 1 &amp; FASE 3
         </p>
       </div>
 

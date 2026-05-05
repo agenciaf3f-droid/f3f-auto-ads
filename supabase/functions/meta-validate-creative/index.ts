@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
       if (ig_account_id) {
         const tDirect = Date.now();
         console.log(`[validate-creative] FAST PATH: querying media directly from ig_account_id=${ig_account_id}`);
-        let mediaUrl: string | null = `https://graph.facebook.com/v22.0/${ig_account_id}/media?fields=id,shortcode,permalink&limit=30&access_token=${access_token}`;
+        let mediaUrl: string | null = `https://graph.facebook.com/v25.0/${ig_account_id}/media?fields=id,shortcode,permalink&limit=30&access_token=${access_token}`;
         let mediaApiCalls = 0;
         let mediaChecked = 0;
 
@@ -117,7 +117,7 @@ Deno.serve(async (req) => {
       // === SLOW PATH: Scan pages (only if fast path failed or no ig_account_id) ===
       const tPages = Date.now();
       const allPages: any[] = [];
-      let pagesUrl: string | null = `https://graph.facebook.com/v22.0/me/accounts?fields=id,name,instagram_business_account{id}&limit=25&access_token=${access_token}`;
+      let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id}&limit=25&access_token=${access_token}`;
       let pageRequests = 0;
       while (pagesUrl) {
         pageRequests++;
@@ -153,7 +153,7 @@ Deno.serve(async (req) => {
 
       for (const page of filteredPages) {
         const igAccountId = page.instagram_business_account.id;
-        let mediaUrl: string | null = `https://graph.facebook.com/v22.0/${igAccountId}/media?fields=id,shortcode,permalink&limit=30&access_token=${access_token}`;
+        let mediaUrl: string | null = `https://graph.facebook.com/v25.0/${igAccountId}/media?fields=id,shortcode,permalink&limit=30&access_token=${access_token}`;
         let mediaChecked = 0;
         while (mediaUrl && mediaChecked < 200) {
           mediaApiCalls++;

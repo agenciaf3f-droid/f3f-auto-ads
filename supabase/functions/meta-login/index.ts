@@ -7,7 +7,7 @@ Deno.serve(async (req) => {
   const scopes = "ads_management,ads_read,business_management,pages_show_list,pages_read_engagement,instagram_basic";
   const state = crypto.randomUUID();
 
-  const url = `https://www.facebook.com/v22.0/dialog/oauth?client_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scopes}&response_type=code&state=${state}`;
+  const url = `https://www.facebook.com/v25.0/dialog/oauth?client_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scopes}&response_type=code&state=${state}`;
 
   return new Response(null, {
     status: 302,

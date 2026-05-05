@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const API_VERSION = "v22.0";
+const API_VERSION = "v25.0";
 
 // Exhaustive field lists — request EVERYTHING the API can return
 const CAMPAIGN_FIELDS = [

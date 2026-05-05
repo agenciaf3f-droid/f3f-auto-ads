@@ -18,7 +18,7 @@ Deno.serve(async (req) => {
 
     // Use Meta's targeting search for geo locations
     const searchType = type || "adgeolocation";
-    const url = `https://graph.facebook.com/v22.0/search?type=${searchType}&q=${encodeURIComponent(query)}&access_token=${access_token}`;
+    const url = `https://graph.facebook.com/v25.0/search?type=${searchType}&q=${encodeURIComponent(query)}&access_token=${access_token}`;
     
     const res = await fetch(url);
     const data = await res.json();

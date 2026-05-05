@@ -229,7 +229,7 @@ async function runFase3SanityChecks(params: {
   const checks: Record<string, any> = {};
 
   const pageCheck = await fetchJsonWithTiming(
-    `https://graph.facebook.com/v22.0/${params.pageId}?fields=id,name&access_token=${params.accessToken}`,
+    `https://graph.facebook.com/v25.0/${params.pageId}?fields=id,name&access_token=${params.accessToken}`,
   );
   checks.page = { elapsed_ms: pageCheck.elapsedMs, status: pageCheck.status, response: pageCheck.data };
   if (pageCheck.data?.error) {
@@ -241,7 +241,7 @@ async function runFase3SanityChecks(params: {
   }
 
   const phoneCheck = await fetchJsonWithTiming(
-    `https://graph.facebook.com/v22.0/${params.whatsappPhoneId}?fields=id,display_phone_number,verified_name,whatsapp_business_account{id,name}&access_token=${params.accessToken}`,
+    `https://graph.facebook.com/v25.0/${params.whatsappPhoneId}?fields=id,display_phone_number,verified_name,whatsapp_business_account{id,name}&access_token=${params.accessToken}`,
   );
   checks.whatsapp_phone = { elapsed_ms: phoneCheck.elapsedMs, status: phoneCheck.status, response: phoneCheck.data };
   if (phoneCheck.data?.error) {
@@ -262,7 +262,7 @@ async function runFase3SanityChecks(params: {
   }
 
   const adAccountCheck = await fetchJsonWithTiming(
-    `https://graph.facebook.com/v22.0/${params.adAccountId}?fields=business{id,name}&access_token=${params.accessToken}`,
+    `https://graph.facebook.com/v25.0/${params.adAccountId}?fields=business{id,name}&access_token=${params.accessToken}`,
   );
   checks.ad_account_business = { elapsed_ms: adAccountCheck.elapsedMs, status: adAccountCheck.status, response: adAccountCheck.data };
   if (adAccountCheck.data?.error) {
@@ -283,12 +283,12 @@ async function runFase3SanityChecks(params: {
   }
 
   const ownedCheck = await fetchJsonWithTiming(
-    `https://graph.facebook.com/v22.0/${businessId}/owned_whatsapp_business_accounts?fields=id,name&limit=200&access_token=${params.accessToken}`,
+    `https://graph.facebook.com/v25.0/${businessId}/owned_whatsapp_business_accounts?fields=id,name&limit=200&access_token=${params.accessToken}`,
   );
   checks.owned_wabas = { elapsed_ms: ownedCheck.elapsedMs, status: ownedCheck.status, response: ownedCheck.data };
 
   const clientCheck = await fetchJsonWithTiming(
-    `https://graph.facebook.com/v22.0/${businessId}/client_whatsapp_business_accounts?fields=id,name&limit=200&access_token=${params.accessToken}`,
+    `https://graph.facebook.com/v25.0/${businessId}/client_whatsapp_business_accounts?fields=id,name&limit=200&access_token=${params.accessToken}`,
   );
   checks.client_wabas = { elapsed_ms: clientCheck.elapsedMs, status: clientCheck.status, response: clientCheck.data };
 
@@ -456,7 +456,7 @@ async function resolveInstagramMediaId(
     igActorId: string,
     pageId?: string,
   ): Promise<{ mediaId?: string; permalink?: string; pageId?: string; igActorId?: string; error?: string }> => {
-    const endpoint = `https://graph.facebook.com/v22.0/${igActorId}/media?fields=id,shortcode,permalink&limit=30`;
+    const endpoint = `https://graph.facebook.com/v25.0/${igActorId}/media?fields=id,shortcode,permalink&limit=30`;
     const res = await fetch(`${endpoint}&access_token=${accessToken}`);
     const data = await res.json();
 
@@ -481,7 +481,7 @@ async function resolveInstagramMediaId(
   }
 
   if (!resolvedMedia.mediaId && !knownIgActorId) {
-    let pagesUrl: string | null = `https://graph.facebook.com/v22.0/me/accounts?fields=id,name,instagram_business_account{id}&limit=25&access_token=${accessToken}`;
+    let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id}&limit=25&access_token=${accessToken}`;
     while (pagesUrl && !resolvedMedia.mediaId) {
       const pagesRes = await fetch(pagesUrl);
       const pagesData = await pagesRes.json();
@@ -539,7 +539,7 @@ async function uploadDriveCreative(
     const formData = new FormData();
     formData.append("access_token", accessToken);
     formData.append("file_url", downloadUrl);
-    const uploadRes = await fetch(`https://graph.facebook.com/v22.0/${adAccountId}/advideos`, { method: "POST", body: formData });
+    const uploadRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/advideos`, { method: "POST", body: formData });
     const uploadData = await uploadRes.json();
     if (uploadData.error) return { error: uploadData.error.message };
     return { video_id: uploadData.id };
@@ -548,7 +548,7 @@ async function uploadDriveCreative(
     formData.append("access_token", accessToken);
     formData.append("filename", "creative.jpg");
     formData.append("bytes", await blobToBase64(fileBlob));
-    const uploadRes = await fetch(`https://graph.facebook.com/v22.0/${adAccountId}/adimages`, { method: "POST", body: formData });
+    const uploadRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/adimages`, { method: "POST", body: formData });
     const uploadData = await uploadRes.json();
     if (uploadData.error) return { error: uploadData.error.message };
     const images = uploadData.images;
@@ -572,7 +572,7 @@ function blobToBase64(blob: Blob): Promise<string> {
 async function resolvePageAndIg(accessToken: string, adAccountId?: string): Promise<{ pageId?: string; igActorId?: string; error?: string }> {
   async function getAllPages(): Promise<any[]> {
     const allPages: any[] = [];
-    let url: string | null = `https://graph.facebook.com/v22.0/me/accounts?fields=id,name,instagram_business_account{id}&limit=25&access_token=${accessToken}`;
+    let url: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id}&limit=25&access_token=${accessToken}`;
     while (url) {
       const res = await fetch(url);
       const data = await res.json();
@@ -585,7 +585,7 @@ async function resolvePageAndIg(accessToken: string, adAccountId?: string): Prom
 
   if (adAccountId) {
     try {
-      const igRes = await fetch(`https://graph.facebook.com/v22.0/${adAccountId}/instagram_accounts?fields=id,username&limit=25&access_token=${accessToken}`);
+      const igRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/instagram_accounts?fields=id,username&limit=25&access_token=${accessToken}`);
       const igData = await igRes.json();
       if (igData.data && igData.data.length > 0) {
         const igActorId = igData.data[0].id;
@@ -673,7 +673,7 @@ async function buildFase1Creative(
       let thumbnailField: Record<string, string> = {};
       for (let attempt = 0; attempt < 12; attempt++) {
         await new Promise(r => setTimeout(r, 5000));
-        const vidRes = await fetch(`https://graph.facebook.com/v22.0/${result.video_id}?fields=status,picture&access_token=${accessToken}`);
+        const vidRes = await fetch(`https://graph.facebook.com/v25.0/${result.video_id}?fields=status,picture&access_token=${accessToken}`);
         const vidData = await vidRes.json();
         if (vidData.picture) {
           try {
@@ -685,7 +685,7 @@ async function buildFase1Creative(
               imgForm.append("access_token", accessToken);
               imgForm.append("filename", "video_thumb.jpg");
               imgForm.append("bytes", thumbB64);
-              const imgUpRes = await fetch(`https://graph.facebook.com/v22.0/${adAccountId}/adimages`, { method: "POST", body: imgForm });
+              const imgUpRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/adimages`, { method: "POST", body: imgForm });
               const imgUpData = await imgUpRes.json();
               if (imgUpData.images) { const firstKey = Object.keys(imgUpData.images)[0]; thumbnailField = { image_hash: imgUpData.images[firstKey].hash }; }
             }
@@ -804,7 +804,7 @@ async function buildFase3Creative(
       let thumbnailField: Record<string, string> = {};
       for (let attempt = 0; attempt < 12; attempt++) {
         await new Promise(r => setTimeout(r, 5000));
-        const vidRes = await fetch(`https://graph.facebook.com/v22.0/${result.video_id}?fields=status,picture&access_token=${accessToken}`);
+        const vidRes = await fetch(`https://graph.facebook.com/v25.0/${result.video_id}?fields=status,picture&access_token=${accessToken}`);
         const vidData = await vidRes.json();
         if (vidData.picture) {
           try {
@@ -816,7 +816,7 @@ async function buildFase3Creative(
               imgForm.append("access_token", accessToken);
               imgForm.append("filename", "video_thumb.jpg");
               imgForm.append("bytes", thumbB64);
-              const imgUpRes = await fetch(`https://graph.facebook.com/v22.0/${adAccountId}/adimages`, { method: "POST", body: imgForm });
+              const imgUpRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/adimages`, { method: "POST", body: imgForm });
               const imgUpData = await imgUpRes.json();
               if (imgUpData.images) { const firstKey = Object.keys(imgUpData.images)[0]; thumbnailField = { image_hash: imgUpData.images[firstKey].hash }; }
             }
@@ -1064,7 +1064,7 @@ Deno.serve(async (req) => {
       console.log(`[publish] ✅ campaign LIMPA — sem campos de WhatsApp/adset/creative`);
       console.log(`[publish] campaign payload final: ${JSON.stringify(sanitizePayload(campaignPayload))}`);
 
-      const campaignRes = await fetch(`https://graph.facebook.com/v22.0/${ad_account_id}/campaigns`, {
+      const campaignRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/campaigns`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(campaignPayload),
       });
       const campaignData = await campaignRes.json();
@@ -1326,7 +1326,7 @@ Deno.serve(async (req) => {
 
       logs.push({ step: `creative_${idx}`, status: "start", ts: ts(), detail: `name=${cr.name}, adset=${adsetId}` });
 
-      const creativeRes = await fetch(`https://graph.facebook.com/v22.0/${ad_account_id}/adcreatives`, {
+      const creativeRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/adcreatives`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(creativePayload),
       });
       const creativeData = await creativeRes.json();
@@ -1359,7 +1359,7 @@ Deno.serve(async (req) => {
       }
       logs.push({ step: `ad_${idx}`, status: "start", ts: ts(), detail: `name=${cr.name}, creative_id=${creativeData.id}` });
 
-      const adRes = await fetch(`https://graph.facebook.com/v22.0/${ad_account_id}/ads`, {
+      const adRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/ads`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(adPayload),
       });
       const adData = await adRes.json();
@@ -1514,7 +1514,7 @@ Deno.serve(async (req) => {
         });
 
         const { data, elapsedMs } = await fetchJsonWithTiming(
-          `https://graph.facebook.com/v22.0/${ad_account_id}/adsets`,
+          `https://graph.facebook.com/v25.0/${ad_account_id}/adsets`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },

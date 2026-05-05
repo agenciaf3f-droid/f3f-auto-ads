@@ -25,7 +25,7 @@ Deno.serve(async (req) => {
 
     // 1. Exchange code for short-lived token
     console.log("[meta-oauth-callback] Exchanging code for token...");
-    const tokenUrl = `https://graph.facebook.com/v22.0/oauth/access_token?client_id=${appId}&redirect_uri=${encodeURIComponent(finalRedirectUri)}&client_secret=${appSecret}&code=${code}`;
+    const tokenUrl = `https://graph.facebook.com/v25.0/oauth/access_token?client_id=${appId}&redirect_uri=${encodeURIComponent(finalRedirectUri)}&client_secret=${appSecret}&code=${code}`;
     const res = await fetch(tokenUrl);
     const data = await res.json();
 
@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
 
     // 2. Exchange for long-lived token
     console.log("[meta-oauth-callback] Exchanging for long-lived token...");
-    const llUrl = `https://graph.facebook.com/v22.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${data.access_token}`;
+    const llUrl = `https://graph.facebook.com/v25.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${data.access_token}`;
     const llRes = await fetch(llUrl);
     const llData = await llRes.json();
 

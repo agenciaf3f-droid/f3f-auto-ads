@@ -47,7 +47,7 @@ async function tryCreateAdset(
   targeting: any,
   accessToken: string
 ): Promise<{ ok: boolean; adsetId?: string; error?: any }> {
-  const res = await fetch(`https://graph.facebook.com/v22.0/${adAccountId}/adsets`, {
+  const res = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/adsets`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -71,7 +71,7 @@ async function tryCreateAdset(
 async function cleanup(ids: string[], accessToken: string) {
   await Promise.all(
     ids.map(id =>
-      fetch(`https://graph.facebook.com/v22.0/${id}?access_token=${accessToken}`, { method: "DELETE" }).catch(() => {})
+      fetch(`https://graph.facebook.com/v25.0/${id}?access_token=${accessToken}`, { method: "DELETE" }).catch(() => {})
     )
   );
 }
@@ -108,7 +108,7 @@ Deno.serve(async (req) => {
     // Verify token (skip if frontend already confirmed recently)
     if (!skip_token_check) {
       const tToken = Date.now();
-      const tokenCheck = await fetch(`https://graph.facebook.com/v22.0/me?access_token=${access_token}`);
+      const tokenCheck = await fetch(`https://graph.facebook.com/v25.0/me?access_token=${access_token}`);
       const tokenData = await tokenCheck.json();
       mark("token_verify", tToken);
       if (tokenData.error) {
@@ -129,7 +129,7 @@ Deno.serve(async (req) => {
 
     // Create a PAUSED campaign
     const tCampaign = Date.now();
-    const campaignRes = await fetch(`https://graph.facebook.com/v22.0/${ad_account_id}/campaigns`, {
+    const campaignRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/campaigns`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

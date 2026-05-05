@@ -14,7 +14,7 @@ Deno.serve(async (req) => {
     const audiences: { id: string; name: string; type: "custom" | "saved"; targeting_spec?: any }[] = [];
 
     // Fetch custom audiences (paginated)
-    let customUrl: string | null = `https://graph.facebook.com/v22.0/${ad_account_id}/customaudiences?fields=id,name&limit=200&access_token=${access_token}`;
+    let customUrl: string | null = `https://graph.facebook.com/v25.0/${ad_account_id}/customaudiences?fields=id,name&limit=200&access_token=${access_token}`;
     while (customUrl) {
       const res = await fetch(customUrl);
       const data = await res.json();
@@ -27,7 +27,7 @@ Deno.serve(async (req) => {
     }
 
     // Fetch saved audiences (paginated) with targeting
-    let savedUrl: string | null = `https://graph.facebook.com/v22.0/${ad_account_id}/saved_audiences?fields=id,name,targeting&limit=200&access_token=${access_token}`;
+    let savedUrl: string | null = `https://graph.facebook.com/v25.0/${ad_account_id}/saved_audiences?fields=id,name,targeting&limit=200&access_token=${access_token}`;
     while (savedUrl) {
       const res = await fetch(savedUrl);
       const data = await res.json();
