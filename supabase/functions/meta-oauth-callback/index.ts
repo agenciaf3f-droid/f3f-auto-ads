@@ -64,23 +64,40 @@ Deno.serve(async (req) => {
 
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        console.log("[meta-oauth-callback] Saving token for user:", user.id);
-        // Upsert meta connection
-        const { data: existing } = await supabase
+        // SHARED CONNECTION MODEL: só admins podem conectar/atualizar o token global.
+        const adminClient = createClient(
+          Deno.env.get("SUPABASE_URL")!,
+          Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+        );
+        const { data: adminRow } = await adminClient
+          .from("app_admins")
+          .select("user_id")
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+        if (!adminRow) {
+          console.warn("[meta-oauth-callback] Non-admin attempted to save token. user:", user.id);
+          return new Response(JSON.stringify({ error: "Apenas admins podem conectar a conta Meta da agência." }), {
+            status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        console.log("[meta-oauth-callback] Saving shared token via admin:", user.id);
+        const { data: existing } = await adminClient
           .from("meta_connections")
           .select("id")
           .eq("user_id", user.id)
           .maybeSingle();
 
         if (existing) {
-          const { error: updateErr } = await supabase
+          const { error: updateErr } = await adminClient
             .from("meta_connections")
             .update({ access_token: finalToken, expires_at: expiresAt })
             .eq("id", existing.id);
           savedToDb = !updateErr;
           if (updateErr) console.error("[meta-oauth-callback] Update error:", updateErr);
         } else {
-          const { error: insertErr } = await supabase
+          const { error: insertErr } = await adminClient
             .from("meta_connections")
             .insert({ user_id: user.id, access_token: finalToken, expires_at: expiresAt });
           savedToDb = !insertErr;

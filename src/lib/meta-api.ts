@@ -23,7 +23,13 @@ export async function fetchMetaStatus() {
 export async function disconnectMeta() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Não autenticado");
-  const { error } = await supabase.from("meta_connections").delete().eq("user_id", user.id);
+  // SHARED CONNECTION MODEL: só admin consegue desconectar (RLS no banco impede o resto).
+  const { data: adminRow } = await supabase
+    .from("app_admins")
+    .select("user_id")
+    .maybeSingle();
+  if (!adminRow) throw new Error("Apenas admins podem desconectar a conta Meta da agência.");
+  const { error } = await supabase.from("meta_connections").delete().eq("user_id", adminRow.user_id);
   if (error) throw new Error(error.message);
   sessionStorage.removeItem("meta_status_cache");
 }

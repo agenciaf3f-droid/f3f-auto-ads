@@ -4,6 +4,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, XCircle, Loader2, LogIn, Unplug, RefreshCw, AlertTriangle, Plug } from "lucide-react";
 import { fetchMetaStatus, getMetaLoginUrl, disconnectMeta } from "@/lib/meta-api";
+import { isCurrentUserAdmin } from "@/lib/admin";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 
@@ -16,6 +17,11 @@ export default function SettingsPage() {
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    isCurrentUserAdmin().then(setIsAdmin).catch(() => setIsAdmin(false));
+  }, []);
 
   const loadStatus = () => {
     setLoading(true);
@@ -110,26 +116,32 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 pt-4 border-t border-border/50">
-                  <Button variant="outline" size="sm" onClick={handleConnect} className="gap-1.5 text-xs h-8">
-                    <Unplug className="w-3.5 h-3.5" />
-                    Trocar conta
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleDisconnect}
-                    disabled={disconnecting}
-                    className="gap-1.5 text-xs h-8 text-destructive hover:text-destructive hover:bg-destructive/8"
-                  >
-                    {disconnecting ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <LogIn className="w-3.5 h-3.5 rotate-180" />
-                    )}
-                    Desconectar
-                  </Button>
-                </div>
+                {isAdmin ? (
+                  <div className="flex items-center gap-2 pt-4 border-t border-border/50">
+                    <Button variant="outline" size="sm" onClick={handleConnect} className="gap-1.5 text-xs h-8">
+                      <Unplug className="w-3.5 h-3.5" />
+                      Trocar conta
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleDisconnect}
+                      disabled={disconnecting}
+                      className="gap-1.5 text-xs h-8 text-destructive hover:text-destructive hover:bg-destructive/8"
+                    >
+                      {disconnecting ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <LogIn className="w-3.5 h-3.5 rotate-180" />
+                      )}
+                      Desconectar
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground pt-4 border-t border-border/50">
+                    Conexão Meta gerida pela administração. Fale com o admin para alterar.
+                  </p>
+                )}
               </div>
             ) : (
               <div className="space-y-5">
@@ -138,14 +150,18 @@ export default function SettingsPage() {
                   <div>
                     <p className="text-sm font-medium mb-0.5">Desconectado</p>
                     <p className="text-xs text-muted-foreground">
-                      Conecte sua conta Meta para publicar anúncios
+                      {isAdmin
+                        ? "Conecte a conta Meta da agência para publicar anúncios"
+                        : "Aguardando admin conectar a conta Meta da agência"}
                     </p>
                   </div>
                 </div>
-                <Button onClick={handleConnect} className="gap-2 active:scale-[0.98] transition-transform">
-                  <LogIn className="w-4 h-4" />
-                  Conectar ao Meta
-                </Button>
+                {isAdmin && (
+                  <Button onClick={handleConnect} className="gap-2 active:scale-[0.98] transition-transform">
+                    <LogIn className="w-4 h-4" />
+                    Conectar ao Meta
+                  </Button>
+                )}
               </div>
             )}
           </div>

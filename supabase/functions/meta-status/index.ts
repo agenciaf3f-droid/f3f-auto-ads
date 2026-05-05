@@ -32,10 +32,24 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { data: conn } = await supabase
+    // SHARED CONNECTION MODEL: usa o token de qualquer admin (ex.: Lulu Eiras / agencia mãe).
+    // Todos os gestores compartilham a mesma conexão Meta — não há isolamento Meta por gestor.
+    // O isolamento de F3F-AUTO-ADS continua por user_id (cada gestor tem seu login Supabase).
+    const adminClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+    const { data: adminRow } = await adminClient
+      .from("app_admins")
+      .select("user_id")
+      .limit(1)
+      .maybeSingle();
+    const sharedUserId = adminRow?.user_id ?? user.id;
+
+    const { data: conn } = await adminClient
       .from("meta_connections")
       .select("access_token, expires_at")
-      .eq("user_id", user.id)
+      .eq("user_id", sharedUserId)
       .maybeSingle();
 
     if (!conn) {
