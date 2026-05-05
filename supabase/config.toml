@@ -1,0 +1,40 @@
+project_id = "qgrdbxjqhbdxlybkylzt"
+
+[functions.meta-login]
+verify_jwt = false
+
+[functions.meta-oauth-callback]
+verify_jwt = false
+
+[functions.meta-ad-accounts]
+verify_jwt = false
+
+[functions.meta-audiences]
+verify_jwt = false
+
+[functions.meta-publish-validate]
+verify_jwt = false
+
+[functions.meta-publish]
+verify_jwt = false
+
+[functions.meta-status]
+verify_jwt = false
+
+[functions.meta-validate-creative]
+verify_jwt = false
+
+[functions.meta-whatsapp-numbers]
+verify_jwt = false
+
+[functions.meta-campaigns]
+verify_jwt = false
+
+[functions.meta-location-search]
+verify_jwt = false
+
+[functions.meta-campaign-diagnostic]
+verify_jwt = false
+
+[functions.meta-adset-diff]
+verify_jwt = false
