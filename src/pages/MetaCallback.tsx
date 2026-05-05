@@ -3,9 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { exchangeCodeForToken } from "@/lib/meta-api";
 import { Loader2 } from "lucide-react";
 
-const REDIRECT_URI = "https://f3f-auto-ads.vercel.app/auth/meta/callback";
-
 export default function MetaCallback() {
+  const REDIRECT_URI = `${window.location.origin}/auth/meta/callback`;
   const navigate = useNavigate();
   const [error, setError] = useState("");
 

@@ -8,7 +8,7 @@ export function getMetaLoginUrl() {
 
 export async function exchangeCodeForToken(code: string, redirectUri?: string) {
   const { data, error } = await supabase.functions.invoke("meta-oauth-callback", {
-    body: { code, redirect_uri: redirectUri || "https://f3f-auto-ads.vercel.app/auth/meta/callback" },
+    body: { code, redirect_uri: redirectUri || `${window.location.origin}/auth/meta/callback` },
   });
   if (error) throw new Error(error.message);
   return data;
