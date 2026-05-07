@@ -23,7 +23,7 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { access_token, ad_account_id, max_adsets = 500 } = await req.json();
+    const { access_token, ad_account_id, max_adsets = 60 } = await req.json();
     if (!access_token || !ad_account_id) {
       return new Response(JSON.stringify({ error: "access_token e ad_account_id são obrigatórios" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -49,6 +49,8 @@ Deno.serve(async (req) => {
     }
 
     const seen = new Map<string, TemplateRow>();
+    let errorsDuringScan = 0;
+    let errorSample: string | null = null;
 
     // Busca em paralelo em chunks
     const chunkSize = 10;
@@ -59,6 +61,11 @@ Deno.serve(async (req) => {
           `https://graph.facebook.com/v25.0/${aset.id}/ads?fields=creative{name,object_story_spec{video_data{page_welcome_message},link_data{page_welcome_message}},page_welcome_message}&limit=5&access_token=${access_token}`,
         );
         const adsData = await adsRes.json();
+        if (adsData?.error) {
+          errorsDuringScan++;
+          if (!errorSample) errorSample = `${adsData.error.code || "?"}: ${adsData.error.message || "erro desconhecido"}`;
+          return;
+        }
         for (const ad of (adsData?.data || [])) {
           const pwm = ad.creative?.page_welcome_message
             || ad.creative?.object_story_spec?.video_data?.page_welcome_message
@@ -89,7 +96,19 @@ Deno.serve(async (req) => {
     }
 
     const templates = Array.from(seen.values());
-    return new Response(JSON.stringify({ templates, scanned_adsets: ctwAdsets.length }), {
+
+    // Se TODOS os fetches falharam → provável rate limit. Surfa erro claro pro frontend.
+    const error_summary = (templates.length === 0 && errorsDuringScan > 0 && ctwAdsets.length > 0 && errorsDuringScan >= ctwAdsets.length)
+      ? `Meta rate-limit ou erro em todas as ${ctwAdsets.length} chamadas. Sample: ${errorSample}`
+      : null;
+
+    return new Response(JSON.stringify({
+      templates,
+      scanned_adsets: ctwAdsets.length,
+      errors_during_scan: errorsDuringScan,
+      error_sample: errorSample,
+      error_summary,
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {

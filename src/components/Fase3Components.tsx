@@ -177,9 +177,16 @@ export function WhatsAppMessages({
         </div>
       ) : (
         <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Label className="text-[10px] text-muted-foreground">Modelos da conta de anúncios (Meta)</Label>
-            {loadingImported && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Label className="text-[10px] text-muted-foreground">Modelos da conta de anúncios (Meta)</Label>
+              {loadingImported && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+            </div>
+            {onLoadImported && (
+              <Button variant="outline" size="sm" onClick={onLoadImported} disabled={loadingImported} className="text-xs h-7 gap-1">
+                {loadingImported ? <Loader2 className="w-3 h-3 animate-spin" /> : "Buscar"}
+              </Button>
+            )}
           </div>
           {importedTemplates.length > 0 ? (
             <Select value={selectedImportedKey} onValueChange={(v) => onSelectImported?.(v)}>
@@ -194,7 +201,9 @@ export function WhatsAppMessages({
             </Select>
           ) : (
             <p className="text-[10px] text-muted-foreground italic">
-              {loadingImported ? "Carregando modelos da conta..." : "Nenhum modelo encontrado. A conta selecionada não tem campanhas WhatsApp anteriores publicadas com 'Modelo de mensagem'."}
+              {loadingImported
+                ? "Carregando modelos da conta..."
+                : "Nenhum modelo encontrado. Clique em Buscar pra tentar novamente — Meta pode estar rate-limitando temporariamente."}
             </p>
           )}
           {selectedImportedKey && (() => {

@@ -73,7 +73,13 @@ export async function fetchImportedMetaTemplates(accessToken: string, adAccountI
     body: { access_token: accessToken, ad_account_id: adAccountId },
   });
   if (error) throw new Error(error.message);
-  return (data?.templates || []) as ImportedMetaTemplate[];
+  return {
+    templates: (data?.templates || []) as ImportedMetaTemplate[],
+    scanned_adsets: (data?.scanned_adsets ?? 0) as number,
+    errors_during_scan: (data?.errors_during_scan ?? 0) as number,
+    error_sample: (data?.error_sample ?? null) as string | null,
+    error_summary: (data?.error_summary ?? null) as string | null,
+  };
 }
 
 export async function validatePublish(params: Record<string, unknown>) {

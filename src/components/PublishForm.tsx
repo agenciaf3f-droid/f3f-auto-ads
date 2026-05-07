@@ -273,8 +273,8 @@ export default function PublishForm() {
     setPublishResult(null);
     setMinBudget(null);
 
-    // ===== STEP 2: LOAD AUDIENCES (parallel with identity) =====
-    loadAudiences();
+    // ===== STEP 2: LOAD AUDIENCES (await pra evitar paralelismo com import templates) =====
+    await loadAudiences();
 
     // ===== STEP 3: LOAD IDENTITY (from ad account's authorized IG accounts) =====
     let resolvedPageId: string | null = null;
@@ -358,16 +358,24 @@ export default function PublishForm() {
     }
 
     // ===== STEP 5: LOAD IMPORTED MESSAGE TEMPLATES (FASE 3) =====
-    // Auto-busca dos modelos de mensagem da própria conta Meta
-    setImportedTemplates([]);
+    // Auto-busca dos modelos de mensagem da própria conta Meta.
+    // Reseta a SELEÇÃO mas NÃO limpa a lista — se o fetch falhar, mantemos a anterior visível.
     setSelectedImportedKey("");
     setImportedRawJson("");
+    // Pequeno delay pra evitar burst rate-limit do Meta logo após audiences/identity/whatsapp.
+    await new Promise(r => setTimeout(r, 1500));
     setLoadingImported(true);
     try {
       addLog(`📡 [imported] Buscando modelos de mensagem da conta...`);
-      const list = await fetchImportedMetaTemplates(accessToken, selectedAccount);
-      setImportedTemplates(list);
-      addLog(`✅ [imported] ${list.length} modelo(s) extraído(s)`);
+      const result = await fetchImportedMetaTemplates(accessToken, selectedAccount);
+      setImportedTemplates(result.templates);
+      addLog(`✅ [imported] ${result.templates.length} modelo(s) extraído(s) (scanned=${result.scanned_adsets}, erros=${result.errors_during_scan})`);
+      if (result.error_summary) {
+        addLog(`⚠️ [imported] ${result.error_summary}`);
+        toast.error("Meta rate-limited. Tente o botão Buscar novamente em alguns segundos.");
+      } else if (result.errors_during_scan > 0 && result.error_sample) {
+        addLog(`ℹ️ [imported] sample de erro: ${result.error_sample}`);
+      }
     } catch (err: unknown) {
       addLog(`⚠️ [imported] erro: ${err instanceof Error ? err.message : "desconhecido"}`);
     } finally {
@@ -573,10 +581,15 @@ export default function PublishForm() {
     setLoadingImported(true);
     try {
       addLog(`📡 [imported] Buscando modelos de mensagem da conta ${selectedAccount}...`);
-      const list = await fetchImportedMetaTemplates(accessToken, selectedAccount);
-      setImportedTemplates(list);
-      addLog(`✅ [imported] ${list.length} modelo(s) extraído(s) da conta`);
-      if (list.length === 0) toast.info("Nenhum modelo encontrado. As campanhas anteriores podem não ter usado 'Modelo de mensagem' ou não há campanhas WhatsApp nessa conta.");
+      const result = await fetchImportedMetaTemplates(accessToken, selectedAccount);
+      setImportedTemplates(result.templates);
+      addLog(`✅ [imported] ${result.templates.length} modelo(s) extraído(s) (scanned=${result.scanned_adsets}, erros=${result.errors_during_scan})`);
+      if (result.error_summary) {
+        toast.error("Meta rate-limited. Aguarde alguns segundos e tente Buscar novamente.");
+        addLog(`⚠️ [imported] ${result.error_summary}`);
+      } else if (result.templates.length === 0) {
+        toast.info("Nenhum modelo encontrado nessa conta.");
+      }
     } catch (e: any) {
       toast.error(`Erro ao buscar modelos: ${e.message}`);
       addLog(`❌ [imported] erro: ${e.message}`);
