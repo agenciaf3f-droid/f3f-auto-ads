@@ -269,7 +269,7 @@ function validateFase3PromotedObject(promotedObject: Record<string, any>) {
   // Meta v25: promoted_object FASE 3 aceita { page_id, smart_pse_enabled, whatsapp_phone_number }.
   // NÃO incluir whats_app_business_phone_number_id (Meta rejeita com 2446886).
   const requiredKeys = ["page_id", "whatsapp_phone_number"];
-  const allowedKeys = [...requiredKeys];
+  const allowedKeys = [...requiredKeys, "smart_pse_enabled"];
   const keys = Object.keys(promotedObject || {});
   const unexpectedKeys = keys.filter((k) => !allowedKeys.includes(k));
   const missingRequired = requiredKeys.filter((k) => !promotedObject?.[k] && promotedObject?.[k] !== false);
