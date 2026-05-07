@@ -303,8 +303,8 @@ function validateFase3Targeting(t: Record<string, any>) {
 function validateFase3Attribution(attr: any[]) {
   if (!Array.isArray(attr) || attr.length === 0) return { ok: false, error: "attribution_spec ausente" };
   const first = attr[0];
-  if (first.event_type !== "CLICK_THROUGH" || first.window_days !== 7) {
-    return { ok: false, error: `attribution_spec deve ser CLICK_THROUGH/7d, encontrado: ${first.event_type}/${first.window_days}d` };
+  if (first.event_type !== "CLICK_THROUGH" || first.window_days !== 1) {
+    return { ok: false, error: `attribution_spec deve ser CLICK_THROUGH/1d, encontrado: ${first.event_type}/${first.window_days}d` };
   }
   return { ok: true };
 }
@@ -1112,7 +1112,7 @@ Deno.serve(async (req) => {
       //  ATTRIBUTION (CLICK_THROUGH / 1 dia)
       // ══════════════════════════════════════════════════════════════
       const attributionSpec = [
-        { event_type: "CLICK_THROUGH", window_days: 7 },
+        { event_type: "CLICK_THROUGH", window_days: 1 },
       ];
 
       const attrValidation = validateFase3Attribution(attributionSpec);
