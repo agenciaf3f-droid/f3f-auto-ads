@@ -221,41 +221,39 @@ export function WhatsAppMessages({
             </div>
           )}
 
-          {/* Modelos importados da conta de anúncios */}
-          {onLoadImported && (
-            <div className="space-y-2 pt-3 border-t border-border/50">
-              <div className="flex items-center justify-between">
-                <Label className="text-[10px] text-muted-foreground">Modelos da conta de anúncios (importados da Meta UI)</Label>
-                <Button variant="outline" size="sm" onClick={onLoadImported} disabled={loadingImported} className="text-xs h-7">
-                  {loadingImported ? <Loader2 className="w-3 h-3 animate-spin" /> : "Buscar"}
-                </Button>
-              </div>
-              {importedTemplates.length > 0 ? (
-                <Select value={selectedImportedKey} onValueChange={(v) => onSelectImported?.(v)}>
-                  <SelectTrigger><SelectValue placeholder={`${importedTemplates.length} modelo(s) encontrado(s) — selecione`} /></SelectTrigger>
-                  <SelectContent>
-                    {importedTemplates.map((t) => (
-                      <SelectItem key={t.key} value={t.key}>
-                        {(t.welcome_text || "(sem saudação)").substring(0, 40)} → {(t.autofill || "(sem autofill)").substring(0, 30)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <p className="text-[10px] text-muted-foreground italic">Clique em "Buscar" para importar modelos das suas campanhas existentes nesta conta.</p>
-              )}
-              {selectedImportedKey && (() => {
-                const t = importedTemplates.find(x => x.key === selectedImportedKey);
-                return t ? (
-                  <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 rounded-md p-2.5 space-y-1">
-                    <p className="text-[10px]"><strong>Saudação:</strong> {t.welcome_text}</p>
-                    <p className="text-[10px]"><strong>Autofill:</strong> {t.autofill}</p>
-                    {t.template_id !== "inline" && <p className="text-[9px] text-muted-foreground">template_id: {t.template_id}</p>}
-                  </div>
-                ) : null;
-              })()}
+          {/* Modelos importados da conta de anúncios — auto-carregados ao selecionar conta */}
+          <div className="space-y-2 pt-3 border-t border-border/50">
+            <div className="flex items-center gap-2">
+              <Label className="text-[10px] text-muted-foreground">Modelos da conta de anúncios (importados da Meta UI)</Label>
+              {loadingImported && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
             </div>
-          )}
+            {importedTemplates.length > 0 ? (
+              <Select value={selectedImportedKey} onValueChange={(v) => onSelectImported?.(v)}>
+                <SelectTrigger><SelectValue placeholder={`${importedTemplates.length} modelo(s) encontrado(s) — selecione`} /></SelectTrigger>
+                <SelectContent>
+                  {importedTemplates.map((t) => (
+                    <SelectItem key={t.key} value={t.key}>
+                      {(t.welcome_text || "(sem saudação)").substring(0, 40)} → {(t.autofill || "(sem autofill)").substring(0, 30)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <p className="text-[10px] text-muted-foreground italic">
+                {loadingImported ? "Carregando modelos da conta..." : "Nenhum modelo encontrado. Selecione uma conta com campanhas WhatsApp anteriores."}
+              </p>
+            )}
+            {selectedImportedKey && (() => {
+              const t = importedTemplates.find(x => x.key === selectedImportedKey);
+              return t ? (
+                <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 rounded-md p-2.5 space-y-1">
+                  <p className="text-[10px]"><strong>Saudação:</strong> {t.welcome_text}</p>
+                  <p className="text-[10px]"><strong>Autofill:</strong> {t.autofill}</p>
+                  {t.template_id !== "inline" && <p className="text-[9px] text-muted-foreground">template_id: {t.template_id}</p>}
+                </div>
+              ) : null;
+            })()}
+          </div>
         </div>
       )}
     </div>

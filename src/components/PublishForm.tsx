@@ -356,6 +356,23 @@ export default function PublishForm() {
     if (resolvedPageId) {
       await loadFase3Resources(resolvedPageId);
     }
+
+    // ===== STEP 5: LOAD IMPORTED MESSAGE TEMPLATES (FASE 3) =====
+    // Auto-busca dos modelos de mensagem da própria conta Meta
+    setImportedTemplates([]);
+    setSelectedImportedKey("");
+    setImportedRawJson("");
+    setLoadingImported(true);
+    try {
+      addLog(`📡 [imported] Buscando modelos de mensagem da conta...`);
+      const list = await fetchImportedMetaTemplates(accessToken, selectedAccount);
+      setImportedTemplates(list);
+      addLog(`✅ [imported] ${list.length} modelo(s) extraído(s)`);
+    } catch (err: unknown) {
+      addLog(`⚠️ [imported] erro: ${err instanceof Error ? err.message : "desconhecido"}`);
+    } finally {
+      setLoadingImported(false);
+    }
   };
 
   const loadFase3Resources = async (pageId: string) => {

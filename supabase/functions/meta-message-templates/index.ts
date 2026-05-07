@@ -23,36 +23,40 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { access_token, ad_account_id, max_adsets = 60 } = await req.json();
+    const { access_token, ad_account_id, max_adsets = 500 } = await req.json();
     if (!access_token || !ad_account_id) {
       return new Response(JSON.stringify({ error: "access_token e ad_account_id são obrigatórios" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const adsetsRes = await fetch(
-      `https://graph.facebook.com/v25.0/${ad_account_id}/adsets?fields=id,destination_type&limit=300&access_token=${access_token}`,
-    );
-    const adsetsData = await adsetsRes.json();
-    if (adsetsData.error) {
-      return new Response(JSON.stringify({ error: adsetsData.error.message }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    // Paginar TODOS os adsets WHATSAPP da conta (até max_adsets)
+    const ctwAdsets: any[] = [];
+    let nextUrl: string | null = `https://graph.facebook.com/v25.0/${ad_account_id}/adsets?fields=id,destination_type&limit=300&access_token=${access_token}`;
+    while (nextUrl && ctwAdsets.length < max_adsets) {
+      const r = await fetch(nextUrl);
+      const data = await r.json();
+      if (data.error) {
+        return new Response(JSON.stringify({ error: data.error.message }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      for (const a of (data.data || [])) {
+        if (a.destination_type === "WHATSAPP") ctwAdsets.push(a);
+        if (ctwAdsets.length >= max_adsets) break;
+      }
+      nextUrl = data?.paging?.next || null;
     }
-
-    const ctwAdsets = (adsetsData.data || [])
-      .filter((a: any) => a.destination_type === "WHATSAPP")
-      .slice(0, max_adsets);
 
     const seen = new Map<string, TemplateRow>();
 
-    // Busca em paralelo (chunks de 8 pra não passar do rate limit)
-    const chunkSize = 8;
+    // Busca em paralelo em chunks
+    const chunkSize = 10;
     for (let i = 0; i < ctwAdsets.length; i += chunkSize) {
       const chunk = ctwAdsets.slice(i, i + chunkSize);
       await Promise.all(chunk.map(async (aset: any) => {
         const adsRes = await fetch(
-          `https://graph.facebook.com/v25.0/${aset.id}/ads?fields=creative{name,object_story_spec{video_data{page_welcome_message},link_data{page_welcome_message}},page_welcome_message}&limit=2&access_token=${access_token}`,
+          `https://graph.facebook.com/v25.0/${aset.id}/ads?fields=creative{name,object_story_spec{video_data{page_welcome_message},link_data{page_welcome_message}},page_welcome_message}&limit=5&access_token=${access_token}`,
         );
         const adsData = await adsRes.json();
         for (const ad of (adsData?.data || [])) {
@@ -66,8 +70,9 @@ Deno.serve(async (req) => {
             const text = parsed.text_format?.message?.text || parsed.image_format?.message?.text || "";
             const autofill = parsed.text_format?.message?.autofill_message?.content || "";
             const qrTitle = parsed.image_format?.message?.quick_replies?.[0]?.title || null;
-            const key = `${text}::${autofill}::${qrTitle || ""}`;
-            if (!seen.has(key) && (text || autofill)) {
+            // Dedupe by template_id when present (mais confiável que por texto)
+            const key = tplId !== "inline" ? `tpl:${tplId}` : `inline:${text}::${autofill}::${qrTitle || ""}`;
+            if (!seen.has(key) && (text || autofill || tplId !== "inline")) {
               seen.set(key, {
                 key,
                 template_id: tplId,
