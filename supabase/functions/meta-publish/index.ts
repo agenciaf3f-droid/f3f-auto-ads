@@ -641,17 +641,16 @@ async function buildFase1Creative(
     const resolvedIgActor = result.ig_account_id || igActorId;
     if (!resolvedIgActor) return { error: "instagram_user_id não disponível." };
 
-    // FASE 1 IG-link creative: spec flat com page_id + instagram_user_id top-level
-    // (Meta v25 exige page_id binding pra ad casar com adset INSTAGRAM_PROFILE).
-    // Não usar object_story_spec aqui pois ele exige link_data, incompatível com source_instagram_media_id.
+    // FASE 1 IG-link creative: spec flat (formato Meta para boostar IG media existente).
+    // page_id top-level exige capability extra do app. object_story_spec sem link_data
+    // dispara "link obrigatório". Mantemos flat e dependemos do binding via promoted_object do adset.
     const spec: Record<string, any> = {
-      page_id: pageId,
-      instagram_user_id: resolvedIgActor,
       source_instagram_media_id: result.instagram_media_id,
+      instagram_user_id: resolvedIgActor,
       call_to_action: { type: "VISIT_PROFILE", value: { link: igProfileLink } },
     };
 
-    console.log(`[FASE1-creative] OK: media=${result.instagram_media_id}, ig=${resolvedIgActor}, page=${pageId}, CTA=VISIT_PROFILE`);
+    console.log(`[FASE1-creative] OK: media=${result.instagram_media_id}, ig=${resolvedIgActor}, CTA=VISIT_PROFILE`);
     logs.push({ step: "fase1_creative", status: "success", ts: ts(), detail: `media=${result.instagram_media_id}, CTA=VISIT_PROFILE` });
     return { spec };
 
