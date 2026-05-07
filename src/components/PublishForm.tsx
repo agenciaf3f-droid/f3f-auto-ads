@@ -70,10 +70,11 @@ const PRESETS = [
     status: "PAUSED",
     fase: "FASE 1",
     requires_whatsapp: false,
+    not_implemented: false,
   },
   {
     id: "fase3-br",
-    label: "FASE 3",
+    label: "FASE 3 - LEADS | ZAP",
     objective: "OUTCOME_LEADS",
     optimization_goal: "CONVERSATIONS",
     billing_event: "IMPRESSIONS",
@@ -83,6 +84,35 @@ const PRESETS = [
     status: "PAUSED",
     fase: "FASE 3",
     requires_whatsapp: true,
+    not_implemented: false,
+  },
+  {
+    id: "fase3-leads-lp",
+    label: "FASE 3 - LEADS | LP",
+    objective: "OUTCOME_LEADS",
+    optimization_goal: "OFFSITE_CONVERSIONS",
+    billing_event: "IMPRESSIONS",
+    bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+    destination_type: "WEBSITE",
+    default_cta: "LEARN_MORE",
+    status: "PAUSED",
+    fase: "FASE 3",
+    requires_whatsapp: false,
+    not_implemented: true,
+  },
+  {
+    id: "fase3-vendas-zap",
+    label: "FASE 3 - VENDAS | ZAP",
+    objective: "OUTCOME_SALES",
+    optimization_goal: "CONVERSATIONS",
+    billing_event: "IMPRESSIONS",
+    bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+    destination_type: "WHATSAPP",
+    default_cta: "WHATSAPP_MESSAGE",
+    status: "PAUSED",
+    fase: "FASE 3",
+    requires_whatsapp: true,
+    not_implemented: true,
   },
 ] as const;
 type PresetId = typeof PRESETS[number]["id"];
@@ -1143,13 +1173,23 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               </SelectTrigger>
               <SelectContent>
                 {PRESETS.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.label}{p.not_implemented ? " (em breve)" : ""}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
               Objetivo: {selectedPreset.objective} | Otimização: {selectedPreset.optimization_goal} | Destino: {selectedPreset.destination_type}
             </p>
+            {selectedPreset.not_implemented && (
+              <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 rounded-md p-3">
+                <p className="text-xs font-medium text-amber-900 dark:text-amber-200">⚠️ Preset em desenvolvimento</p>
+                <p className="text-[10px] text-amber-800 dark:text-amber-300 mt-1">
+                  Este preset ({selectedPreset.label}) ainda não está implementado no backend. Ainda não publica anúncios. Selecione "FASE 1 - TRÁFEGO" ou "FASE 3 - LEADS | ZAP" para publicar.
+                </p>
+              </div>
+            )}
           </Card>
 
           {/* Distribution Structure (ABO / CBO) */}
@@ -1583,11 +1623,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
           {/* Actions */}
           <div className="flex gap-3">
-            <Button variant="outline" onClick={handleValidate} disabled={loading || validatingCreative} className="flex-1 gap-2">
+            <Button variant="outline" onClick={handleValidate} disabled={loading || validatingCreative || selectedPreset.not_implemented} className="flex-1 gap-2">
               {(loading || validatingCreative) ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
               Validar
             </Button>
-            <Button onClick={handlePublish} disabled={loading || !validatedPayload || !validationResult?.valid || (!!minBudget && Number(budget) < minBudget)} className="flex-1 gap-2 glow-primary">
+            <Button onClick={handlePublish} disabled={loading || !validatedPayload || !validationResult?.valid || (!!minBudget && Number(budget) < minBudget) || selectedPreset.not_implemented} className="flex-1 gap-2 glow-primary">
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               Publicar
             </Button>
