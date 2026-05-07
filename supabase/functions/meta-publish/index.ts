@@ -533,8 +533,24 @@ async function uploadDriveCreative(
   const fileRes = await fetch(downloadUrl, { redirect: "follow" });
   if (!fileRes.ok) return { error: "Falha ao baixar arquivo do Drive." };
   const contentType = fileRes.headers.get("content-type") || "";
+  const contentDisp = fileRes.headers.get("content-disposition") || "";
   const fileBlob = await fileRes.blob();
-  const isVideo = contentType.includes("video");
+
+  // Detecção: content-type, content-disposition (filename) ou magic bytes.
+  // Drive normalmente retorna application/octet-stream — precisa fallback.
+  const headerSaysVideo = contentType.includes("video");
+  const filenameSaysVideo = /\.(mp4|mov|m4v|avi|webm|mkv)(?:["';\s]|$)/i.test(contentDisp);
+  let bytesSayVideo = false;
+  try {
+    const head = new Uint8Array(await fileBlob.slice(0, 16).arrayBuffer());
+    // MP4/MOV: bytes 4..8 = "ftyp"
+    if (head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70) bytesSayVideo = true;
+    // WebM: 1A 45 DF A3
+    if (head[0] === 0x1A && head[1] === 0x45 && head[2] === 0xDF && head[3] === 0xA3) bytesSayVideo = true;
+  } catch {}
+  const isVideo = headerSaysVideo || filenameSaysVideo || bytesSayVideo;
+  console.log(`[drive-upload] ct=${contentType}, disp_hint=${filenameSaysVideo}, magic_video=${bytesSayVideo} => isVideo=${isVideo}`);
+
   if (isVideo) {
     const formData = new FormData();
     formData.append("access_token", accessToken);
