@@ -266,7 +266,9 @@ function cleanTargeting(t: Record<string, any>): Record<string, any> {
 }
 
 function validateFase3PromotedObject(promotedObject: Record<string, any>) {
-  const requiredKeys = ["page_id", "whats_app_business_phone_number_id", "whatsapp_phone_number"];
+  // Meta v25: promoted_object FASE 3 aceita { page_id, smart_pse_enabled, whatsapp_phone_number }.
+  // NÃO incluir whats_app_business_phone_number_id (Meta rejeita com 2446886).
+  const requiredKeys = ["page_id", "whatsapp_phone_number"];
   const allowedKeys = [...requiredKeys];
   const keys = Object.keys(promotedObject || {});
   const unexpectedKeys = keys.filter((k) => !allowedKeys.includes(k));
@@ -282,7 +284,7 @@ function validateFase3PromotedObject(promotedObject: Record<string, any>) {
     };
   }
 
-  return { ok: true, keys, message: "VALIDAÇÃO OK — promoted_object contém page_id + whats_app_business_phone_number_id + whatsapp_phone_number (3 campos)" };
+  return { ok: true, keys, message: "VALIDAÇÃO OK — promoted_object contém page_id + whatsapp_phone_number" };
 }
 
 function validateFase3Targeting(t: Record<string, any>) {
@@ -1076,25 +1078,24 @@ Deno.serve(async (req) => {
 
     // === FASE 3 AdSet builder ===
     //
-    // FIXED structure for FASE 3 WhatsApp linkage.
-    // promoted_object MUST contain EXACTLY: page_id + whats_app_business_phone_number_id.
+    // Meta v25 promoted_object para Click-to-WhatsApp:
+    // { page_id, smart_pse_enabled: false, whatsapp_phone_number }.
+    // NÃO incluir whats_app_business_phone_number_id (Meta rejeita com 2446886
+    // "Página com conta do WhatsApp Business necessária"). Confirmado em adsets
+    // funcionais existentes na conta act_344720138940133.
     //
     const buildFase3Adset = (name: string, audienceName?: string): { payload?: Record<string, any>; error?: string } => {
-      // ── RESOLVE WHATSAPP IDS ──
-      const internalId = String(identity?.whatsapp_phone_id || whatsapp_number_id || "");
-
-      if (!internalId) {
-        console.log(`[FASE3-adset] ❌ BLOQUEADO: whatsapp_number_id vazio`);
-        return { error: "whats_app_business_phone_number_id não disponível. Selecione um número de WhatsApp." };
-      }
-
       // ══════════════════════════════════════════════════════════════
-      //  PROMOTED_OBJECT (3 campos exatos)
+      //  PROMOTED_OBJECT
       // ══════════════════════════════════════════════════════════════
       const cleanPhone = String(whatsapp_number || "").replace(/\D/g, "");
+      if (!cleanPhone) {
+        console.log(`[FASE3-adset] ❌ BLOQUEADO: whatsapp_number vazio`);
+        return { error: "whatsapp_phone_number não disponível. Selecione um número de WhatsApp." };
+      }
       const promotedObject: Record<string, any> = {
         page_id: pageId,
-        whats_app_business_phone_number_id: internalId,
+        smart_pse_enabled: false,
         whatsapp_phone_number: cleanPhone,
       };
 
@@ -1381,15 +1382,17 @@ Deno.serve(async (req) => {
         dedupeLockId = dedupe.lockId;
 
         const promotedObject = adsetPayload.promoted_object || {};
-        const sanityContextKey = `${ad_account_id}|${String(promotedObject.page_id || "")}|${String(promotedObject.whats_app_business_phone_number_id || "")}`;
+        // whatsapp_number_id (interno) ainda usado p/ sanity, mas NÃO entra no promoted_object.
+        const internalWhatsappPhoneId = String(identity?.whatsapp_phone_id || whatsapp_number_id || "");
+        const sanityContextKey = `${ad_account_id}|${String(promotedObject.page_id || "")}|${internalWhatsappPhoneId}`;
 
         if (!fase3SanityCache || fase3SanityCache.contextKey !== sanityContextKey) {
-          logs.push({ step: "fase3_sanity", status: "start", ts: ts(), detail: `Executando sanity checks para page_id=${promotedObject.page_id} e whatsapp_phone_id=${promotedObject.whats_app_business_phone_number_id}` });
+          logs.push({ step: "fase3_sanity", status: "start", ts: ts(), detail: `Executando sanity checks para page_id=${promotedObject.page_id} e whatsapp_phone_id=${internalWhatsappPhoneId}` });
           const sanity = await runFase3SanityChecks({
             accessToken: access_token,
             adAccountId: ad_account_id,
             pageId: String(promotedObject.page_id || ""),
-            whatsappPhoneId: String(promotedObject.whats_app_business_phone_number_id || ""),
+            whatsappPhoneId: internalWhatsappPhoneId,
           });
 
           fase3SanityCache = {
