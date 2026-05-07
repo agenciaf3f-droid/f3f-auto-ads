@@ -303,8 +303,8 @@ function validateFase3Targeting(t: Record<string, any>) {
 function validateFase3Attribution(attr: any[]) {
   if (!Array.isArray(attr) || attr.length === 0) return { ok: false, error: "attribution_spec ausente" };
   const first = attr[0];
-  if (first.event_type !== "CLICK_THROUGH" || first.window_days !== 1) {
-    return { ok: false, error: `attribution_spec deve ser CLICK_THROUGH/1d, encontrado: ${first.event_type}/${first.window_days}d` };
+  if (first.event_type !== "CLICK_THROUGH" || first.window_days !== 7) {
+    return { ok: false, error: `attribution_spec deve ser CLICK_THROUGH/7d, encontrado: ${first.event_type}/${first.window_days}d` };
   }
   return { ok: true };
 }
@@ -1112,7 +1112,7 @@ Deno.serve(async (req) => {
       //  ATTRIBUTION (CLICK_THROUGH / 1 dia)
       // ══════════════════════════════════════════════════════════════
       const attributionSpec = [
-        { event_type: "CLICK_THROUGH", window_days: 1 },
+        { event_type: "CLICK_THROUGH", window_days: 7 },
       ];
 
       const attrValidation = validateFase3Attribution(attributionSpec);
@@ -1166,9 +1166,10 @@ Deno.serve(async (req) => {
         fase3Targeting.excluded_geo_locations = targeting.excluded_geo_locations;
       }
 
-      // targeting_automation
+      // targeting_automation — alinha com adset funcional (advantage_audience: 0)
       fase3Targeting.targeting_automation = {
-        advantage_audience: 1,
+        advantage_audience: 0,
+        individual_setting: { age: 0, gender: 0 },
       };
 
       const targetingValidation = validateFase3Targeting(fase3Targeting);
