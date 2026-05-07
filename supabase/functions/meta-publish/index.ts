@@ -269,7 +269,8 @@ function validateFase3PromotedObject(promotedObject: Record<string, any>) {
   // Meta v25: promoted_object FASE 3 aceita { page_id, smart_pse_enabled, whatsapp_phone_number }.
   // NÃO incluir whats_app_business_phone_number_id (Meta rejeita com 2446886).
   const requiredKeys = ["page_id", "whatsapp_phone_number"];
-  const allowedKeys = [...requiredKeys, "smart_pse_enabled"];
+  // pixel_id + custom_event_type adicionados pra suportar FASE 3 VENDAS ZAP (otimização compra)
+  const allowedKeys = [...requiredKeys, "smart_pse_enabled", "pixel_id", "custom_event_type"];
   const keys = Object.keys(promotedObject || {});
   const unexpectedKeys = keys.filter((k) => !allowedKeys.includes(k));
   const missingRequired = requiredKeys.filter((k) => !promotedObject?.[k] && promotedObject?.[k] !== false);
@@ -1028,7 +1029,9 @@ Deno.serve(async (req) => {
     const isWhatsAppPreset = preset?.destination_type === "WHATSAPP";
     const isIgProfilePreset = preset?.destination_type === "INSTAGRAM_PROFILE";
     const isWebsitePreset = preset?.destination_type === "WEBSITE";
-    const fase3CampaignObjective = "OUTCOME_LEADS";
+    // VENDAS via WhatsApp = WhatsApp destination + objective OUTCOME_SALES + pixel/PURCHASE no promoted_object
+    const isFase3VendasZap = isWhatsAppPreset && preset?.objective === "OUTCOME_SALES";
+    const fase3CampaignObjective = isFase3VendasZap ? "OUTCOME_SALES" : (preset?.objective || "OUTCOME_LEADS");
 
     // ══════════════════════════════════════════════════════════════════
     //  PIPELINE LOG: Identify which preset we're running
@@ -1276,6 +1279,11 @@ Deno.serve(async (req) => {
         smart_pse_enabled: false,
         whatsapp_phone_number: cleanPhone,
       };
+      // FASE 3 VENDAS ZAP: adicionar pixel + custom_event_type pra otimizar pra Compras
+      if (isFase3VendasZap && pixel_id) {
+        promotedObject.pixel_id = String(pixel_id);
+        promotedObject.custom_event_type = String(custom_event_type || "PURCHASE");
+      }
 
       const promotedObjectValidation = validateFase3PromotedObject(promotedObject);
       if (!promotedObjectValidation.ok) {

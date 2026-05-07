@@ -113,7 +113,7 @@ const PRESETS = [
     status: "PAUSED",
     fase: "FASE 3",
     requires_whatsapp: true,
-    not_implemented: true,
+    not_implemented: false,
   },
 ] as const;
 type PresetId = typeof PRESETS[number]["id"];
@@ -701,6 +701,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const selectedPreset = PRESETS.find(p => p.id === preset)!;
   const isFase3 = selectedPreset.requires_whatsapp;
   const isFase3Lp = selectedPreset.destination_type === "WEBSITE";
+  const isFase3VendasZap = selectedPreset.id === "fase3-vendas-zap";
   const selectedWhatsapp = whatsappNumbers.find(n => n.id === selectedWhatsappId);
 
   const computedCampaignName = campaignStructure === "new" && campaignNameInput && selectedAudienceName && budget
@@ -746,6 +747,13 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
   const fase3LpValid = () => fase3LpValidate().valid;
 
+  const fase3VendasValidate = (): { valid: boolean; errors: string[] } => {
+    if (!isFase3VendasZap) return { valid: true, errors: [] };
+    const errors: string[] = [];
+    if (!selectedPixelId) errors.push("Selecione um pixel para FASE 3 - VENDAS | ZAP.");
+    return { valid: errors.length === 0, errors };
+  };
+
   const scheduleValid = () => {
     if (!scheduleEnabled) return true;
     return !!(scheduleDate && scheduleTime);
@@ -790,6 +798,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     const fase3LpResult = fase3LpValidate();
     if (!fase3LpResult.valid) {
       fase3LpResult.errors.forEach(err => toast.error(err));
+      return;
+    }
+    const fase3VendasResult = fase3VendasValidate();
+    if (!fase3VendasResult.valid) {
+      fase3VendasResult.errors.forEach(err => toast.error(err));
       return;
     }
     if (!scheduleValid()) {
@@ -949,8 +962,10 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         ready_message: readyMessage || undefined,
         imported_template_json: importedRawJson || undefined,
         lp_url: selectedPreset.destination_type === "WEBSITE" ? lpUrl : undefined,
-        pixel_id: selectedPreset.destination_type === "WEBSITE" ? selectedPixelId : undefined,
-        custom_event_type: selectedPreset.destination_type === "WEBSITE" ? "LEAD" : undefined,
+        pixel_id: (selectedPreset.destination_type === "WEBSITE" || isFase3VendasZap) ? selectedPixelId : undefined,
+        custom_event_type: selectedPreset.destination_type === "WEBSITE"
+          ? "LEAD"
+          : (isFase3VendasZap ? "PURCHASE" : undefined),
         schedule,
         utm_template: UTM_TEMPLATE,
       };
@@ -1495,6 +1510,42 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 selectedId={selectedWhatsappId}
                 onSelect={setSelectedWhatsappId}
               />
+
+              {/* FASE 3 VENDAS ZAP — pixel + evento PURCHASE */}
+              {isFase3VendasZap && (
+                <>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Label className="text-xs text-muted-foreground">Pixel da Meta (obrigatório)</Label>
+                      {loadingPixels && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+                    </div>
+                    {pixels.length > 0 ? (
+                      <Select value={selectedPixelId} onValueChange={setSelectedPixelId}>
+                        <SelectTrigger><SelectValue placeholder={`${pixels.length} pixel(s) — selecione`} /></SelectTrigger>
+                        <SelectContent>
+                          {pixels.map((p) => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.name} <span className="text-muted-foreground text-[10px]">({p.id})</span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <p className="text-[10px] text-muted-foreground italic">
+                        {loadingPixels ? "Carregando pixels..." : "Nenhum pixel encontrado nesta conta. Crie no Gerenciador de Eventos da Meta primeiro."}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Evento de conversão</Label>
+                    <div className="bg-muted/50 border border-border rounded-md px-3 py-2">
+                      <p className="text-sm font-medium">PURCHASE</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">Otimizado para o evento "Compra" (Purchase) do pixel selecionado</p>
+                    </div>
+                  </div>
+                </>
+              )}
 
               {/* CTA — fixo pelo preset */}
               <div className="space-y-1">
