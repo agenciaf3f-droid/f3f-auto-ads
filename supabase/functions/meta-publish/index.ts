@@ -240,8 +240,11 @@ async function runFase3SanityChecks(params: {
     };
   }
 
+  // Em v25 o subfield whatsapp_business_account não existe mais no node de phone.
+  // Query só campos válidos. Se Meta rejeitar o phone na criação do adset, o erro vai
+  // aparecer no passo certo — não tentamos cross-validar via WABA aqui.
   const phoneCheck = await fetchJsonWithTiming(
-    `https://graph.facebook.com/v25.0/${params.whatsappPhoneId}?fields=id,display_phone_number,verified_name,whatsapp_business_account{id,name}&access_token=${params.accessToken}`,
+    `https://graph.facebook.com/v25.0/${params.whatsappPhoneId}?fields=id,display_phone_number,verified_name&access_token=${params.accessToken}`,
   );
   checks.whatsapp_phone = { elapsed_ms: phoneCheck.elapsedMs, status: phoneCheck.status, response: phoneCheck.data };
   if (phoneCheck.data?.error) {
@@ -252,74 +255,7 @@ async function runFase3SanityChecks(params: {
     };
   }
 
-  const phoneWabaId = String(phoneCheck.data?.whatsapp_business_account?.id || "");
-  if (!phoneWabaId) {
-    return {
-      ok: false,
-      error_message: `Não foi possível resolver o WABA do WhatsApp Phone ID ${params.whatsappPhoneId}.`,
-      checks,
-    };
-  }
-
-  const adAccountCheck = await fetchJsonWithTiming(
-    `https://graph.facebook.com/v25.0/${params.adAccountId}?fields=business{id,name}&access_token=${params.accessToken}`,
-  );
-  checks.ad_account_business = { elapsed_ms: adAccountCheck.elapsedMs, status: adAccountCheck.status, response: adAccountCheck.data };
-  if (adAccountCheck.data?.error) {
-    return {
-      ok: false,
-      error_message: `Falha ao validar business da conta ${params.adAccountId}: ${adAccountCheck.data.error.message}`,
-      checks,
-    };
-  }
-
-  const businessId = String(adAccountCheck.data?.business?.id || "");
-  if (!businessId) {
-    return {
-      ok: false,
-      error_message: `A conta ${params.adAccountId} não retornou business associado para validar o WhatsApp Phone ID.`,
-      checks,
-    };
-  }
-
-  const ownedCheck = await fetchJsonWithTiming(
-    `https://graph.facebook.com/v25.0/${businessId}/owned_whatsapp_business_accounts?fields=id,name&limit=200&access_token=${params.accessToken}`,
-  );
-  checks.owned_wabas = { elapsed_ms: ownedCheck.elapsedMs, status: ownedCheck.status, response: ownedCheck.data };
-
-  const clientCheck = await fetchJsonWithTiming(
-    `https://graph.facebook.com/v25.0/${businessId}/client_whatsapp_business_accounts?fields=id,name&limit=200&access_token=${params.accessToken}`,
-  );
-  checks.client_wabas = { elapsed_ms: clientCheck.elapsedMs, status: clientCheck.status, response: clientCheck.data };
-
-  const ownedError = ownedCheck.data?.error;
-  const clientError = clientCheck.data?.error;
-  const ownedIds = (ownedCheck.data?.data || []).map((item: any) => String(item.id));
-  const clientIds = (clientCheck.data?.data || []).map((item: any) => String(item.id));
-  const accessibleWabaIds = [...new Set([...ownedIds, ...clientIds])];
-  checks.accessible_waba_ids = accessibleWabaIds;
-  checks.phone_waba_id = phoneWabaId;
-
-  if (ownedError && clientError) {
-    return {
-      ok: false,
-      error_message: `Não foi possível validar os ativos WhatsApp do business ${businessId}: ${ownedError.message} | ${clientError.message}`,
-      checks,
-    };
-  }
-
-  if (!accessibleWabaIds.includes(phoneWabaId)) {
-    return {
-      ok: false,
-      error_message: `O WhatsApp Phone ID ${params.whatsappPhoneId} pertence ao WABA ${phoneWabaId}, mas esse WABA não está acessível no contexto da conta/business atual.`,
-      checks,
-    };
-  }
-
-  return {
-    ok: true,
-    checks,
-  };
+  return { ok: true, checks };
 }
 
 function cleanTargeting(t: Record<string, any>): Record<string, any> {
