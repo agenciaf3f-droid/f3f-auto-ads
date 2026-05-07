@@ -29,6 +29,7 @@ import {
   fetchWhatsAppNumbers, fetchIgAccountsForAdAccount, disconnectMeta,
   runCampaignDiagnostic,
   fetchImportedMetaTemplates, type ImportedMetaTemplate,
+  fetchPixels, type AdPixel,
 } from "@/lib/meta-api";
 import { generateCampaignName, generateAdsetName, generateAdName_v2 } from "@/lib/naming";
 import SearchableSelect from "@/components/SearchableSelect";
@@ -98,7 +99,7 @@ const PRESETS = [
     status: "PAUSED",
     fase: "FASE 3",
     requires_whatsapp: false,
-    not_implemented: true,
+    not_implemented: false,
   },
   {
     id: "fase3-vendas-zap",
@@ -182,6 +183,12 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const [loadingImported, setLoadingImported] = useState(false);
   const [selectedImportedKey, setSelectedImportedKey] = useState("");
   const [importedRawJson, setImportedRawJson] = useState<string>("");
+
+  // FASE 3 LP — pixels + URL do site
+  const [pixels, setPixels] = useState<AdPixel[]>([]);
+  const [loadingPixels, setLoadingPixels] = useState(false);
+  const [selectedPixelId, setSelectedPixelId] = useState("");
+  const [lpUrl, setLpUrl] = useState("");
 
   // Scheduling
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
@@ -411,6 +418,21 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       addLog(`⚠️ [imported] erro: ${err instanceof Error ? err.message : "desconhecido"}`);
     } finally {
       setLoadingImported(false);
+    }
+
+    // ===== STEP 6: LOAD AD PIXELS (FASE 3 LP) =====
+    setSelectedPixelId("");
+    setLoadingPixels(true);
+    try {
+      addLog(`📡 [pixels] Carregando pixels da conta...`);
+      const list = await fetchPixels(accessToken, selectedAccount);
+      setPixels(list);
+      addLog(`✅ [pixels] ${list.length} pixel(s) encontrado(s)`);
+    } catch (err: unknown) {
+      addLog(`⚠️ [pixels] erro: ${err instanceof Error ? err.message : "desconhecido"}`);
+      setPixels([]);
+    } finally {
+      setLoadingPixels(false);
     }
   };
 
@@ -678,6 +700,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const selectedAudienceName = selectedAud?.name || "";
   const selectedPreset = PRESETS.find(p => p.id === preset)!;
   const isFase3 = selectedPreset.requires_whatsapp;
+  const isFase3Lp = selectedPreset.destination_type === "WEBSITE";
   const selectedWhatsapp = whatsappNumbers.find(n => n.id === selectedWhatsappId);
 
   const computedCampaignName = campaignStructure === "new" && campaignNameInput && selectedAudienceName && budget
@@ -709,6 +732,19 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   };
 
   const fase3Valid = () => fase3Validate().valid;
+
+  const fase3LpValidate = (): { valid: boolean; errors: string[] } => {
+    if (!isFase3Lp) return { valid: true, errors: [] };
+    const errors: string[] = [];
+    if (!lpUrl.trim()) errors.push("Cole a URL do site no campo 'URL do site'.");
+    else {
+      try { new URL(lpUrl); } catch { errors.push("URL inválida — precisa começar com https:// ou http://"); }
+    }
+    if (!selectedPixelId) errors.push("Selecione um pixel.");
+    return { valid: errors.length === 0, errors };
+  };
+
+  const fase3LpValid = () => fase3LpValidate().valid;
 
   const scheduleValid = () => {
     if (!scheduleEnabled) return true;
@@ -749,6 +785,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     const fase3Result = fase3Validate();
     if (!fase3Result.valid) {
       fase3Result.errors.forEach(err => toast.error(err));
+      return;
+    }
+    const fase3LpResult = fase3LpValidate();
+    if (!fase3LpResult.valid) {
+      fase3LpResult.errors.forEach(err => toast.error(err));
       return;
     }
     if (!scheduleValid()) {
@@ -907,6 +948,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         greeting_text: greetingText || undefined,
         ready_message: readyMessage || undefined,
         imported_template_json: importedRawJson || undefined,
+        lp_url: selectedPreset.destination_type === "WEBSITE" ? lpUrl : undefined,
+        pixel_id: selectedPreset.destination_type === "WEBSITE" ? selectedPixelId : undefined,
+        custom_event_type: selectedPreset.destination_type === "WEBSITE" ? "LEAD" : undefined,
         schedule,
         utm_template: UTM_TEMPLATE,
       };
@@ -1494,6 +1538,70 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                   setUseCustomMessage(true);
                 }}
               />
+            </Card>
+          )}
+
+          {/* ============ FASE 3 LP EXTRA FIELDS ============ */}
+          {isFase3Lp && (
+            <Card className="glass-card p-6 space-y-5 border-accent/30">
+              <div className="flex items-center gap-2">
+                <MessageCircle className="w-5 h-5 text-accent" />
+                <Label className="font-display font-semibold text-sm">Configurações FASE 3 — Landing Page</Label>
+              </div>
+
+              {/* URL do site */}
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">URL do site (obrigatório)</Label>
+                <Input
+                  type="url"
+                  placeholder="https://seusite.com.br/lp"
+                  value={lpUrl}
+                  onChange={(e) => setLpUrl(e.target.value)}
+                />
+                <p className="text-[10px] text-muted-foreground">A URL pra onde o anúncio leva quando o usuário clica.</p>
+              </div>
+
+              {/* Pixel selector */}
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs text-muted-foreground">Pixel da Meta (obrigatório)</Label>
+                  {loadingPixels && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+                </div>
+                {pixels.length > 0 ? (
+                  <Select value={selectedPixelId} onValueChange={setSelectedPixelId}>
+                    <SelectTrigger><SelectValue placeholder={`${pixels.length} pixel(s) — selecione`} /></SelectTrigger>
+                    <SelectContent>
+                      {pixels.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.name} <span className="text-muted-foreground text-[10px]">({p.id})</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-[10px] text-muted-foreground italic">
+                    {loadingPixels ? "Carregando pixels..." : "Nenhum pixel encontrado nesta conta. Crie um pixel no Gerenciador de Eventos da Meta primeiro."}
+                  </p>
+                )}
+              </div>
+
+              {/* CTA fixo */}
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">CTA — Call to Action</Label>
+                <div className="bg-muted/50 border border-border rounded-md px-3 py-2">
+                  <p className="text-sm font-medium">Saiba mais (LEARN_MORE)</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Definido automaticamente pelo preset FASE 3 LP</p>
+                </div>
+              </div>
+
+              {/* Evento de conversão fixo */}
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Evento de conversão</Label>
+                <div className="bg-muted/50 border border-border rounded-md px-3 py-2">
+                  <p className="text-sm font-medium">LEAD</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Otimizado para o evento "Lead" do pixel selecionado</p>
+                </div>
+              </div>
             </Card>
           )}
 

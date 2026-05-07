@@ -82,6 +82,16 @@ export async function fetchImportedMetaTemplates(accessToken: string, adAccountI
   };
 }
 
+export type AdPixel = { id: string; name: string; creation_time?: string };
+
+export async function fetchPixels(accessToken: string, adAccountId: string) {
+  const { data, error } = await supabase.functions.invoke("meta-pixels", {
+    body: { access_token: accessToken, ad_account_id: adAccountId },
+  });
+  if (error) throw new Error(error.message);
+  return (data?.pixels || []) as AdPixel[];
+}
+
 export async function validatePublish(params: Record<string, unknown>) {
   const { data, error } = await supabase.functions.invoke("meta-publish-validate", {
     body: params,

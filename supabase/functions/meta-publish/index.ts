@@ -744,6 +744,112 @@ function buildPageWelcomeMessageJson(greetingText: string | undefined, readyMess
   });
 }
 
+// =====================================================================
+//  FASE 3 LP CREATIVE BUILDER — Leads via Landing Page (URL externa + pixel)
+//
+//  Diferenças vs FASE 3 (WhatsApp):
+//  - link aponta pra URL do site do gestor, não pra api.whatsapp.com
+//  - CTA: LEARN_MORE (botão "Saiba mais")
+//  - Sem page_welcome_message (não tem tela de boas-vindas Meta)
+//  - Aceita IG link (boost de post existente) ou Drive (upload imagem/vídeo)
+// =====================================================================
+
+async function buildFase3LpCreative(
+  accessToken: string,
+  adAccountId: string,
+  creativeLink: string,
+  creativeType: string,
+  creativeName: string,
+  pageId: string,
+  igActorId: string | undefined,
+  lpUrl: string,
+  logs: StepLog[],
+): Promise<{ spec?: Record<string, any>; error?: string }> {
+  if (!lpUrl) return { error: "URL de destino (lp_url) ausente." };
+  const callToAction = { type: "LEARN_MORE", value: { link: lpUrl } };
+
+  const isIgLink = creativeType === "instagram" || (!creativeType && creativeLink?.includes("instagram.com"));
+  const isDriveLink = creativeType === "drive" || (!creativeType && (creativeLink?.includes("drive.google.com") || creativeLink?.includes("docs.google.com")));
+
+  if (isIgLink) {
+    const result = await resolveInstagramMediaId(accessToken, adAccountId, creativeLink, pageId, igActorId, logs);
+    if (result.error) return { error: result.error };
+    if (!result.instagram_media_id) return { error: "instagram_media_id não resolvido." };
+    const resolvedIgActor = result.ig_account_id || igActorId;
+    if (!resolvedIgActor) return { error: "instagram_user_id não disponível." };
+
+    const spec: Record<string, any> = {
+      source_instagram_media_id: result.instagram_media_id,
+      instagram_user_id: resolvedIgActor,
+      call_to_action: callToAction,
+    };
+    console.log(`[FASE3-LP-creative] OK (instagram): media=${result.instagram_media_id}, link=${lpUrl}`);
+    logs.push({ step: "fase3lp_creative", status: "success", ts: ts(), detail: `source=instagram, link=${lpUrl}` });
+    return { spec };
+  }
+
+  if (isDriveLink) {
+    const result = await uploadDriveCreative(accessToken, adAccountId, creativeLink);
+    if (result.error) return { error: result.error };
+
+    if (result.image_hash) {
+      const linkData: Record<string, any> = {
+        image_hash: result.image_hash,
+        message: creativeName,
+        link: lpUrl,
+        call_to_action: callToAction,
+      };
+      const storySpec: Record<string, any> = { page_id: pageId, link_data: linkData };
+      if (igActorId) storySpec.instagram_user_id = igActorId;
+      console.log(`[FASE3-LP-creative] OK (drive/image): hash=${result.image_hash}, link=${lpUrl}`);
+      logs.push({ step: "fase3lp_creative", status: "success", ts: ts(), detail: `source=drive/image, hash=${result.image_hash}` });
+      return { spec: { object_story_spec: storySpec } };
+    }
+
+    if (result.video_id) {
+      // Aguardar processing + thumbnail (mesmo padrão do FASE 1 Drive video)
+      let thumbnailField: Record<string, string> = {};
+      for (let attempt = 0; attempt < 12; attempt++) {
+        await new Promise(r => setTimeout(r, 5000));
+        const vidRes = await fetch(`https://graph.facebook.com/v25.0/${result.video_id}?fields=status,picture&access_token=${accessToken}`);
+        const vidData = await vidRes.json();
+        if (vidData.picture) {
+          try {
+            const thumbRes = await fetch(vidData.picture);
+            if (thumbRes.ok) {
+              const thumbBlob = await thumbRes.blob();
+              const thumbB64 = await blobToBase64(thumbBlob);
+              const imgForm = new FormData();
+              imgForm.append("access_token", accessToken);
+              imgForm.append("filename", "video_thumb.jpg");
+              imgForm.append("bytes", thumbB64);
+              const imgUpRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/adimages`, { method: "POST", body: imgForm });
+              const imgUpData = await imgUpRes.json();
+              if (imgUpData.images) { const firstKey = Object.keys(imgUpData.images)[0]; thumbnailField = { image_hash: imgUpData.images[firstKey].hash }; }
+            }
+          } catch {}
+          if (!thumbnailField.image_hash) thumbnailField = { image_url: vidData.picture };
+          break;
+        }
+      }
+
+      const videoData: Record<string, any> = {
+        video_id: result.video_id,
+        ...thumbnailField,
+        message: creativeName,
+        call_to_action: callToAction,
+      };
+      const storySpec: Record<string, any> = { page_id: pageId, video_data: videoData };
+      if (igActorId) storySpec.instagram_user_id = igActorId;
+      console.log(`[FASE3-LP-creative] OK (drive/video): video_id=${result.video_id}, link=${lpUrl}`);
+      logs.push({ step: "fase3lp_creative", status: "success", ts: ts(), detail: `source=drive/video, video_id=${result.video_id}` });
+      return { spec: { object_story_spec: storySpec } };
+    }
+  }
+
+  return { error: "Link inválido para FASE 3 LP." };
+}
+
 async function buildFase3Creative(
   accessToken: string,
   adAccountId: string,
@@ -914,18 +1020,20 @@ Deno.serve(async (req) => {
       creative_link, creative_type, creative_name,
       whatsapp_number, whatsapp_number_id, location_targeting, cta_text, greeting_text, ready_message,
       imported_template_json,
+      lp_url, pixel_id, custom_event_type,
       schedule, utm_template,
     } = body;
 
     const structure = distribution_structure || "ABO";
     const isWhatsAppPreset = preset?.destination_type === "WHATSAPP";
     const isIgProfilePreset = preset?.destination_type === "INSTAGRAM_PROFILE";
+    const isWebsitePreset = preset?.destination_type === "WEBSITE";
     const fase3CampaignObjective = "OUTCOME_LEADS";
 
     // ══════════════════════════════════════════════════════════════════
     //  PIPELINE LOG: Identify which preset we're running
     // ══════════════════════════════════════════════════════════════════
-    const presetLabel = isWhatsAppPreset ? "FASE 3" : isIgProfilePreset ? "FASE 1" : "GENERIC";
+    const presetLabel = isWhatsAppPreset ? "FASE 3" : isIgProfilePreset ? "FASE 1" : isWebsitePreset ? "FASE 3 LP" : "GENERIC";
     console.log(`[publish] ═══════════════════════════════════════════`);
     console.log(`[publish] PRESET: ${presetLabel}`);
     console.log(`[publish] STRUCTURE: ${structure}`);
@@ -1003,7 +1111,15 @@ Deno.serve(async (req) => {
 
       let result: { spec?: Record<string, any>; error?: string };
 
-      if (isWhatsAppPreset) {
+      if (isWebsitePreset) {
+        // ── FASE 3 LP: creative com link pra site externo + pixel ──
+        result = await buildFase3LpCreative(
+          access_token, ad_account_id, cr.link, cr.type, cr.name,
+          pageId, igActorId,
+          lp_url || "",
+          logs,
+        );
+      } else if (isWhatsAppPreset) {
         // ── FASE 3: dedicated builder ──
         result = await buildFase3Creative(
           access_token, ad_account_id, cr.link, cr.type, cr.name,
@@ -1280,10 +1396,53 @@ Deno.serve(async (req) => {
       return { payload: p };
     };
 
+    // === FASE 3 LP AdSet builder (Leads via Landing Page com pixel) ===
+    const buildFase3LpAdset = (name: string): { payload?: Record<string, any>; error?: string } => {
+      if (!pixel_id || !lp_url) {
+        return { error: "FASE 3 LP requer pixel_id e lp_url. Selecione pixel e cole URL do site." };
+      }
+
+      const lpTargeting: Record<string, any> = { ...targeting };
+      if (lpTargeting.geo_locations && !lpTargeting.geo_locations.location_types) {
+        lpTargeting.geo_locations.location_types = ["home", "recent"];
+      } else if (!lpTargeting.geo_locations) {
+        lpTargeting.geo_locations = { countries: ["BR"], location_types: ["home", "recent"] };
+      }
+      lpTargeting.targeting_automation = {
+        advantage_audience: 0,
+        individual_setting: { age: 0, gender: 0 },
+      };
+
+      const p: Record<string, any> = {
+        campaign_id: campaignId,
+        name,
+        status: "ACTIVE",
+        billing_event: "IMPRESSIONS",
+        optimization_goal: "OFFSITE_CONVERSIONS",
+        bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+        destination_type: "WEBSITE",
+        promoted_object: {
+          pixel_id: String(pixel_id),
+          custom_event_type: String(custom_event_type || "LEAD"),
+        },
+        attribution_spec: [{ event_type: "CLICK_THROUGH", window_days: 7 }],
+        targeting: lpTargeting,
+        access_token,
+      };
+      if (structure === "ABO") p.daily_budget = Math.round(Number(budget) * 100);
+      if (schedule?.start_time) p.start_time = schedule.start_time;
+      else p.start_time = new Date().toISOString();
+      if (schedule?.end_time) p.end_time = schedule.end_time;
+
+      console.log(`[FASE3-LP-adset] promoted_object: ${JSON.stringify(p.promoted_object)} | destination=WEBSITE | URL=${lp_url}`);
+      return { payload: p };
+    };
+
     // Router
     const buildAdsetPayload = (name: string): { payload?: Record<string, any>; error?: string } => {
       if (isIgProfilePreset) return { payload: buildFase1Adset(name) };
       if (isWhatsAppPreset) return buildFase3Adset(name, body.audience_name);
+      if (isWebsitePreset) return buildFase3LpAdset(name);
       // Fallback
       const p: Record<string, any> = {
         name, campaign_id: campaignId,
