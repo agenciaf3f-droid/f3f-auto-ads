@@ -30,9 +30,15 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Paginar TODOS os adsets WHATSAPP da conta (até max_adsets)
+    // Paginar TODOS os adsets WHATSAPP da conta (incluindo ARCHIVED) até max_adsets.
+    // Filtering explícito porque o default da Meta exclui ARCHIVED — perdíamos templates
+    // antigos que ficavam só em campanhas arquivadas.
+    const filtering = encodeURIComponent(JSON.stringify([{
+      field: "effective_status", operator: "IN",
+      value: ["ACTIVE", "PAUSED", "DELETED", "ARCHIVED", "CAMPAIGN_PAUSED", "ADSET_PAUSED", "IN_PROCESS", "WITH_ISSUES"]
+    }]));
     const ctwAdsets: any[] = [];
-    let nextUrl: string | null = `https://graph.facebook.com/v25.0/${ad_account_id}/adsets?fields=id,destination_type&limit=300&access_token=${access_token}`;
+    let nextUrl: string | null = `https://graph.facebook.com/v25.0/${ad_account_id}/adsets?fields=id,destination_type&limit=300&filtering=${filtering}&access_token=${access_token}`;
     while (nextUrl && ctwAdsets.length < max_adsets) {
       const r = await fetch(nextUrl);
       const data = await r.json();
@@ -57,8 +63,9 @@ Deno.serve(async (req) => {
     for (let i = 0; i < ctwAdsets.length; i += chunkSize) {
       const chunk = ctwAdsets.slice(i, i + chunkSize);
       await Promise.all(chunk.map(async (aset: any) => {
+        // Inclui ARCHIVED também nos ads (default exclui)
         const adsRes = await fetch(
-          `https://graph.facebook.com/v25.0/${aset.id}/ads?fields=creative{name,object_story_spec{video_data{page_welcome_message},link_data{page_welcome_message}},page_welcome_message}&limit=5&access_token=${access_token}`,
+          `https://graph.facebook.com/v25.0/${aset.id}/ads?fields=creative{name,object_story_spec{video_data{page_welcome_message},link_data{page_welcome_message}},page_welcome_message}&limit=5&filtering=${filtering}&access_token=${access_token}`,
         );
         const adsData = await adsRes.json();
         if (adsData?.error) {
@@ -77,8 +84,10 @@ Deno.serve(async (req) => {
             const text = parsed.text_format?.message?.text || parsed.image_format?.message?.text || "";
             const autofill = parsed.text_format?.message?.autofill_message?.content || "";
             const qrTitle = parsed.image_format?.message?.quick_replies?.[0]?.title || null;
-            // Dedupe by template_id when present (mais confiável que por texto)
-            const key = tplId !== "inline" ? `tpl:${tplId}` : `inline:${text}::${autofill}::${qrTitle || ""}`;
+            // Dedupe por CONTEÚDO (welcome_text + autofill + quick_reply).
+            // template_id sozinho subestima — Meta às vezes reusa mesmo template_id pra ads
+            // com textos diferentes (variantes A/B), e queremos cada variação.
+            const key = `${text}::${autofill}::${qrTitle || ""}`;
             if (!seen.has(key) && (text || autofill || tplId !== "inline")) {
               seen.set(key, {
                 key,

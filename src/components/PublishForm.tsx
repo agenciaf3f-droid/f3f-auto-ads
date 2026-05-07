@@ -134,7 +134,8 @@ export default function PublishForm() {
   const [ctaText, setCtaText] = useState("");
   const [greetingText, setGreetingText] = useState("");
   const [readyMessage, setReadyMessage] = useState("");
-  const [useCustomMessage, setUseCustomMessage] = useState(true);
+  // useCustomMessage agora é sempre false (toggle removido da UI) — só imported templates
+const [useCustomMessage, setUseCustomMessage] = useState(false);
 
   // Location
   const [includedLocations, setIncludedLocations] = useState<LocationItem[]>([]);

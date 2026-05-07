@@ -144,80 +144,44 @@ export function WhatsAppMessages({
 }: WhatsAppMessagesProps) {
   return (
     <div className="space-y-3">
-      <Label className="text-xs text-muted-foreground">Mensagem de chegada / conversa (obrigatório)</Label>
-      <div className="flex items-center gap-3">
-        <span
-          className={`text-xs cursor-pointer ${useCustomMessage ? "text-primary font-medium" : "text-muted-foreground"}`}
-          onClick={() => onUseCustomMessageChange(true)}
-        >
-          Criar mensagem
-        </span>
-        <Switch checked={!useCustomMessage} onCheckedChange={(c) => onUseCustomMessageChange(!c)} />
-        <span
-          className={`text-xs cursor-pointer ${!useCustomMessage ? "text-primary font-medium" : "text-muted-foreground"}`}
-          onClick={() => onUseCustomMessageChange(false)}
-        >
-          Usar existente
-        </span>
+      <div className="flex items-center justify-between gap-2">
+        <Label className="text-xs text-muted-foreground">Modelo de mensagem (obrigatório)</Label>
+        {onLoadImported && (
+          <Button variant="outline" size="sm" onClick={onLoadImported} disabled={loadingImported} className="text-xs h-7 gap-1">
+            {loadingImported ? <Loader2 className="w-3 h-3 animate-spin" /> : "Buscar"}
+          </Button>
+        )}
       </div>
 
-      {useCustomMessage ? (
-        <div className="space-y-3">
-          <div className="space-y-1">
-            <Label className="text-[10px] text-muted-foreground">Saudação</Label>
-            <Input placeholder="Olá! 👋" value={greetingText} onChange={(e) => onGreetingChange(e.target.value)} />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[10px] text-muted-foreground">Mensagem pronta</Label>
-            <Textarea placeholder="Gostaria de saber mais sobre..." value={readyMessage} onChange={(e) => onReadyMessageChange(e.target.value)} rows={3} />
-          </div>
-          <p className="text-[10px] text-muted-foreground italic">
-            Para reusar este modelo em outras campanhas, salve no Gerenciador da Meta ao publicar — depois apareceá automaticamente em "Usar existente".
-          </p>
-        </div>
+      {importedTemplates.length > 0 ? (
+        <Select value={selectedImportedKey} onValueChange={(v) => onSelectImported?.(v)}>
+          <SelectTrigger><SelectValue placeholder={`${importedTemplates.length} modelo(s) encontrado(s) — selecione`} /></SelectTrigger>
+          <SelectContent>
+            {importedTemplates.map((t) => (
+              <SelectItem key={t.key} value={t.key}>
+                {(t.welcome_text || "(sem saudação)").substring(0, 40)} → {(t.autofill || "(sem autofill)").substring(0, 30)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       ) : (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Label className="text-[10px] text-muted-foreground">Modelos da conta de anúncios (Meta)</Label>
-              {loadingImported && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
-            </div>
-            {onLoadImported && (
-              <Button variant="outline" size="sm" onClick={onLoadImported} disabled={loadingImported} className="text-xs h-7 gap-1">
-                {loadingImported ? <Loader2 className="w-3 h-3 animate-spin" /> : "Buscar"}
-              </Button>
-            )}
-          </div>
-          {importedTemplates.length > 0 ? (
-            <Select value={selectedImportedKey} onValueChange={(v) => onSelectImported?.(v)}>
-              <SelectTrigger><SelectValue placeholder={`${importedTemplates.length} modelo(s) encontrado(s) — selecione`} /></SelectTrigger>
-              <SelectContent>
-                {importedTemplates.map((t) => (
-                  <SelectItem key={t.key} value={t.key}>
-                    {(t.welcome_text || "(sem saudação)").substring(0, 40)} → {(t.autofill || "(sem autofill)").substring(0, 30)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <p className="text-[10px] text-muted-foreground italic">
-              {loadingImported
-                ? "Carregando modelos da conta..."
-                : "Nenhum modelo encontrado. Clique em Buscar pra tentar novamente — Meta pode estar rate-limitando temporariamente."}
-            </p>
-          )}
-          {selectedImportedKey && (() => {
-            const t = importedTemplates.find(x => x.key === selectedImportedKey);
-            return t ? (
-              <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 rounded-md p-2.5 space-y-1">
-                <p className="text-[10px]"><strong>Saudação:</strong> {t.welcome_text}</p>
-                <p className="text-[10px]"><strong>Autofill:</strong> {t.autofill}</p>
-                {t.template_id !== "inline" && <p className="text-[9px] text-muted-foreground">template_id: {t.template_id}</p>}
-              </div>
-            ) : null;
-          })()}
-        </div>
+        <p className="text-[10px] text-muted-foreground italic">
+          {loadingImported
+            ? "Carregando modelos da conta..."
+            : "Nenhum modelo encontrado. Esta conta de anúncios precisa ter campanhas WhatsApp publicadas com 'Modelo de mensagem' no Gerenciador da Meta. Clique em Buscar para tentar novamente."}
+        </p>
       )}
+
+      {selectedImportedKey && (() => {
+        const t = importedTemplates.find(x => x.key === selectedImportedKey);
+        return t ? (
+          <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 rounded-md p-2.5 space-y-1">
+            <p className="text-[10px]"><strong>Saudação:</strong> {t.welcome_text}</p>
+            <p className="text-[10px]"><strong>Autofill:</strong> {t.autofill}</p>
+            {t.template_id !== "inline" && <p className="text-[9px] text-muted-foreground">template_id: {t.template_id}</p>}
+          </div>
+        ) : null;
+      })()}
     </div>
   );
 }
