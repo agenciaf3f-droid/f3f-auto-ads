@@ -1342,7 +1342,7 @@ Deno.serve(async (req) => {
         adset_id: adsetId,
         name: cr.name,
         status: "ACTIVE",
-        creative: { id: creativeData.id },
+        creative: { creative_id: creativeData.id },
         access_token,
       };
 
