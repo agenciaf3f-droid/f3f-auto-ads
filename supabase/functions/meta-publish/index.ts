@@ -1110,42 +1110,22 @@ Deno.serve(async (req) => {
 
     // === FASE 1 AdSet builder ===
     const buildFase1Adset = (name: string): Record<string, any> => {
-      // Build targeting explicitly — match exact Meta Ads Manager structure
-      const fase1Targeting: Record<string, any> = {
-        age_min: 18,
-        age_max: 65,
-        targeting_automation: { advantage_audience: 1 },
-      };
-
-      // geo_locations from user input, always include location_types
-      if (targeting?.geo_locations) {
-        fase1Targeting.geo_locations = {
-          ...targeting.geo_locations,
-          location_types: ["home", "recent"],
-        };
-      } else {
-        fase1Targeting.geo_locations = { countries: ["BR"], location_types: ["home", "recent"] };
-      }
-
-      // custom_audiences (optional — FASE 1 may or may not have audience targeting)
-      if (targeting?.custom_audiences) {
-        fase1Targeting.custom_audiences = targeting.custom_audiences;
-      }
-
+      // FASE 1 adset (versão que historicamente funciona):
+      // - advantage_audience FORÇADO = 0 (override user input)
+      // - promoted_object com APENAS page_id (sem instagram_profile_id, Meta descarta de qualquer jeito)
+      // - sem attribution_spec
       const p: Record<string, any> = {
         name,
         campaign_id: campaignId,
         billing_event: "IMPRESSIONS",
         optimization_goal: "PROFILE_VISIT",
-        destination_type: "INSTAGRAM_PROFILE",
-        bid_strategy: "LOWEST_COST_WITHOUT_CAP",
-        targeting: fase1Targeting,
+        bid_strategy: preset?.bid_strategy || "LOWEST_COST_WITHOUT_CAP",
+        targeting: { ...targeting, targeting_automation: { advantage_audience: 0 } },
         status: "ACTIVE",
-        promoted_object: { page_id: pageId, instagram_profile_id: igActorId },
-        attribution_spec: [{ event_type: "CLICK_THROUGH", window_days: 1 }],
+        destination_type: "INSTAGRAM_PROFILE",
+        promoted_object: { page_id: pageId },
         access_token,
       };
-
       if (structure === "ABO") {
         p.daily_budget = Math.round(Number(budget) * 100);
       }
@@ -1153,11 +1133,8 @@ Deno.serve(async (req) => {
       else p.start_time = new Date().toISOString();
       if (schedule?.end_time) p.end_time = schedule.end_time;
 
-      console.log(`[FASE1-adset] promoted_object: ${JSON.stringify(p.promoted_object)}`);
-      console.log(`[FASE1-adset] destination_type: ${p.destination_type}`);
-      console.log(`[FASE1-adset] targeting: ${JSON.stringify(fase1Targeting)}`);
-      console.log(`[FASE1-adset] attribution_spec: ${JSON.stringify(p.attribution_spec)}`);
-      console.log(`[FASE1-adset] budget: ${p.daily_budget || "CBO"}`);
+      console.log(`[FASE1-adset] ── FIXED: destination=INSTAGRAM_PROFILE, optimization=PROFILE_VISIT, advantage_audience=0`);
+      console.log(`[FASE1-adset] ── VARIABLE: name="${name}", page=${pageId}, budget=${p.daily_budget || "CBO"}`);
       return p;
     };
 
