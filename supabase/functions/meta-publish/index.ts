@@ -642,12 +642,15 @@ async function buildFase1Creative(
     if (!resolvedIgActor) return { error: "instagram_user_id não disponível." };
 
     const spec: Record<string, any> = {
+      object_story_spec: {
+        page_id: pageId,
+        instagram_user_id: resolvedIgActor,
+      },
       source_instagram_media_id: result.instagram_media_id,
-      instagram_user_id: resolvedIgActor,
       call_to_action: { type: "VISIT_PROFILE", value: { link: igProfileLink } },
     };
 
-    console.log(`[FASE1-creative] OK: media=${result.instagram_media_id}, ig=${resolvedIgActor}, CTA=VISIT_PROFILE`);
+    console.log(`[FASE1-creative] OK: media=${result.instagram_media_id}, ig=${resolvedIgActor}, page=${pageId}, CTA=VISIT_PROFILE`);
     logs.push({ step: "fase1_creative", status: "success", ts: ts(), detail: `media=${result.instagram_media_id}, CTA=VISIT_PROFILE` });
     return { spec };
 
