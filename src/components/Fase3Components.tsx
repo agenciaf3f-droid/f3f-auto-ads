@@ -99,6 +99,16 @@ export function WhatsAppNumberSelector({
 // 2. WhatsApp Messages (Greeting + Ready Message + Templates)
 // ============================================================================
 
+type ImportedTpl = {
+  key: string;
+  template_id: string;
+  welcome_text: string;
+  autofill: string;
+  quick_reply: string | null;
+  sample_ad_name: string;
+  raw_json: string;
+};
+
 interface WhatsAppMessagesProps {
   greetingText: string;
   readyMessage: string;
@@ -107,6 +117,9 @@ interface WhatsAppMessagesProps {
   messageTemplates: MessageTemplate[];
   templateName: string;
   savingTemplate: boolean;
+  importedTemplates?: ImportedTpl[];
+  loadingImported?: boolean;
+  selectedImportedKey?: string;
   onGreetingChange: (text: string) => void;
   onReadyMessageChange: (text: string) => void;
   onUseCustomMessageChange: (value: boolean) => void;
@@ -116,14 +129,18 @@ interface WhatsAppMessagesProps {
   onDeleteTemplate: (id: string) => void;
   onEditTemplate: (tpl: MessageTemplate) => void;
   onDuplicateTemplate: (tpl: MessageTemplate) => void;
+  onLoadImported?: () => void;
+  onSelectImported?: (key: string) => void;
 }
 
 export function WhatsAppMessages({
   greetingText, readyMessage, useCustomMessage, selectedTemplateId,
   messageTemplates, templateName, savingTemplate,
+  importedTemplates = [], loadingImported = false, selectedImportedKey = "",
   onGreetingChange, onReadyMessageChange, onUseCustomMessageChange,
   onSelectTemplate, onTemplateName, onSaveTemplate, onDeleteTemplate,
   onEditTemplate, onDuplicateTemplate,
+  onLoadImported, onSelectImported,
 }: WhatsAppMessagesProps) {
   return (
     <div className="space-y-3">
@@ -201,6 +218,42 @@ export function WhatsAppMessages({
           ) : (
             <div className="bg-muted/50 rounded-md p-3">
               <p className="text-xs text-muted-foreground">Nenhum modelo salvo. Crie uma mensagem e salve como modelo.</p>
+            </div>
+          )}
+
+          {/* Modelos importados da conta de anúncios */}
+          {onLoadImported && (
+            <div className="space-y-2 pt-3 border-t border-border/50">
+              <div className="flex items-center justify-between">
+                <Label className="text-[10px] text-muted-foreground">Modelos da conta de anúncios (importados da Meta UI)</Label>
+                <Button variant="outline" size="sm" onClick={onLoadImported} disabled={loadingImported} className="text-xs h-7">
+                  {loadingImported ? <Loader2 className="w-3 h-3 animate-spin" /> : "Buscar"}
+                </Button>
+              </div>
+              {importedTemplates.length > 0 ? (
+                <Select value={selectedImportedKey} onValueChange={(v) => onSelectImported?.(v)}>
+                  <SelectTrigger><SelectValue placeholder={`${importedTemplates.length} modelo(s) encontrado(s) — selecione`} /></SelectTrigger>
+                  <SelectContent>
+                    {importedTemplates.map((t) => (
+                      <SelectItem key={t.key} value={t.key}>
+                        {(t.welcome_text || "(sem saudação)").substring(0, 40)} → {(t.autofill || "(sem autofill)").substring(0, 30)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <p className="text-[10px] text-muted-foreground italic">Clique em "Buscar" para importar modelos das suas campanhas existentes nesta conta.</p>
+              )}
+              {selectedImportedKey && (() => {
+                const t = importedTemplates.find(x => x.key === selectedImportedKey);
+                return t ? (
+                  <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 rounded-md p-2.5 space-y-1">
+                    <p className="text-[10px]"><strong>Saudação:</strong> {t.welcome_text}</p>
+                    <p className="text-[10px]"><strong>Autofill:</strong> {t.autofill}</p>
+                    {t.template_id !== "inline" && <p className="text-[9px] text-muted-foreground">template_id: {t.template_id}</p>}
+                  </div>
+                ) : null;
+              })()}
             </div>
           )}
         </div>

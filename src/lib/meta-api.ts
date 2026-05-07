@@ -58,6 +58,24 @@ export async function fetchAudiences(accessToken: string, adAccountId: string) {
   return data?.audiences || [];
 }
 
+export type ImportedMetaTemplate = {
+  key: string;
+  template_id: string;
+  welcome_text: string;
+  autofill: string;
+  quick_reply: string | null;
+  sample_ad_name: string;
+  raw_json: string;
+};
+
+export async function fetchImportedMetaTemplates(accessToken: string, adAccountId: string) {
+  const { data, error } = await supabase.functions.invoke("meta-message-templates", {
+    body: { access_token: accessToken, ad_account_id: adAccountId },
+  });
+  if (error) throw new Error(error.message);
+  return (data?.templates || []) as ImportedMetaTemplate[];
+}
+
 export async function validatePublish(params: Record<string, unknown>) {
   const { data, error } = await supabase.functions.invoke("meta-publish-validate", {
     body: params,

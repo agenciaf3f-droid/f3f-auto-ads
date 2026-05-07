@@ -28,6 +28,7 @@ import {
   validatePublish, publishAd, validateCreative, fetchCampaigns,
   fetchWhatsAppNumbers, fetchIgAccountsForAdAccount, disconnectMeta,
   runCampaignDiagnostic,
+  fetchImportedMetaTemplates, type ImportedMetaTemplate,
 } from "@/lib/meta-api";
 import { generateCampaignName, generateAdsetName, generateAdName_v2 } from "@/lib/naming";
 import SearchableSelect from "@/components/SearchableSelect";
@@ -144,6 +145,12 @@ export default function PublishForm() {
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [templateName, setTemplateName] = useState("");
   const [savingTemplate, setSavingTemplate] = useState(false);
+
+  // Imported templates (extraídos das campanhas existentes da conta de anúncios)
+  const [importedTemplates, setImportedTemplates] = useState<ImportedMetaTemplate[]>([]);
+  const [loadingImported, setLoadingImported] = useState(false);
+  const [selectedImportedKey, setSelectedImportedKey] = useState("");
+  const [importedRawJson, setImportedRawJson] = useState<string>("");
 
   // Scheduling
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
@@ -532,6 +539,45 @@ export default function PublishForm() {
     setSelectedTemplateId(templateId);
     const tpl = messageTemplates.find(t => t.id === templateId);
     if (tpl) { setGreetingText(tpl.greeting); setReadyMessage(tpl.ready_message); }
+    // limpa importado se trocar pra interno
+    setSelectedImportedKey("");
+    setImportedRawJson("");
+  };
+
+  const handleLoadImportedTemplates = async () => {
+    if (!selectedAccount) {
+      toast.error("Selecione uma conta de anúncios primeiro");
+      return;
+    }
+    if (!accessToken) {
+      toast.error("Conexão Meta não disponível");
+      return;
+    }
+    setLoadingImported(true);
+    try {
+      addLog(`📡 [imported] Buscando modelos de mensagem da conta ${selectedAccount}...`);
+      const list = await fetchImportedMetaTemplates(accessToken, selectedAccount);
+      setImportedTemplates(list);
+      addLog(`✅ [imported] ${list.length} modelo(s) extraído(s) da conta`);
+      if (list.length === 0) toast.info("Nenhum modelo encontrado. As campanhas anteriores podem não ter usado 'Modelo de mensagem' ou não há campanhas WhatsApp nessa conta.");
+    } catch (e: any) {
+      toast.error(`Erro ao buscar modelos: ${e.message}`);
+      addLog(`❌ [imported] erro: ${e.message}`);
+    } finally {
+      setLoadingImported(false);
+    }
+  };
+
+  const handleSelectImportedTemplate = (key: string) => {
+    setSelectedImportedKey(key);
+    const t = importedTemplates.find(x => x.key === key);
+    if (t) {
+      setGreetingText(t.welcome_text || "");
+      setReadyMessage(t.autofill || "");
+      setImportedRawJson(t.raw_json);
+      // limpa interno se trocar pra importado
+      setSelectedTemplateId("");
+    }
   };
 
   // Creative management
@@ -799,6 +845,7 @@ export default function PublishForm() {
         cta_text: undefined,
         greeting_text: greetingText || undefined,
         ready_message: readyMessage || undefined,
+        imported_template_json: importedRawJson || undefined,
         schedule,
         utm_template: UTM_TEMPLATE,
       };
@@ -1351,6 +1398,11 @@ export default function PublishForm() {
                 messageTemplates={messageTemplates}
                 templateName={templateName}
                 savingTemplate={savingTemplate}
+                importedTemplates={importedTemplates}
+                loadingImported={loadingImported}
+                selectedImportedKey={selectedImportedKey}
+                onLoadImported={handleLoadImportedTemplates}
+                onSelectImported={handleSelectImportedTemplate}
                 onGreetingChange={setGreetingText}
                 onReadyMessageChange={setReadyMessage}
                 onUseCustomMessageChange={setUseCustomMessage}

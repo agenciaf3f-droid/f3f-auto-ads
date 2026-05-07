@@ -755,12 +755,17 @@ async function buildFase3Creative(
   whatsappPhone: string,  // display phone number for the WA link
   greetingText: string | undefined,
   readyMessage: string | undefined,
+  importedTemplateJson: string | undefined,
   logs: StepLog[],
 ): Promise<{ spec?: Record<string, any>; error?: string }> {
   // ── FIXED by preset ──
   const waLink = buildWhatsAppLink(whatsappPhone, greetingText, readyMessage);
   const callToAction = { type: "WHATSAPP_MESSAGE", value: { link: waLink } };
-  const welcomeMessageJson = buildPageWelcomeMessageJson(greetingText, readyMessage);
+  // Se user selecionou um modelo importado da própria conta Meta UI, reutiliza o JSON como-está
+  // (preserva template_id válido). Caso contrário, geramos um JSON novo a partir de greeting+autofill.
+  const welcomeMessageJson = (importedTemplateJson && importedTemplateJson.trim())
+    ? importedTemplateJson
+    : buildPageWelcomeMessageJson(greetingText, readyMessage);
 
   console.log(`[FASE3-creative] ═══ FIXED fields ═══`);
   console.log(`[FASE3-creative] CTA: type=WHATSAPP_MESSAGE (fixed by preset)`);
@@ -908,6 +913,7 @@ Deno.serve(async (req) => {
       identity,
       creative_link, creative_type, creative_name,
       whatsapp_number, whatsapp_number_id, location_targeting, cta_text, greeting_text, ready_message,
+      imported_template_json,
       schedule, utm_template,
     } = body;
 
@@ -1004,6 +1010,7 @@ Deno.serve(async (req) => {
           pageId, igActorId,
           whatsapp_number || "",  // phone display for WA link
           greeting_text, ready_message,
+          imported_template_json,
           logs,
         );
       } else if (isIgProfilePreset) {
