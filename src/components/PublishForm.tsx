@@ -74,6 +74,20 @@ const PRESETS = [
     not_implemented: false,
   },
   {
+    id: "fase2-publico-completo",
+    label: "FASE 2 - PÚBLICO COMPLETO",
+    objective: "OUTCOME_ENGAGEMENT",
+    optimization_goal: "THRUPLAY",
+    billing_event: "IMPRESSIONS",
+    bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+    destination_type: "ON_VIDEO",
+    default_cta: "NO_BUTTON",
+    status: "PAUSED",
+    fase: "FASE 2",
+    requires_whatsapp: false,
+    not_implemented: false,
+  },
+  {
     id: "fase3-br",
     label: "FASE 3 - LEADS | ZAP",
     objective: "OUTCOME_LEADS",
@@ -189,6 +203,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const [loadingPixels, setLoadingPixels] = useState(false);
   const [selectedPixelId, setSelectedPixelId] = useState("");
   const [lpUrl, setLpUrl] = useState("");
+
+  // FASE 2 — multi-audience (2-10 inclusion audiences, each becomes 1 adset)
+  const [fase2Audiences, setFase2Audiences] = useState<string[]>([]);
 
   // Scheduling
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
@@ -702,6 +719,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const isFase3 = selectedPreset.requires_whatsapp;
   const isFase3Lp = selectedPreset.destination_type === "WEBSITE";
   const isFase3VendasZap = selectedPreset.id === "fase3-vendas-zap";
+  const isFase2 = selectedPreset.fase === "FASE 2";
   const selectedWhatsapp = whatsappNumbers.find(n => n.id === selectedWhatsappId);
 
   const computedCampaignName = campaignStructure === "new" && campaignNameInput && selectedAudienceName && budget
@@ -754,6 +772,19 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     return { valid: errors.length === 0, errors };
   };
 
+  const fase2Validate = (): { valid: boolean; errors: string[] } => {
+    if (!isFase2) return { valid: true, errors: [] };
+    const errors: string[] = [];
+    if (fase2Audiences.length < 2) errors.push("FASE 2 requer no mínimo 2 públicos selecionados.");
+    if (fase2Audiences.length > 10) errors.push("FASE 2 aceita no máximo 10 públicos.");
+    if (creatives.length !== 1) errors.push("FASE 2 exige exatamente 1 criativo (vídeo Drive).");
+    else {
+      const cr = creatives[0];
+      if (cr.type !== "drive") errors.push("FASE 2 exige criativo Drive (vídeo). IG link não suportado.");
+    }
+    return { valid: errors.length === 0, errors };
+  };
+
   const scheduleValid = () => {
     if (!scheduleEnabled) return true;
     return !!(scheduleDate && scheduleTime);
@@ -803,6 +834,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     const fase3VendasResult = fase3VendasValidate();
     if (!fase3VendasResult.valid) {
       fase3VendasResult.errors.forEach(err => toast.error(err));
+      return;
+    }
+    const fase2Result = fase2Validate();
+    if (!fase2Result.valid) {
+      fase2Result.errors.forEach(err => toast.error(err));
       return;
     }
     if (!scheduleValid()) {
@@ -966,6 +1002,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         custom_event_type: selectedPreset.destination_type === "WEBSITE"
           ? "LEAD"
           : (isFase3VendasZap ? "PURCHASE" : undefined),
+        fase2_audiences: isFase2 ? fase2Audiences : undefined,
         schedule,
         utm_template: UTM_TEMPLATE,
       };
@@ -1447,23 +1484,55 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
             ))}
           </Card>
 
-          {/* Audience */}
+          {/* Audience — single (FASE 1/3) ou multi (FASE 2) */}
           <Card className="glass-card p-6 space-y-4">
             <Label className="font-display font-semibold text-sm">
-              Público {audiences.length > 0 && `(${audiences.length})`}
+              {isFase2
+                ? `Públicos (FASE 2: ${fase2Audiences.length}/10) ${audiences.length > 0 ? `— ${audiences.length} disponíveis` : ""}`
+                : `Público ${audiences.length > 0 ? `(${audiences.length})` : ""}`}
             </Label>
             {loadingAudiences ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="w-4 h-4 animate-spin" /> Carregando públicos...
               </div>
             ) : audiences.length > 0 ? (
-              <SearchableSelect
-                options={audiences}
-                value={selectedAudience}
-                onValueChange={setSelectedAudience}
-                placeholder="Selecione o público"
-                searchPlaceholder="Pesquisar público por nome..."
-              />
+              isFase2 ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">Selecione 2 a 10 públicos. Cada um vira um conjunto separado, todos com o mesmo criativo.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto">
+                    {audiences.map((aud) => {
+                      const checked = fase2Audiences.includes(aud.id);
+                      const disabled = !checked && fase2Audiences.length >= 10;
+                      return (
+                        <label key={aud.id} className={`flex items-center gap-2 px-2 py-1.5 rounded border ${checked ? "bg-primary/10 border-primary" : "border-border"} ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-muted/50"}`}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={disabled}
+                            onChange={(e) => {
+                              if (e.target.checked) setFase2Audiences([...fase2Audiences, aud.id]);
+                              else setFase2Audiences(fase2Audiences.filter(x => x !== aud.id));
+                            }}
+                            className="shrink-0"
+                          />
+                          <span className="text-xs truncate">{aud.name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {fase2Audiences.length > 0 && fase2Audiences.length < 2 && (
+                    <p className="text-[10px] text-warning">FASE 2 requer no mínimo 2 públicos.</p>
+                  )}
+                </div>
+              ) : (
+                <SearchableSelect
+                  options={audiences}
+                  value={selectedAudience}
+                  onValueChange={setSelectedAudience}
+                  placeholder="Selecione o público"
+                  searchPlaceholder="Pesquisar público por nome..."
+                />
+              )
             ) : selectedAccount ? (
               <div className="flex items-center gap-2 text-sm text-warning">
                 <AlertTriangle className="w-4 h-4" /> Nenhum público encontrado

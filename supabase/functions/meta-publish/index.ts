@@ -1029,9 +1029,13 @@ Deno.serve(async (req) => {
     const isWhatsAppPreset = preset?.destination_type === "WHATSAPP";
     const isIgProfilePreset = preset?.destination_type === "INSTAGRAM_PROFILE";
     const isWebsitePreset = preset?.destination_type === "WEBSITE";
+    const isVideoEngagementPreset = preset?.destination_type === "ON_VIDEO" || preset?.optimization_goal === "THRUPLAY";
     // VENDAS via WhatsApp = WhatsApp destination + objective OUTCOME_SALES + pixel/PURCHASE no promoted_object
     const isFase3VendasZap = isWhatsAppPreset && preset?.objective === "OUTCOME_SALES";
     const fase3CampaignObjective = isFase3VendasZap ? "OUTCOME_SALES" : (preset?.objective || "OUTCOME_LEADS");
+
+    // FASE 2 — multiple audience IDs (one adset per audience)
+    const fase2AudienceIds: string[] = body.fase2_audiences || [];
 
     // ══════════════════════════════════════════════════════════════════
     //  PIPELINE LOG: Identify which preset we're running
@@ -1446,6 +1450,42 @@ Deno.serve(async (req) => {
       return { payload: p };
     };
 
+    // === FASE 2 AdSet builder ===
+    // Cada chamada recebe uma audience inclusion + audience exclusion.
+    // optimization_goal=THRUPLAY, destination_type=ON_VIDEO, opt audience por adset
+    const buildFase2Adset = (name: string, includedAudienceId: string, excludedAudienceId: string | null): { payload?: Record<string, any>; error?: string } => {
+      if (!includedAudienceId) {
+        return { error: "FASE 2 requer audience_id de inclusão por adset." };
+      }
+      const f2Targeting: Record<string, any> = {
+        custom_audiences: [{ id: includedAudienceId }],
+        geo_locations: { countries: ["BR"], location_types: ["home", "recent"] },
+        targeting_automation: { advantage_audience: 0, individual_setting: { age: 0, gender: 0 } },
+      };
+      if (excludedAudienceId) {
+        f2Targeting.excluded_custom_audiences = [{ id: excludedAudienceId }];
+      }
+      const p: Record<string, any> = {
+        campaign_id: campaignId,
+        name,
+        status: "ACTIVE",
+        billing_event: "IMPRESSIONS",
+        optimization_goal: "THRUPLAY",
+        bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+        destination_type: "ON_VIDEO",
+        targeting: f2Targeting,
+        attribution_spec: [{ event_type: "CLICK_THROUGH", window_days: 1 }],
+        access_token,
+      };
+      if (structure === "ABO") p.daily_budget = Math.round(Number(budget) * 100);
+      if (schedule?.start_time) p.start_time = schedule.start_time;
+      else p.start_time = new Date().toISOString();
+      if (schedule?.end_time) p.end_time = schedule.end_time;
+
+      console.log(`[FASE2-adset] inclusion=${includedAudienceId}, exclusion=${excludedAudienceId || "—"}, opt=THRUPLAY`);
+      return { payload: p };
+    };
+
     // Router
     const buildAdsetPayload = (name: string): { payload?: Record<string, any>; error?: string } => {
       if (isIgProfilePreset) return { payload: buildFase1Adset(name) };
@@ -1791,6 +1831,120 @@ Deno.serve(async (req) => {
         },
       };
     };
+
+    // ── FASE 2 special flow: 1 creative + N adsets (one per audience) ──
+    if (isVideoEngagementPreset && fase2AudienceIds.length > 0) {
+      if (resolvedCreatives.length !== 1) {
+        return respond({ ok: false, step: "publish", error_message: "FASE 2 exige exatamente 1 criativo (vídeo Drive). Forneça 1 criativo." });
+      }
+      const cr = resolvedCreatives[0];
+      // o spec do criativo Drive já contém video_id em object_story_spec.video_data.video_id
+      const videoId = cr.spec?.object_story_spec?.video_data?.video_id;
+      if (!videoId) {
+        return respond({ ok: false, step: "publish", error_message: "FASE 2 precisa de criativo de vídeo (Drive). Não foi possível extrair video_id do criativo." });
+      }
+
+      // 1. Cria audience de exclusão VV50% deste vídeo (365d)
+      logs.push({ step: "fase2_exclusion_audience", status: "start", ts: ts(), detail: `criando VV50% audience pro video=${videoId}` });
+      const exclName = `VV50% [${(cr.name || "video").substring(0, 20)} - ${new Date().toISOString().slice(0,10)}]`;
+      const exclRule = {
+        inclusions: {
+          operator: "or",
+          rules: [{
+            event_sources: [{ id: videoId, type: "video" }],
+            retention_seconds: 365 * 86400,
+            filter: { operator: "and", filters: [{ field: "event", operator: "=", value: "video_view_50_percent" }] },
+          }],
+        },
+      };
+      const exclForm = new FormData();
+      exclForm.append("access_token", access_token);
+      exclForm.append("name", exclName);
+      exclForm.append("subtype", "ENGAGEMENT");
+      exclForm.append("rule", JSON.stringify(exclRule));
+      const exclRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/customaudiences`, { method: "POST", body: exclForm });
+      const exclData = await exclRes.json();
+      if (exclData.error) {
+        logs.push({ step: "fase2_exclusion_audience", status: "error", ts: ts(), detail: `${exclData.error.message}` });
+        return respond({ ok: false, step: "exclusion_audience", campaign_id: campaignId, error_message: `Falha ao criar audience de exclusão VV50%: ${exclData.error.message}` });
+      }
+      const exclusionAudienceId = exclData.id;
+      logs.push({ step: "fase2_exclusion_audience", status: "success", ts: ts(), detail: `id=${exclusionAudienceId}, name="${exclName}"` });
+
+      // 2. Cria 1 creative compartilhado
+      const creativePayload: Record<string, any> = { name: `Creative - ${cr.name}`, ...cr.spec, access_token };
+      if (utm_template) creativePayload.url_tags = utm_template;
+      logs.push({ step: "fase2_creative", status: "start", ts: ts() });
+      const creativeRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/adcreatives`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(creativePayload),
+      });
+      const creativeData = await creativeRes.json();
+      if (creativeData.error) {
+        logs.push({ step: "fase2_creative", status: "error", ts: ts(), detail: `${creativeData.error.message} | code=${creativeData.error.code}` });
+        return respond({ ok: false, step: "creative", campaign_id: campaignId, ...formatMetaError(creativeData.error) });
+      }
+      const sharedCreativeId = creativeData.id;
+      creativesCreated = 1;
+      logs.push({ step: "fase2_creative", status: "success", ts: ts(), detail: `id=${sharedCreativeId}` });
+
+      // 3. Loop sobre audiences: 1 adset + 1 ad pra cada
+      for (let i = 0; i < fase2AudienceIds.length; i++) {
+        const audId = fase2AudienceIds[i];
+        const idx = i + 1;
+        const adsetNum = String(idx).padStart(2, "0");
+        const adsetPayloadName = `${adset_name || generated_name || "Campaign"} - ${adsetNum}`;
+        const adsetBuild = buildFase2Adset(adsetPayloadName, audId, exclusionAudienceId);
+        if (adsetBuild.error) {
+          failures.push({ index: idx, name: audId, step: "adset", reason: adsetBuild.error });
+          continue;
+        }
+        const adsetResult = await createAdset(adsetBuild.payload!, `adset_${idx}`);
+        if (adsetResult.warning) {
+          return respond({ ok: false, step: "idempotency", campaign_id: campaignId, warning: true, error_message: adsetResult.warning });
+        }
+        if (adsetResult.error) {
+          failures.push({ index: idx, name: audId, step: "adset", reason: adsetResult.error.message || JSON.stringify(adsetResult.error) });
+          continue;
+        }
+        const adsetId = adsetResult.id!;
+        adsetIds.push(adsetId);
+        adsetsCreated++;
+
+        // Cria 1 ad referenciando o creative compartilhado
+        const adPayload = {
+          adset_id: adsetId,
+          name: `${cr.name} - ${adsetNum}`,
+          status: "ACTIVE",
+          creative: { creative_id: sharedCreativeId },
+          access_token,
+        };
+        logs.push({ step: `ad_${idx}`, status: "start", ts: ts(), detail: `creative=${sharedCreativeId}, adset=${adsetId}` });
+        const adRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/ads`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(adPayload),
+        });
+        const adData = await adRes.json();
+        if (adData.error) {
+          const errDetail = `${adData.error.message} | code=${adData.error.code} | subcode=${adData.error.error_subcode}`;
+          logs.push({ step: `ad_${idx}`, status: "error", ts: ts(), detail: errDetail });
+          failures.push({ index: idx, name: audId, step: "ad", reason: errDetail });
+          continue;
+        }
+        adIds.push(adData.id);
+        adsCreated++;
+        logs.push({ step: `ad_${idx}`, status: "success", ts: ts(), detail: `id=${adData.id}` });
+      }
+
+      // Skip o restante do fluxo CBO/ABO
+      logs.push({ step: "summary", status: failures.length === 0 ? "success" : "error", ts: ts(), detail: `preset=FASE 2, adsets=${adsetsCreated}, creatives=${creativesCreated}, ads=${adsCreated}, failures=${failures.length}, exclusion_audience=${exclusionAudienceId}` });
+      return respond({
+        ok: failures.length === 0,
+        campaign_id: campaignId,
+        adsets_created: adsetsCreated,
+        ads_created: adsCreated,
+        exclusion_audience_id: exclusionAudienceId,
+        failures: failures.length > 0 ? failures : undefined,
+      });
+    }
 
     if (structure === "CBO") {
       const adsetPayloadName = adset_name || `${generated_name || "Campaign"} - AdSet`;
