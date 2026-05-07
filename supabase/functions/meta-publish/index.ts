@@ -295,7 +295,7 @@ function validateFase3Targeting(t: Record<string, any>) {
   if (!t.geo_locations?.location_types) errors.push("geo_locations.location_types ausente");
   if (!t.targeting_automation) errors.push("targeting_automation ausente");
   else {
-    if (t.targeting_automation.advantage_audience !== 1) errors.push("advantage_audience deve ser 1");
+    if (t.targeting_automation.advantage_audience !== 0) errors.push("advantage_audience deve ser 0");
   }
   return { ok: errors.length === 0, errors };
 }
