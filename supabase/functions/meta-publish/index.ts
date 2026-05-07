@@ -693,6 +693,57 @@ function buildWhatsAppLink(phoneNumber: string, greetingText?: string, readyMess
   return link;
 }
 
+// page_welcome_message renderiza a TELA DE BOAS-VINDAS antes de abrir o WhatsApp.
+// É o mesmo formato que a UI da Meta gera quando o usuário cria/usa um "Modelo de mensagem".
+// Estrutura derivada de creatives funcionais inspecionados via API.
+function buildPageWelcomeMessageJson(greetingText: string | undefined, readyMessage: string | undefined): string {
+  const welcomeText = (greetingText && greetingText.trim()) || "Oi! Como podemos ajudar?";
+  const autofill = (readyMessage && readyMessage.trim()) || "Olá! Tenho interesse e queria mais informações.";
+  return JSON.stringify({
+    type: "VISUAL_EDITOR",
+    version: 2,
+    landing_screen_type: "welcome_message",
+    media_type: "text",
+    text_format: {
+      customer_action_type: "autofill_message",
+      message: {
+        autofill_message: { content: autofill },
+        text: welcomeText,
+      },
+    },
+    image_format: {
+      customer_action_type: "quick_replies",
+      message: {
+        attachment: {
+          type: "template",
+          payload: { template_type: "generic", elements: [{ title: "", buttons: [], image_hash: "" }] },
+        },
+        quick_replies: [{ title: autofill, content_type: "text", response_type: null }],
+        text: welcomeText,
+      },
+    },
+    video_format: {
+      customer_action_type: "quick_replies",
+      message: {
+        attachment: { type: "video", payload: { attachment_id: "" } },
+        quick_replies: [{ title: autofill, content_type: "text", response_type: null }],
+        text: welcomeText,
+      },
+    },
+    ai_generated_icebreaker_toggle_enabled: null,
+    user_edit: true,
+    surface: "visual_editor_new",
+    reengagement_disabled: false,
+    reengagement: {
+      text: "Olá, {{user_first_name}}! Gostaríamos de fazer um acompanhamento. Você tem alguma pergunta?",
+      include_products: true,
+    },
+    autofill_message_edited: true,
+    is_user_editing: false,
+    template_version: 0,
+  });
+}
+
 async function buildFase3Creative(
   accessToken: string,
   adAccountId: string,
@@ -709,6 +760,7 @@ async function buildFase3Creative(
   // ── FIXED by preset ──
   const waLink = buildWhatsAppLink(whatsappPhone, greetingText, readyMessage);
   const callToAction = { type: "WHATSAPP_MESSAGE", value: { link: waLink } };
+  const welcomeMessageJson = buildPageWelcomeMessageJson(greetingText, readyMessage);
 
   console.log(`[FASE3-creative] ═══ FIXED fields ═══`);
   console.log(`[FASE3-creative] CTA: type=WHATSAPP_MESSAGE (fixed by preset)`);
@@ -734,6 +786,7 @@ async function buildFase3Creative(
       source_instagram_media_id: result.instagram_media_id,
       instagram_user_id: resolvedIgActor,
       call_to_action: callToAction,
+      page_welcome_message: welcomeMessageJson,
     };
 
     console.log(`[FASE3-creative] OK (instagram): media=${result.instagram_media_id}, ig=${resolvedIgActor}`);
@@ -750,6 +803,7 @@ async function buildFase3Creative(
         message: readyMessage || creativeName,
         link: waLink,
         call_to_action: callToAction,
+        page_welcome_message: welcomeMessageJson,
       };
       const storySpec: Record<string, any> = { page_id: pageId, link_data: linkData };
       if (igActorId) storySpec.instagram_user_id = igActorId;
@@ -789,6 +843,7 @@ async function buildFase3Creative(
         ...thumbnailField,
         message: readyMessage || creativeName,
         call_to_action: callToAction,
+        page_welcome_message: welcomeMessageJson,
       };
       const storySpec: Record<string, any> = { page_id: pageId, video_data: videoData };
       if (igActorId) storySpec.instagram_user_id = igActorId;
