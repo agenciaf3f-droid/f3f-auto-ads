@@ -391,25 +391,36 @@ async function resolveInstagramMediaId(
   console.log(`[ig_input] type=${match[1]}, shortcode=${shortcode}`);
   logs.push({ step: "ig_input", status: "success", ts: ts(), detail: `type=${match[1]}, shortcode=${shortcode}` });
 
+  const shortcodeLc = shortcode.toLowerCase();
   const resolveMediaFromIgActor = async (
     igActorId: string,
     pageId?: string,
   ): Promise<{ mediaId?: string; permalink?: string; pageId?: string; igActorId?: string; error?: string }> => {
-    const endpoint = `https://graph.facebook.com/v25.0/${igActorId}/media?fields=id,shortcode,permalink&limit=30`;
-    const res = await fetch(`${endpoint}&access_token=${accessToken}`);
-    const data = await res.json();
-
-    if (data.error) {
-      logs.push({ step: "ig_media_resolve", status: "error", ts: ts(), detail: `ig_actor=${igActorId}, code=${data.error.code}, msg=${data.error.message}` });
-      return { error: `Falha ao resolver mídia do IG: ${data.error.message}` };
+    let url: string | null = `https://graph.facebook.com/v25.0/${igActorId}/media?fields=id,shortcode,permalink&limit=100&access_token=${accessToken}`;
+    let scanned = 0;
+    while (url && scanned < 500) {
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.error) {
+        logs.push({ step: "ig_media_resolve", status: "error", ts: ts(), detail: `ig_actor=${igActorId}, code=${data.error.code}, msg=${data.error.message}` });
+        return { error: `Falha ao resolver mídia do IG: ${data.error.message}` };
+      }
+      const items = data.data || [];
+      scanned += items.length;
+      const found = items.find((m: any) => {
+        const sc = (m.shortcode || "").toLowerCase();
+        if (sc === shortcodeLc) return true;
+        const permalinkLc = (m.permalink || "").toLowerCase();
+        return permalinkLc.includes(`/${shortcodeLc}`);
+      });
+      if (found) {
+        console.log(`[ig_media_resolve] FOUND media_id=${found.id}, ig_actor=${igActorId}, scanned=${scanned}`);
+        logs.push({ step: "ig_media_resolve", status: "success", ts: ts(), detail: `media_id=${found.id}, ig_actor=${igActorId}, scanned=${scanned}` });
+        return { mediaId: found.id, permalink: found.permalink, pageId, igActorId };
+      }
+      url = data.paging?.next || null;
     }
-
-    const found = (data.data || []).find((m: any) => m.shortcode === shortcode || normalizeUrl(m.permalink).includes(shortcode.toLowerCase()));
-    if (!found) return {};
-
-    console.log(`[ig_media_resolve] FOUND media_id=${found.id}, ig_actor=${igActorId}`);
-    logs.push({ step: "ig_media_resolve", status: "success", ts: ts(), detail: `media_id=${found.id}, ig_actor=${igActorId}` });
-    return { mediaId: found.id, permalink: found.permalink, pageId, igActorId };
+    return {};
   };
 
   let resolvedMedia: { mediaId?: string; permalink?: string; pageId?: string; igActorId?: string; error?: string } = {};
