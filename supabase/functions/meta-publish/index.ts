@@ -785,15 +785,29 @@ async function buildFase2Creative(
     return { error: "Link inválido para FASE 2 (use IG post/reel ou Drive video)." };
   }
 
-  // Upload em /act_X/advideos com target_id=pageId.
+  // Upload em /act_X/advideos com target_id=pageId. Timeout explícito de 25s
+  // pra não pendurar o edge function quando Meta demora muito no download.
   logs.push({ step: "fase2_upload", status: "start", ts: ts(), detail: `enviando file_url pra Meta: ${videoSourceUrl!.substring(0, 80)}...` });
   const upForm = new FormData();
   upForm.append("access_token", accessToken);
   upForm.append("file_url", videoSourceUrl!);
   upForm.append("name", (creativeName || "FASE 2 video").substring(0, 80));
   upForm.append("target_id", pageId);
-  const upRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/advideos`, { method: "POST", body: upForm });
-  const upData = await upRes.json();
+  let upData: any;
+  try {
+    const upController = new AbortController();
+    const upTimeout = setTimeout(() => upController.abort(), 25000);
+    const upRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/advideos`, {
+      method: "POST", body: upForm, signal: upController.signal,
+    });
+    clearTimeout(upTimeout);
+    upData = await upRes.json();
+  } catch (e) {
+    const isAbort = (e as any)?.name === "AbortError";
+    const msg = isAbort ? "timeout 25s no upload pra Meta" : ((e as Error).message || "erro desconhecido");
+    logs.push({ step: "fase2_upload", status: "error", ts: ts(), detail: msg });
+    return { error: `Falha upload do vídeo: ${msg}` };
+  }
   if (upData.error || !upData.id) {
     logs.push({ step: "fase2_upload", status: "error", ts: ts(), detail: `${upData?.error?.message || "sem id"} | code=${upData?.error?.code || "-"}` });
     return { error: `Falha upload do vídeo: ${upData?.error?.message || "sem id"} | code=${upData?.error?.code || "-"}` };
