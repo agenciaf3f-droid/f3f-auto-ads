@@ -733,9 +733,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const generatedName = computedCampaignName || "";
 
   // Structure descriptions
-  const structureDescription = distributionStructure === "CBO"
-    ? `1 Campanha → 1 Conjunto → ${creatives.length} Anúncio(s)`
-    : `1 Campanha → ${creatives.length} Conjunto(s) → 1 Anúncio/conjunto`;
+  const structureDescription = isFase2
+    ? `1 Campanha → ${fase2Audiences.length || "N"} Conjunto(s) → 1 Ad/conjunto (criativo compartilhado)`
+    : distributionStructure === "CBO"
+      ? `1 Campanha → 1 Conjunto → ${creatives.length} Anúncio(s)`
+      : `1 Campanha → ${creatives.length} Conjunto(s) → 1 Anúncio/conjunto`;
 
   const budgetLabel = distributionStructure === "CBO" ? "Orçamento da campanha (R$/dia)" : "Orçamento por conjunto (R$/dia)";
 
@@ -805,9 +807,14 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     // FASE 2 usa multi-audience (fase2Audiences) em vez de selectedAudience
     const audienceOk = isFase2 ? fase2Audiences.length >= 2 : !!selectedAudience;
     if (!selectedAccount || !audienceOk || !budget) {
-      toast.error(isFase2
-        ? "Preencha conta + 2+ públicos + orçamento antes de validar."
-        : "Preencha todos os campos antes de validar.");
+      const missing = [
+        !selectedAccount && "conta de anúncios",
+        !audienceOk && (isFase2 ? `${fase2Audiences.length}/2 públicos` : "público"),
+        !budget && "orçamento",
+      ].filter(Boolean).join(", ");
+      const msg = `Faltando: ${missing}`;
+      addLog(`❌ [validate] ${msg}`);
+      toast.error(msg);
       return;
     }
     if (!identityLoaded || identityLoading) {
