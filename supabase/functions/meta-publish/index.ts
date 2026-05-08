@@ -764,16 +764,9 @@ async function buildFase2Creative(
   const isIgLink = creativeType === "instagram" || (!creativeType && creativeLink?.includes("instagram.com"));
   const isDriveLink = creativeType === "drive" || (!creativeType && (creativeLink?.includes("drive.google.com") || creativeLink?.includes("docs.google.com")));
 
-  // FASE 2 EXIGE vídeo de PAGE (não advideo). Custom audience VV50% precisa
-  // que o video seja associado a uma página. Resolve o page access token primeiro.
-  const pageInfoRes = await fetch(`https://graph.facebook.com/v25.0/${pageId}?fields=access_token&access_token=${accessToken}`);
-  const pageInfo = await pageInfoRes.json();
-  const pageAccessToken: string | undefined = pageInfo?.access_token;
-  if (!pageAccessToken) {
-    return { error: `Não foi possível obter o Page Access Token da página ${pageId}. ${pageInfo?.error?.message || "verifique permissões"}` };
-  }
-  console.log(`[FASE2-creative] page access token resolved`);
-
+  // FASE 2 exige vídeo associado a uma Page (pra video engagement audience).
+  // Tenta upload em /act_X/advideos com target_id=pageId — Meta associa o
+  // advideo à Page automaticamente, sem precisar pages_manage_posts.
   let videoSourceUrl: string | null = null;
   if (isIgLink) {
     const result = await resolveInstagramMediaId(accessToken, adAccountId, creativeLink, pageId, igActorId, logs);
@@ -792,19 +785,19 @@ async function buildFase2Creative(
     return { error: "Link inválido para FASE 2 (use IG post/reel ou Drive video)." };
   }
 
-  // Upload no /page/videos como vídeo NÃO publicado (target esta UNPUBLISHED)
+  // Upload em /act_X/advideos com target_id=pageId pra associar à Page.
   const upForm = new FormData();
-  upForm.append("access_token", pageAccessToken);
+  upForm.append("access_token", accessToken);
   upForm.append("file_url", videoSourceUrl!);
-  upForm.append("description", creativeName || "FASE 2 video");
-  upForm.append("published", "false");
-  const upRes = await fetch(`https://graph-video.facebook.com/v25.0/${pageId}/videos`, { method: "POST", body: upForm });
+  upForm.append("name", (creativeName || "FASE 2 video").substring(0, 80));
+  upForm.append("target_id", pageId);
+  const upRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/advideos`, { method: "POST", body: upForm });
   const upData = await upRes.json();
   if (upData.error || !upData.id) {
-    return { error: `Falha upload do vídeo na Page: ${upData?.error?.message || "sem id"} | code=${upData?.error?.code || "-"}` };
+    return { error: `Falha upload do vídeo: ${upData?.error?.message || "sem id"} | code=${upData?.error?.code || "-"}` };
   }
   const videoId = upData.id;
-  console.log(`[FASE2-creative] page video uploaded: ${videoId}`);
+  console.log(`[FASE2-creative] advideo uploaded with target_id=${pageId}: ${videoId}`);
 
   // Aguardar processing + thumbnail
   let thumbnailField: Record<string, string> = {};

@@ -8,7 +8,9 @@ Deno.serve(async (req) => {
   const scopes = "ads_management,ads_read,business_management,pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic";
   const state = crypto.randomUUID();
 
-  const url = `https://www.facebook.com/v25.0/dialog/oauth?client_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scopes}&response_type=code&state=${state}`;
+  // auth_type=rerequest força Facebook a re-prompt todas as permissões
+  // mesmo se user já autorizou (necessário quando adicionamos novos scopes).
+  const url = `https://www.facebook.com/v25.0/dialog/oauth?client_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scopes}&response_type=code&state=${state}&auth_type=rerequest`;
 
   return new Response(null, {
     status: 302,
