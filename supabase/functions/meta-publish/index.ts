@@ -607,13 +607,14 @@ async function buildFase1Creative(
     const resolvedIgActor = result.ig_account_id || igActorId;
     if (!resolvedIgActor) return { error: "instagram_user_id não disponível." };
 
-    // FASE 1 IG-link: spec mínima para boostar IG media existente.
-    // NOTA: o erro 2446391 ("Anúncio incompleto") na verdade vem do ADSET — Meta v25
-    // descarta silenciosamente promoted_object.instagram_profile_id em alguns BMs.
-    // Ainda investigando causa raiz no lado da conta/IG.
+    // FASE 1 IG-link creative: spec flat com page_id + instagram_user_id top-level.
+    // Meta v25 exige page_id binding pra creative casar com adset INSTAGRAM_PROFILE,
+    // senão o ad é rejeitado com #1346001 na revisão (mesmo com publish bem-sucedido).
+    // Não usar object_story_spec aqui — ele exige link_data, incompatível com source_instagram_media_id.
     const spec: Record<string, any> = {
-      source_instagram_media_id: result.instagram_media_id,
+      page_id: pageId,
       instagram_user_id: resolvedIgActor,
+      source_instagram_media_id: result.instagram_media_id,
       call_to_action: { type: "VISIT_PROFILE", value: { link: igProfileLink } },
     };
 
