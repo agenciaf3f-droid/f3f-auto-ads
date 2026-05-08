@@ -722,11 +722,13 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const isFase2 = selectedPreset.fase === "FASE 2";
   const selectedWhatsapp = whatsappNumbers.find(n => n.id === selectedWhatsappId);
 
-  const computedCampaignName = campaignStructure === "new" && campaignNameInput && selectedAudienceName && budget
-    ? generateCampaignName({ presetLabel: selectedPreset.fase, publicName: selectedAudienceName, budget: Number(budget), campaignName: campaignNameInput })
+  // FASE 2 não tem audience única — usa "Multi-público" como label pra nome da campanha
+  const namingPublicName = isFase2 ? `Multi-${fase2Audiences.length}` : selectedAudienceName;
+  const computedCampaignName = campaignStructure === "new" && campaignNameInput && (namingPublicName || isFase2) && budget
+    ? generateCampaignName({ presetLabel: selectedPreset.fase, publicName: namingPublicName || "Multi", budget: Number(budget), campaignName: campaignNameInput })
     : null;
-  const computedAdsetName = adsetNameInput && selectedAudienceName
-    ? generateAdsetName({ publicName: selectedAudienceName, adsetName: adsetNameInput })
+  const computedAdsetName = adsetNameInput && (namingPublicName || isFase2)
+    ? generateAdsetName({ publicName: namingPublicName || "Multi", adsetName: adsetNameInput })
     : null;
   const generatedName = computedCampaignName || "";
 
@@ -804,8 +806,12 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     addLog("⏱️ [validate] Início da validação completa");
     setValidatedPayload(null); // Always reset on new validation
 
-    if (!selectedAccount || !selectedAudience || !budget) {
-      toast.error("Preencha todos os campos antes de validar.");
+    // FASE 2 usa multi-audience (fase2Audiences) em vez de selectedAudience
+    const audienceOk = isFase2 ? fase2Audiences.length >= 2 : !!selectedAudience;
+    if (!selectedAccount || !audienceOk || !budget) {
+      toast.error(isFase2
+        ? "Preencha conta + 2+ públicos + orçamento antes de validar."
+        : "Preencha todos os campos antes de validar.");
       return;
     }
     if (!identityLoaded || identityLoading) {
@@ -902,7 +908,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     const checks: { label: string; ok: boolean; detail: string }[] = [];
     checks.push({ label: "Access Token", ok: !!accessToken, detail: accessToken ? "presente" : "ausente" });
     checks.push({ label: "Conta de Anúncios", ok: !!selectedAccount, detail: selectedAccount || "ausente" });
-    checks.push({ label: "Público", ok: !!selectedAudience, detail: `${selectedAudience} (${selectedAud?.type || "unknown"})` });
+    if (isFase2) {
+      checks.push({ label: "Públicos (FASE 2)", ok: fase2Audiences.length >= 2 && fase2Audiences.length <= 10, detail: `${fase2Audiences.length} público(s) selecionado(s)` });
+    } else {
+      checks.push({ label: "Público", ok: !!selectedAudience, detail: `${selectedAudience} (${selectedAud?.type || "unknown"})` });
+    }
     checks.push({ label: "Orçamento", ok: Number(budget) > 0, detail: budget ? `R$${budget}` : "ausente" });
     checks.push({ label: "Nome Gerado", ok: !!generatedName || campaignStructure === "existing", detail: generatedName || (campaignStructure === "existing" ? "campanha existente" : "ausente") });
     checks.push({ label: "Identidade (Página)", ok: !!identityPageId, detail: identityPageName || "ausente" });
