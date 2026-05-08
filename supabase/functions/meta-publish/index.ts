@@ -1938,22 +1938,20 @@ Deno.serve(async (req) => {
       // 1. Cria audience de exclusão VV50% deste vídeo (365d)
       logs.push({ step: "fase2_exclusion_audience", status: "start", ts: ts(), detail: `criando VV50% audience pro video=${videoId}` });
       const exclName = `VV50% [${(cr.name || "video").substring(0, 20)} - ${new Date().toISOString().slice(0,10)}]`;
-      // Meta event canonical: 'video_play_50_percent' (não 'video_view_50_percent')
-      const exclRule = {
-        inclusions: {
-          operator: "or",
-          rules: [{
-            event_sources: [{ id: videoId, type: "video" }],
-            retention_seconds: 365 * 86400,
-            filter: { operator: "and", filters: [{ field: "event", operator: "=", value: "video_play_50_percent" }] },
-          }],
-        },
-      };
+      // Meta v25 exige formato LEGACY de regra pra video engagement audiences
+      // (subcode 1870049 confirma — "use formato de regra anterior").
+      const exclRuleLegacy = JSON.stringify({
+        and: [
+          { event_sources: { "=": [videoId] } },
+          { event: { "=": "video_view_50_percent" } },
+        ],
+      });
       const exclForm = new FormData();
       exclForm.append("access_token", access_token);
       exclForm.append("name", exclName);
       exclForm.append("subtype", "ENGAGEMENT");
-      exclForm.append("rule", JSON.stringify(exclRule));
+      exclForm.append("retention_days", "365");
+      exclForm.append("rule", exclRuleLegacy);
       const exclRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/customaudiences`, { method: "POST", body: exclForm });
       const exclData = await exclRes.json();
       if (exclData.error) {

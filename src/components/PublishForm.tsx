@@ -722,13 +722,24 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const isFase2 = selectedPreset.fase === "FASE 2";
   const selectedWhatsapp = whatsappNumbers.find(n => n.id === selectedWhatsappId);
 
-  // FASE 2 não tem audience única — usa "Multi-público" como label pra nome da campanha
-  const namingPublicName = isFase2 ? `Multi-${fase2Audiences.length}` : selectedAudienceName;
+  // FASE 2 — usa nomes das audiences selecionadas no nome da campanha
+  const fase2AudienceNamesList = isFase2
+    ? fase2Audiences.map(id => audiences.find(a => a.id === id)?.name || id)
+    : [];
+  const namingPublicName = isFase2
+    ? (fase2AudienceNamesList.length === 1
+        ? fase2AudienceNamesList[0]
+        : fase2AudienceNamesList.length > 1
+          ? `${fase2AudienceNamesList[0]} +${fase2AudienceNamesList.length - 1}`
+          : "Multi")
+    : selectedAudienceName;
   const computedCampaignName = campaignStructure === "new" && campaignNameInput && (namingPublicName || isFase2) && budget
     ? generateCampaignName({ presetLabel: selectedPreset.fase, publicName: namingPublicName || "Multi", budget: Number(budget), campaignName: campaignNameInput })
     : null;
   const computedAdsetName = adsetNameInput && (namingPublicName || isFase2)
-    ? generateAdsetName({ publicName: namingPublicName || "Multi", adsetName: adsetNameInput })
+    ? (isFase2
+        ? null  // FASE 2: adset names são gerados no backend por audience
+        : generateAdsetName({ publicName: namingPublicName || "Multi", adsetName: adsetNameInput }))
     : null;
   const generatedName = computedCampaignName || "";
 
