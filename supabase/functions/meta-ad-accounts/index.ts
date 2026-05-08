@@ -111,31 +111,53 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Default action: list ad accounts
-    const allAccounts: { id: string; name: string }[] = [];
+    // Default action: list ad accounts (direct + Business Manager owned + client)
+    const accountMap = new Map<string, { id: string; name: string }>();
 
-    let url: string | null = `https://graph.facebook.com/v25.0/me/adaccounts?fields=id,name&limit=50&access_token=${access_token}`;
-
-    while (url) {
-      const res = await fetch(url);
-      const data = await res.json();
-
-      if (data.error) {
-        return new Response(JSON.stringify({ error: data.error.message }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      if (data.data) {
-        for (const acc of data.data) {
-          allAccounts.push({ id: acc.id, name: acc.name || acc.id });
+    const paginate = async (initialUrl: string) => {
+      let url: string | null = initialUrl;
+      while (url) {
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message);
+        if (data.data) {
+          for (const acc of data.data) {
+            if (!accountMap.has(acc.id)) {
+              accountMap.set(acc.id, { id: acc.id, name: acc.name || acc.id });
+            }
+          }
         }
+        url = data.paging?.next || null;
       }
+    };
 
-      url = data.paging?.next || null;
+    // 1) Contas onde user é admin direto
+    await paginate(`https://graph.facebook.com/v25.0/me/adaccounts?fields=id,name&limit=50&access_token=${access_token}`);
+
+    // 2) Contas via Business Manager (owned + client)
+    const bizRes = await fetch(`https://graph.facebook.com/v25.0/me/businesses?fields=id,name&limit=50&access_token=${access_token}`);
+    const bizData = await bizRes.json();
+    if (bizData.error) {
+      return new Response(JSON.stringify({ error: bizData.error.message }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const businesses = bizData.data || [];
+    for (const biz of businesses) {
+      try {
+        await paginate(`https://graph.facebook.com/v25.0/${biz.id}/owned_ad_accounts?fields=id,name&limit=50&access_token=${access_token}`);
+      } catch (e) {
+        console.log(`[ad-accounts] owned_ad_accounts ${biz.id}: ${(e as Error).message}`);
+      }
+      try {
+        await paginate(`https://graph.facebook.com/v25.0/${biz.id}/client_ad_accounts?fields=id,name&limit=50&access_token=${access_token}`);
+      } catch (e) {
+        console.log(`[ad-accounts] client_ad_accounts ${biz.id}: ${(e as Error).message}`);
+      }
     }
 
-    return new Response(JSON.stringify({ accounts: allAccounts }), {
+    const allAccounts = Array.from(accountMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+    return new Response(JSON.stringify({ accounts: allAccounts, businesses_scanned: businesses.length }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
