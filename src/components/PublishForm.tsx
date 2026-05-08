@@ -827,33 +827,40 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       return;
     }
     if (!creativesValid()) {
+      addLog(`❌ [validate] criativos inválidos — verificar nome/link de todos`);
       toast.error("Preencha nome e link de todos os criativos.");
       return;
     }
     const fase3Result = fase3Validate();
     if (!fase3Result.valid) {
+      addLog(`❌ [validate] fase3: ${fase3Result.errors.join("; ")}`);
       fase3Result.errors.forEach(err => toast.error(err));
       return;
     }
     const fase3LpResult = fase3LpValidate();
     if (!fase3LpResult.valid) {
+      addLog(`❌ [validate] fase3LP: ${fase3LpResult.errors.join("; ")}`);
       fase3LpResult.errors.forEach(err => toast.error(err));
       return;
     }
     const fase3VendasResult = fase3VendasValidate();
     if (!fase3VendasResult.valid) {
+      addLog(`❌ [validate] fase3Vendas: ${fase3VendasResult.errors.join("; ")}`);
       fase3VendasResult.errors.forEach(err => toast.error(err));
       return;
     }
     const fase2Result = fase2Validate();
     if (!fase2Result.valid) {
+      addLog(`❌ [validate] fase2: ${fase2Result.errors.join("; ")}`);
       fase2Result.errors.forEach(err => toast.error(err));
       return;
     }
     if (!scheduleValid()) {
+      addLog(`❌ [validate] schedule: data/hora ausente`);
       toast.error("Preencha data e hora do agendamento.");
       return;
     }
+    addLog(`✅ [validate] checks locais passaram — rodando validação estrutural`);
     addLog(`⏱️ [validate] Checagens locais: ${Math.round(performance.now() - t0)}ms`);
 
     // Validate creatives that haven't been validated yet — IN PARALLEL
