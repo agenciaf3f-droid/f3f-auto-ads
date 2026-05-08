@@ -785,7 +785,8 @@ async function buildFase2Creative(
     return { error: "Link inválido para FASE 2 (use IG post/reel ou Drive video)." };
   }
 
-  // Upload em /act_X/advideos com target_id=pageId pra associar à Page.
+  // Upload em /act_X/advideos com target_id=pageId.
+  logs.push({ step: "fase2_upload", status: "start", ts: ts(), detail: `enviando file_url pra Meta: ${videoSourceUrl!.substring(0, 80)}...` });
   const upForm = new FormData();
   upForm.append("access_token", accessToken);
   upForm.append("file_url", videoSourceUrl!);
@@ -794,36 +795,26 @@ async function buildFase2Creative(
   const upRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/advideos`, { method: "POST", body: upForm });
   const upData = await upRes.json();
   if (upData.error || !upData.id) {
+    logs.push({ step: "fase2_upload", status: "error", ts: ts(), detail: `${upData?.error?.message || "sem id"} | code=${upData?.error?.code || "-"}` });
     return { error: `Falha upload do vídeo: ${upData?.error?.message || "sem id"} | code=${upData?.error?.code || "-"}` };
   }
   const videoId = upData.id;
+  logs.push({ step: "fase2_upload", status: "success", ts: ts(), detail: `video_id=${videoId}` });
   console.log(`[FASE2-creative] advideo uploaded with target_id=${pageId}: ${videoId}`);
 
-  // Aguardar processing + thumbnail
+  // Aguardar processing — apenas 5 tentativas × 3s = 15s max (era 60s)
+  logs.push({ step: "fase2_thumbnail_wait", status: "start", ts: ts() });
   let thumbnailField: Record<string, string> = {};
-  for (let attempt = 0; attempt < 12; attempt++) {
-    await new Promise(r => setTimeout(r, 5000));
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await new Promise(r => setTimeout(r, 3000));
     const vidRes = await fetch(`https://graph.facebook.com/v25.0/${videoId}?fields=status,picture&access_token=${accessToken}`);
     const vidData = await vidRes.json();
     if (vidData.picture) {
-      try {
-        const thumbRes = await fetch(vidData.picture);
-        if (thumbRes.ok) {
-          const thumbBlob = await thumbRes.blob();
-          const thumbB64 = await blobToBase64(thumbBlob);
-          const imgForm = new FormData();
-          imgForm.append("access_token", accessToken);
-          imgForm.append("filename", "video_thumb.jpg");
-          imgForm.append("bytes", thumbB64);
-          const imgUpRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/adimages`, { method: "POST", body: imgForm });
-          const imgUpData = await imgUpRes.json();
-          if (imgUpData.images) { const firstKey = Object.keys(imgUpData.images)[0]; thumbnailField = { image_hash: imgUpData.images[firstKey].hash }; }
-        }
-      } catch {}
-      if (!thumbnailField.image_hash) thumbnailField = { image_url: vidData.picture };
+      thumbnailField = { image_url: vidData.picture };
       break;
     }
   }
+  logs.push({ step: "fase2_thumbnail_wait", status: "success", ts: ts(), detail: thumbnailField.image_url ? "thumb resolved" : "no thumb (continuing)" });
 
   const videoData: Record<string, any> = {
     video_id: videoId,
