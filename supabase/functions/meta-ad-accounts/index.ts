@@ -134,30 +134,32 @@ Deno.serve(async (req) => {
     // 1) Contas onde user é admin direto
     await paginate(`https://graph.facebook.com/v25.0/me/adaccounts?fields=id,name&limit=50&access_token=${access_token}`);
 
-    // 2) Contas via Business Manager (owned + client)
-    const bizRes = await fetch(`https://graph.facebook.com/v25.0/me/businesses?fields=id,name&limit=50&access_token=${access_token}`);
-    const bizData = await bizRes.json();
-    if (bizData.error) {
-      return new Response(JSON.stringify({ error: bizData.error.message }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    const businesses = bizData.data || [];
-    for (const biz of businesses) {
-      try {
-        await paginate(`https://graph.facebook.com/v25.0/${biz.id}/owned_ad_accounts?fields=id,name&limit=50&access_token=${access_token}`);
-      } catch (e) {
-        console.log(`[ad-accounts] owned_ad_accounts ${biz.id}: ${(e as Error).message}`);
+    // 2) Contas via Business Manager (owned + client) — best-effort, em paralelo
+    let businesses: any[] = [];
+    let bizError: string | null = null;
+    try {
+      const bizRes = await fetch(`https://graph.facebook.com/v25.0/me/businesses?fields=id,name&limit=50&access_token=${access_token}`);
+      const bizData = await bizRes.json();
+      if (bizData.error) {
+        bizError = bizData.error.message;
+      } else {
+        businesses = bizData.data || [];
       }
-      try {
-        await paginate(`https://graph.facebook.com/v25.0/${biz.id}/client_ad_accounts?fields=id,name&limit=50&access_token=${access_token}`);
-      } catch (e) {
-        console.log(`[ad-accounts] client_ad_accounts ${biz.id}: ${(e as Error).message}`);
-      }
+    } catch (e) {
+      bizError = (e as Error).message;
     }
 
+    // Paraleliza varredura dos BMs com timeout individual
+    const bizTasks = businesses.flatMap((biz) => [
+      paginate(`https://graph.facebook.com/v25.0/${biz.id}/owned_ad_accounts?fields=id,name&limit=50&access_token=${access_token}`)
+        .catch((e) => console.log(`[ad-accounts] owned ${biz.id}: ${(e as Error).message}`)),
+      paginate(`https://graph.facebook.com/v25.0/${biz.id}/client_ad_accounts?fields=id,name&limit=50&access_token=${access_token}`)
+        .catch((e) => console.log(`[ad-accounts] client ${biz.id}: ${(e as Error).message}`)),
+    ]);
+    await Promise.all(bizTasks);
+
     const allAccounts = Array.from(accountMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-    return new Response(JSON.stringify({ accounts: allAccounts, businesses_scanned: businesses.length }), {
+    return new Response(JSON.stringify({ accounts: allAccounts, businesses_scanned: businesses.length, biz_error: bizError }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
