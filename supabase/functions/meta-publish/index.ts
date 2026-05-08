@@ -760,86 +760,58 @@ async function buildFase2Creative(
   pageId: string,
   igActorId: string | undefined,
   logs: StepLog[],
-): Promise<{ spec?: Record<string, any>; error?: string }> {
+): Promise<{ spec?: Record<string, any>; error?: string; videoId?: string }> {
   const isIgLink = creativeType === "instagram" || (!creativeType && creativeLink?.includes("instagram.com"));
   const isDriveLink = creativeType === "drive" || (!creativeType && (creativeLink?.includes("drive.google.com") || creativeLink?.includes("docs.google.com")));
 
-  // FASE 2 exige vídeo associado a uma Page (pra video engagement audience).
-  // Tenta upload em /act_X/advideos com target_id=pageId — Meta associa o
-  // advideo à Page automaticamente, sem precisar pages_manage_posts.
-  let videoSourceUrl: string | null = null;
+  // SIMPLIFICADO: pra IG, usa source_instagram_media_id direto (sem upload).
+  // Pra Drive, faz upload via uploadDriveCreative (que já existe no projeto).
+  // Audience exclusão é tentada DEPOIS — se falhar, segue sem ela.
   if (isIgLink) {
     const result = await resolveInstagramMediaId(accessToken, adAccountId, creativeLink, pageId, igActorId, logs);
     if (result.error) return { error: result.error };
     if (!result.instagram_media_id) return { error: "instagram_media_id não resolvido." };
-    const mInfoRes = await fetch(`https://graph.facebook.com/v25.0/${result.instagram_media_id}?fields=media_url,media_type&access_token=${accessToken}`);
-    const mInfo = await mInfoRes.json();
-    if (!mInfo?.media_url) return { error: `media_url do IG não disponível pro media ${result.instagram_media_id}` };
-    videoSourceUrl = mInfo.media_url;
-  } else if (isDriveLink) {
-    let downloadUrl = creativeLink;
-    const fileIdMatch = creativeLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
-    if (fileIdMatch) downloadUrl = `https://drive.google.com/uc?export=download&id=${fileIdMatch[1]}`;
-    videoSourceUrl = downloadUrl;
-  } else {
-    return { error: "Link inválido para FASE 2 (use IG post/reel ou Drive video)." };
+    const resolvedIgActor = result.ig_account_id || igActorId;
+    if (!resolvedIgActor) return { error: "instagram_user_id não disponível." };
+
+    // Spec flat (igual FASE 1 que já funciona) — sem upload, sem video_id.
+    const spec: Record<string, any> = {
+      source_instagram_media_id: result.instagram_media_id,
+      instagram_user_id: resolvedIgActor,
+    };
+    console.log(`[FASE2-creative] IG flat spec: media=${result.instagram_media_id}, ig=${resolvedIgActor}`);
+    logs.push({ step: "fase2_creative", status: "success", ts: ts(), detail: `IG source_instagram_media_id=${result.instagram_media_id}` });
+    // Sem videoId disponível (IG media_id != FB video_id), audience VV50% será SKIP.
+    return { spec };
   }
 
-  // Upload em /act_X/advideos com target_id=pageId. Timeout explícito de 25s
-  // pra não pendurar o edge function quando Meta demora muito no download.
-  logs.push({ step: "fase2_upload", status: "start", ts: ts(), detail: `enviando file_url pra Meta: ${videoSourceUrl!.substring(0, 80)}...` });
-  const upForm = new FormData();
-  upForm.append("access_token", accessToken);
-  upForm.append("file_url", videoSourceUrl!);
-  upForm.append("name", (creativeName || "FASE 2 video").substring(0, 80));
-  upForm.append("target_id", pageId);
-  let upData: any;
-  try {
-    const upController = new AbortController();
-    const upTimeout = setTimeout(() => upController.abort(), 25000);
-    const upRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/advideos`, {
-      method: "POST", body: upForm, signal: upController.signal,
-    });
-    clearTimeout(upTimeout);
-    upData = await upRes.json();
-  } catch (e) {
-    const isAbort = (e as any)?.name === "AbortError";
-    const msg = isAbort ? "timeout 25s no upload pra Meta" : ((e as Error).message || "erro desconhecido");
-    logs.push({ step: "fase2_upload", status: "error", ts: ts(), detail: msg });
-    return { error: `Falha upload do vídeo: ${msg}` };
-  }
-  if (upData.error || !upData.id) {
-    logs.push({ step: "fase2_upload", status: "error", ts: ts(), detail: `${upData?.error?.message || "sem id"} | code=${upData?.error?.code || "-"}` });
-    return { error: `Falha upload do vídeo: ${upData?.error?.message || "sem id"} | code=${upData?.error?.code || "-"}` };
-  }
-  const videoId = upData.id;
-  logs.push({ step: "fase2_upload", status: "success", ts: ts(), detail: `video_id=${videoId}` });
-  console.log(`[FASE2-creative] advideo uploaded with target_id=${pageId}: ${videoId}`);
+  if (isDriveLink) {
+    const result = await uploadDriveCreative(accessToken, adAccountId, creativeLink);
+    if (result.error) return { error: result.error };
+    if (!result.video_id) return { error: "FASE 2 Drive: arquivo precisa ser vídeo (não imagem)." };
 
-  // Aguardar processing — apenas 5 tentativas × 3s = 15s max (era 60s)
-  logs.push({ step: "fase2_thumbnail_wait", status: "start", ts: ts() });
-  let thumbnailField: Record<string, string> = {};
-  for (let attempt = 0; attempt < 5; attempt++) {
-    await new Promise(r => setTimeout(r, 3000));
-    const vidRes = await fetch(`https://graph.facebook.com/v25.0/${videoId}?fields=status,picture&access_token=${accessToken}`);
-    const vidData = await vidRes.json();
-    if (vidData.picture) {
-      thumbnailField = { image_url: vidData.picture };
-      break;
+    // Aguardar processing (15s max)
+    let thumbnailField: Record<string, string> = {};
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await new Promise(r => setTimeout(r, 3000));
+      const vidRes = await fetch(`https://graph.facebook.com/v25.0/${result.video_id}?fields=picture&access_token=${accessToken}`);
+      const vidData = await vidRes.json();
+      if (vidData.picture) { thumbnailField = { image_url: vidData.picture }; break; }
     }
-  }
-  logs.push({ step: "fase2_thumbnail_wait", status: "success", ts: ts(), detail: thumbnailField.image_url ? "thumb resolved" : "no thumb (continuing)" });
 
-  const videoData: Record<string, any> = {
-    video_id: videoId,
-    ...thumbnailField,
-    message: creativeName,
-  };
-  const storySpec: Record<string, any> = { page_id: pageId, video_data: videoData };
-  if (igActorId) storySpec.instagram_user_id = igActorId;
-  console.log(`[FASE2-creative] OK: video_id=${videoId}`);
-  logs.push({ step: "fase2_creative", status: "success", ts: ts(), detail: `video_id=${videoId}` });
-  return { spec: { object_story_spec: storySpec } };
+    const videoData: Record<string, any> = {
+      video_id: result.video_id,
+      ...thumbnailField,
+      message: creativeName,
+    };
+    const storySpec: Record<string, any> = { page_id: pageId, video_data: videoData };
+    if (igActorId) storySpec.instagram_user_id = igActorId;
+    console.log(`[FASE2-creative] Drive video: ${result.video_id}`);
+    logs.push({ step: "fase2_creative", status: "success", ts: ts(), detail: `Drive video_id=${result.video_id}` });
+    return { spec: { object_story_spec: storySpec }, videoId: result.video_id };
+  }
+
+  return { error: "Link inválido para FASE 2 (use IG post/reel ou Drive video)." };
 }
 
 // =====================================================================
@@ -1940,43 +1912,48 @@ Deno.serve(async (req) => {
     // ── FASE 2 special flow: 1 creative + N adsets (one per audience) ──
     if (isVideoEngagementPreset && fase2AudienceIds.length > 0) {
       if (resolvedCreatives.length !== 1) {
-        return respond({ ok: false, step: "publish", error_message: "FASE 2 exige exatamente 1 criativo (vídeo Drive). Forneça 1 criativo." });
+        return respond({ ok: false, step: "publish", error_message: "FASE 2 exige exatamente 1 criativo. Forneça 1 criativo." });
       }
       const cr = resolvedCreatives[0];
-      // o spec do criativo Drive já contém video_id em object_story_spec.video_data.video_id
-      const videoId = cr.spec?.object_story_spec?.video_data?.video_id;
-      if (!videoId) {
-        return respond({ ok: false, step: "publish", error_message: "FASE 2 precisa de criativo de vídeo (Drive). Não foi possível extrair video_id do criativo." });
-      }
+      // Drive: video_id em object_story_spec.video_data. IG: source_instagram_media_id flat.
+      const driveVideoId = cr.spec?.object_story_spec?.video_data?.video_id;
+      const igMediaId = cr.spec?.source_instagram_media_id;
 
-      // 1. Cria audience de exclusão VV50% deste vídeo (365d)
-      logs.push({ step: "fase2_exclusion_audience", status: "start", ts: ts(), detail: `criando VV50% audience pro video=${videoId}` });
-      // Cap nome em 50 chars (limite Meta pra custom audiences)
-      const exclNameRaw = `VV50% [${(cr.name || "video").substring(0, 20)} - ${new Date().toISOString().slice(0,10)}]`;
-      const exclName = exclNameRaw.length > 50 ? exclNameRaw.substring(0, 50) : exclNameRaw;
-      // Meta v25 formato real (descoberto inspecionando audiences existentes):
-      // rule é um ARRAY de {event_name, object_id}, subtype=ENGAGEMENT, sem inclusions/filter.
-      // object_id deve ser numérico.
-      const exclRuleLegacy = JSON.stringify([
-        { event_name: "video_view_50_percent", object_id: Number(videoId) },
-      ]);
-      const exclForm = new FormData();
-      exclForm.append("access_token", access_token);
-      exclForm.append("name", exclName);
-      exclForm.append("subtype", "ENGAGEMENT");
-      exclForm.append("retention_days", "365");
-      exclForm.append("rule", exclRuleLegacy);
-      const exclRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/customaudiences`, { method: "POST", body: exclForm });
-      const exclData = await exclRes.json();
+      // 1. Cria audience de exclusão VV50% — APENAS pra Drive (precisa video_id válido).
+      // Pra IG link: skipa (Meta não permite criar audience VV50% de IG media direto).
       let exclusionAudienceId: string | null = null;
-      if (exclData.error) {
-        const errDetail = `${exclData.error.message} | code=${exclData.error.code} | subcode=${exclData.error.error_subcode || "-"} | user_msg=${exclData.error.error_user_msg || ""}`;
-        logs.push({ step: "fase2_exclusion_audience", status: "error", ts: ts(), detail: errDetail });
-        // Não bloqueia publicação — segue sem exclusion. User cria manualmente depois.
-        logs.push({ step: "fase2_exclusion_audience", status: "warning", ts: ts(), detail: `⚠️ Continuando SEM audience de exclusão. Crie manualmente no Meta UI e adicione aos adsets.` });
+      if (driveVideoId) {
+        logs.push({ step: "fase2_exclusion_audience", status: "start", ts: ts(), detail: `criando VV50% audience pro video=${driveVideoId}` });
+        const exclNameRaw = `VV50% [${(cr.name || "video").substring(0, 20)} - ${new Date().toISOString().slice(0,10)}]`;
+        const exclName = exclNameRaw.length > 50 ? exclNameRaw.substring(0, 50) : exclNameRaw;
+        const exclRuleLegacy = JSON.stringify([
+          { event_name: "video_view_50_percent", object_id: Number(driveVideoId) },
+        ]);
+        const exclForm = new FormData();
+        exclForm.append("access_token", access_token);
+        exclForm.append("name", exclName);
+        exclForm.append("subtype", "ENGAGEMENT");
+        exclForm.append("retention_days", "365");
+        exclForm.append("rule", exclRuleLegacy);
+        try {
+          const exclController = new AbortController();
+          const exclTimeout = setTimeout(() => exclController.abort(), 15000);
+          const exclRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/customaudiences`, { method: "POST", body: exclForm, signal: exclController.signal });
+          clearTimeout(exclTimeout);
+          const exclData = await exclRes.json();
+          if (exclData.error) {
+            const errDetail = `${exclData.error.message} | code=${exclData.error.code} | subcode=${exclData.error.error_subcode || "-"} | user_msg=${exclData.error.error_user_msg || ""}`;
+            logs.push({ step: "fase2_exclusion_audience", status: "error", ts: ts(), detail: errDetail });
+            logs.push({ step: "fase2_exclusion_audience", status: "warning", ts: ts(), detail: `⚠️ Continuando SEM audience de exclusão. Crie manualmente no Meta UI.` });
+          } else {
+            exclusionAudienceId = exclData.id;
+            logs.push({ step: "fase2_exclusion_audience", status: "success", ts: ts(), detail: `id=${exclusionAudienceId}` });
+          }
+        } catch (e) {
+          logs.push({ step: "fase2_exclusion_audience", status: "warning", ts: ts(), detail: `⚠️ Skipped (timeout/erro): ${(e as Error).message}` });
+        }
       } else {
-        exclusionAudienceId = exclData.id;
-        logs.push({ step: "fase2_exclusion_audience", status: "success", ts: ts(), detail: `id=${exclusionAudienceId}, name="${exclName}"` });
+        logs.push({ step: "fase2_exclusion_audience", status: "skipped", ts: ts(), detail: `IG link não suporta VV50% audience direto. Crie manualmente.` });
       }
 
       // 2. Cria 1 creative compartilhado
