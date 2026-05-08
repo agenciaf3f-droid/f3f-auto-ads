@@ -1937,13 +1937,14 @@ Deno.serve(async (req) => {
       // 1. Cria audience de exclusão VV50% deste vídeo (365d)
       logs.push({ step: "fase2_exclusion_audience", status: "start", ts: ts(), detail: `criando VV50% audience pro video=${videoId}` });
       const exclName = `VV50% [${(cr.name || "video").substring(0, 20)} - ${new Date().toISOString().slice(0,10)}]`;
+      // Meta event canonical: 'video_play_50_percent' (não 'video_view_50_percent')
       const exclRule = {
         inclusions: {
           operator: "or",
           rules: [{
             event_sources: [{ id: videoId, type: "video" }],
             retention_seconds: 365 * 86400,
-            filter: { operator: "and", filters: [{ field: "event", operator: "=", value: "video_view_50_percent" }] },
+            filter: { operator: "and", filters: [{ field: "event", operator: "=", value: "video_play_50_percent" }] },
           }],
         },
       };
@@ -1955,8 +1956,9 @@ Deno.serve(async (req) => {
       const exclRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/customaudiences`, { method: "POST", body: exclForm });
       const exclData = await exclRes.json();
       if (exclData.error) {
-        logs.push({ step: "fase2_exclusion_audience", status: "error", ts: ts(), detail: `${exclData.error.message}` });
-        return respond({ ok: false, step: "exclusion_audience", campaign_id: campaignId, error_message: `Falha ao criar audience de exclusão VV50%: ${exclData.error.message}` });
+        const errDetail = `${exclData.error.message} | code=${exclData.error.code} | subcode=${exclData.error.error_subcode || "-"} | user_msg=${exclData.error.error_user_msg || ""} | user_title=${exclData.error.error_user_title || ""}`;
+        logs.push({ step: "fase2_exclusion_audience", status: "error", ts: ts(), detail: errDetail });
+        return respond({ ok: false, step: "exclusion_audience", campaign_id: campaignId, error_message: `Falha ao criar audience VV50%: ${exclData.error.error_user_msg || exclData.error.message}`, raw_error: exclData.error });
       }
       const exclusionAudienceId = exclData.id;
       logs.push({ step: "fase2_exclusion_audience", status: "success", ts: ts(), detail: `id=${exclusionAudienceId}, name="${exclName}"` });

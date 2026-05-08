@@ -21,7 +21,8 @@ Deno.serve(async (req) => {
 
     const audienceName = name || `VV${percent}% [video ${video_id.substring(0, 10)}]`;
     const retention_seconds = retention_days * 86400;
-    const eventValue = `video_view_${percent}_percent`;
+    // Meta event canonical: video_play_X_percent (NÃO video_view_X_percent)
+    const eventValue = `video_play_${percent}_percent`;
 
     const rule = {
       inclusions: {
