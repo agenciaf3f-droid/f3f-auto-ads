@@ -1321,10 +1321,14 @@ Deno.serve(async (req) => {
 
     // === FASE 1 AdSet builder ===
     const buildFase1Adset = (name: string): Record<string, any> => {
-      // FASE 1 adset (versão que historicamente funciona):
+      // FASE 1 adset:
       // - advantage_audience FORÇADO = 0 (override user input)
-      // - promoted_object com APENAS page_id (sem instagram_profile_id, Meta descarta de qualquer jeito)
+      // - promoted_object DEVE ter { page_id, instagram_profile_id } — sem instagram_profile_id
+      //   o ad falha #1346001/#100/2446391 quando o connected user não é admin direto da Page
+      //   (cenário típico: agência conectada via Business Manager).
       // - sem attribution_spec
+      const promotedObject: Record<string, any> = { page_id: pageId };
+      if (igActorId) promotedObject.instagram_profile_id = igActorId;
       const p: Record<string, any> = {
         name,
         campaign_id: campaignId,
@@ -1334,7 +1338,7 @@ Deno.serve(async (req) => {
         targeting: { ...targeting, targeting_automation: { advantage_audience: 0 } },
         status: "ACTIVE",
         destination_type: "INSTAGRAM_PROFILE",
-        promoted_object: { page_id: pageId },
+        promoted_object: promotedObject,
         access_token,
       };
       if (structure === "ABO") {
