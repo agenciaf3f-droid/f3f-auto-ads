@@ -1937,14 +1937,17 @@ Deno.serve(async (req) => {
 
       // 1. Cria audience de exclusão VV50% deste vídeo (365d)
       logs.push({ step: "fase2_exclusion_audience", status: "start", ts: ts(), detail: `criando VV50% audience pro video=${videoId}` });
-      const exclName = `VV50% [${(cr.name || "video").substring(0, 20)} - ${new Date().toISOString().slice(0,10)}]`;
-      // Meta v25 exige formato LEGACY de regra pra video engagement audiences
-      // (subcode 1870049 confirma — "use formato de regra anterior").
+      // Cap nome em 50 chars (limite Meta pra custom audiences)
+      const exclNameRaw = `VV50% [${(cr.name || "video").substring(0, 20)} - ${new Date().toISOString().slice(0,10)}]`;
+      const exclName = exclNameRaw.length > 50 ? exclNameRaw.substring(0, 50) : exclNameRaw;
+      // Meta v25 formato LEGACY de regra pra video engagement (subcode 1870049
+      // do erro anterior confirma "use formato anterior"). Usa campo
+      // 'video_id' direto + 'event' simples — não 'event_sources' (array).
       const exclRuleLegacy = JSON.stringify({
-        and: [
-          { event_sources: { "=": [videoId] } },
-          { event: { "=": "video_view_50_percent" } },
-        ],
+        or: [{
+          video_id: { "=": videoId },
+          event: { "=": "video_view_50_percent" },
+        }],
       });
       const exclForm = new FormData();
       exclForm.append("access_token", access_token);
