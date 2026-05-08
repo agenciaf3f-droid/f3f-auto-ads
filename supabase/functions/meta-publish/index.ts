@@ -746,6 +746,89 @@ function buildPageWelcomeMessageJson(greetingText: string | undefined, readyMess
 }
 
 // =====================================================================
+//  FASE 2 CREATIVE BUILDER — Engagement (vídeo Drive ou IG re-upload)
+//  Sempre produz spec com object_story_spec.video_data.video_id (precisamos
+//  do video_id pra criar a custom audience VV50% de exclusão).
+// =====================================================================
+
+async function buildFase2Creative(
+  accessToken: string,
+  adAccountId: string,
+  creativeLink: string,
+  creativeType: string,
+  creativeName: string,
+  pageId: string,
+  igActorId: string | undefined,
+  logs: StepLog[],
+): Promise<{ spec?: Record<string, any>; error?: string }> {
+  const isIgLink = creativeType === "instagram" || (!creativeType && creativeLink?.includes("instagram.com"));
+  const isDriveLink = creativeType === "drive" || (!creativeType && (creativeLink?.includes("drive.google.com") || creativeLink?.includes("docs.google.com")));
+
+  let videoId: string | null = null;
+
+  if (isIgLink) {
+    // Resolver IG → baixar media_url → upload como FB video
+    const result = await resolveInstagramMediaId(accessToken, adAccountId, creativeLink, pageId, igActorId, logs);
+    if (result.error) return { error: result.error };
+    if (!result.instagram_media_id) return { error: "instagram_media_id não resolvido." };
+    const mInfoRes = await fetch(`https://graph.facebook.com/v25.0/${result.instagram_media_id}?fields=media_url,media_type&access_token=${accessToken}`);
+    const mInfo = await mInfoRes.json();
+    if (!mInfo?.media_url) return { error: `media_url do IG não disponível pro media ${result.instagram_media_id}` };
+    const upForm = new FormData();
+    upForm.append("access_token", accessToken);
+    upForm.append("file_url", mInfo.media_url);
+    const upRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/advideos`, { method: "POST", body: upForm });
+    const upData = await upRes.json();
+    if (upData.error || !upData.id) return { error: `Falha upload IG→FB video: ${upData?.error?.message || "sem id"}` };
+    videoId = upData.id;
+  } else if (isDriveLink) {
+    const result = await uploadDriveCreative(accessToken, adAccountId, creativeLink);
+    if (result.error) return { error: result.error };
+    if (!result.video_id) return { error: "FASE 2 exige um vídeo (não imagem). Drive deve ter arquivo de vídeo." };
+    videoId = result.video_id;
+  } else {
+    return { error: "Link inválido para FASE 2 (use IG post/reel ou Drive video)." };
+  }
+
+  // Aguardar processing + thumbnail
+  let thumbnailField: Record<string, string> = {};
+  for (let attempt = 0; attempt < 12; attempt++) {
+    await new Promise(r => setTimeout(r, 5000));
+    const vidRes = await fetch(`https://graph.facebook.com/v25.0/${videoId}?fields=status,picture&access_token=${accessToken}`);
+    const vidData = await vidRes.json();
+    if (vidData.picture) {
+      try {
+        const thumbRes = await fetch(vidData.picture);
+        if (thumbRes.ok) {
+          const thumbBlob = await thumbRes.blob();
+          const thumbB64 = await blobToBase64(thumbBlob);
+          const imgForm = new FormData();
+          imgForm.append("access_token", accessToken);
+          imgForm.append("filename", "video_thumb.jpg");
+          imgForm.append("bytes", thumbB64);
+          const imgUpRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/adimages`, { method: "POST", body: imgForm });
+          const imgUpData = await imgUpRes.json();
+          if (imgUpData.images) { const firstKey = Object.keys(imgUpData.images)[0]; thumbnailField = { image_hash: imgUpData.images[firstKey].hash }; }
+        }
+      } catch {}
+      if (!thumbnailField.image_hash) thumbnailField = { image_url: vidData.picture };
+      break;
+    }
+  }
+
+  const videoData: Record<string, any> = {
+    video_id: videoId,
+    ...thumbnailField,
+    message: creativeName,
+  };
+  const storySpec: Record<string, any> = { page_id: pageId, video_data: videoData };
+  if (igActorId) storySpec.instagram_user_id = igActorId;
+  console.log(`[FASE2-creative] OK: video_id=${videoId}`);
+  logs.push({ step: "fase2_creative", status: "success", ts: ts(), detail: `video_id=${videoId}` });
+  return { spec: { object_story_spec: storySpec } };
+}
+
+// =====================================================================
 //  FASE 3 LP CREATIVE BUILDER — Leads via Landing Page (URL externa + pixel)
 //
 //  Diferenças vs FASE 3 (WhatsApp):
@@ -1118,7 +1201,14 @@ Deno.serve(async (req) => {
 
       let result: { spec?: Record<string, any>; error?: string };
 
-      if (isWebsitePreset) {
+      if (isVideoEngagementPreset) {
+        // ── FASE 2: vídeo Drive ou IG re-upload (precisa video_id pra criar exclusion audience) ──
+        result = await buildFase2Creative(
+          access_token, ad_account_id, cr.link, cr.type, cr.name,
+          pageId, igActorId,
+          logs,
+        );
+      } else if (isWebsitePreset) {
         // ── FASE 3 LP: creative com link pra site externo + pixel ──
         result = await buildFase3LpCreative(
           access_token, ad_account_id, cr.link, cr.type, cr.name,

@@ -779,11 +779,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     const errors: string[] = [];
     if (fase2Audiences.length < 2) errors.push("FASE 2 requer no mínimo 2 públicos selecionados.");
     if (fase2Audiences.length > 10) errors.push("FASE 2 aceita no máximo 10 públicos.");
-    if (creatives.length !== 1) errors.push("FASE 2 exige exatamente 1 criativo (vídeo Drive).");
-    else {
-      const cr = creatives[0];
-      if (cr.type !== "drive") errors.push("FASE 2 exige criativo Drive (vídeo). IG link não suportado.");
-    }
+    if (creatives.length !== 1) errors.push("FASE 2 exige exatamente 1 criativo (vídeo).");
     return { valid: errors.length === 0, errors };
   };
 
