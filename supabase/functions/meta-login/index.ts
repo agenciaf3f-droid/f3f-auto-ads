@@ -4,8 +4,7 @@ Deno.serve(async (req) => {
   const appId = "910343951738258";
   const appUrl = Deno.env.get("APP_URL") ?? "https://f3f-auto-ads-eight.vercel.app";
   const redirectUri = `${appUrl}/auth/meta/callback`;
-  // pages_manage_posts: necessário pra upload de video direto na página (FASE 2 / audience VV50%)
-  const scopes = "ads_management,ads_read,business_management,pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic";
+  const scopes = "ads_management,ads_read,business_management,pages_show_list,pages_read_engagement,instagram_basic";
   const state = crypto.randomUUID();
 
   // auth_type=rerequest força Facebook a re-prompt todas as permissões
