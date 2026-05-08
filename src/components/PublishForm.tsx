@@ -1023,6 +1023,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           ? "LEAD"
           : (isFase3VendasZap ? "PURCHASE" : undefined),
         fase2_audiences: isFase2 ? fase2Audiences : undefined,
+        fase2_audience_names: isFase2
+          ? fase2Audiences.map(id => audiences.find(a => a.id === id)?.name || id)
+          : undefined,
         schedule,
         utm_template: UTM_TEMPLATE,
       };

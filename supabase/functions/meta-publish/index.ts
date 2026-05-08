@@ -1119,6 +1119,7 @@ Deno.serve(async (req) => {
 
     // FASE 2 — multiple audience IDs (one adset per audience)
     const fase2AudienceIds: string[] = body.fase2_audiences || [];
+    const fase2AudienceNames: string[] = body.fase2_audience_names || [];
 
     // ══════════════════════════════════════════════════════════════════
     //  PIPELINE LOG: Identify which preset we're running
@@ -1982,9 +1983,9 @@ Deno.serve(async (req) => {
       // 3. Loop sobre audiences: 1 adset + 1 ad pra cada
       for (let i = 0; i < fase2AudienceIds.length; i++) {
         const audId = fase2AudienceIds[i];
+        const audName = fase2AudienceNames[i] || audId;
         const idx = i + 1;
-        const adsetNum = String(idx).padStart(2, "0");
-        const adsetPayloadName = `${adset_name || generated_name || "Campaign"} - ${adsetNum}`;
+        const adsetPayloadName = `[${audName}] - ${cr.name}`;
         const adsetBuild = buildFase2Adset(adsetPayloadName, audId, exclusionAudienceId);
         if (adsetBuild.error) {
           failures.push({ index: idx, name: audId, step: "adset", reason: adsetBuild.error });
