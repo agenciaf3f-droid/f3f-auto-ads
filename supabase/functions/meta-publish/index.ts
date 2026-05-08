@@ -1940,24 +1940,17 @@ Deno.serve(async (req) => {
       // Cap nome em 50 chars (limite Meta pra custom audiences)
       const exclNameRaw = `VV50% [${(cr.name || "video").substring(0, 20)} - ${new Date().toISOString().slice(0,10)}]`;
       const exclName = exclNameRaw.length > 50 ? exclNameRaw.substring(0, 50) : exclNameRaw;
-      // Meta v25: formato VIDEO custom audience.
-      // Após várias iterações, o formato correto é `subtype: VIDEO` com `rule`
-      // contendo `inclusions/rules` com `event_sources` mas SEM o filter wrapper.
-      // O event vai DIRETO no rule, não dentro de filter.filters.
-      const exclRuleLegacy = JSON.stringify({
-        inclusions: {
-          operator: "or",
-          rules: [{
-            event_sources: [{ id: videoId, type: "video" }],
-            retention_seconds: 365 * 86400,
-            event: "video_view_50_percent",
-          }],
-        },
-      });
+      // Meta v25 formato real (descoberto inspecionando audiences existentes):
+      // rule é um ARRAY de {event_name, object_id}, subtype=ENGAGEMENT, sem inclusions/filter.
+      // object_id deve ser numérico.
+      const exclRuleLegacy = JSON.stringify([
+        { event_name: "video_view_50_percent", object_id: Number(videoId) },
+      ]);
       const exclForm = new FormData();
       exclForm.append("access_token", access_token);
       exclForm.append("name", exclName);
-      exclForm.append("subtype", "VIDEO");
+      exclForm.append("subtype", "ENGAGEMENT");
+      exclForm.append("retention_days", "365");
       exclForm.append("rule", exclRuleLegacy);
       const exclRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/customaudiences`, { method: "POST", body: exclForm });
       const exclData = await exclRes.json();
