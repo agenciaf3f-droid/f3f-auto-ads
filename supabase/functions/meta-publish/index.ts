@@ -1963,13 +1963,16 @@ Deno.serve(async (req) => {
       exclForm.append("rule", exclRuleLegacy);
       const exclRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/customaudiences`, { method: "POST", body: exclForm });
       const exclData = await exclRes.json();
+      let exclusionAudienceId: string | null = null;
       if (exclData.error) {
-        const errDetail = `${exclData.error.message} | code=${exclData.error.code} | subcode=${exclData.error.error_subcode || "-"} | user_msg=${exclData.error.error_user_msg || ""} | user_title=${exclData.error.error_user_title || ""}`;
+        const errDetail = `${exclData.error.message} | code=${exclData.error.code} | subcode=${exclData.error.error_subcode || "-"} | user_msg=${exclData.error.error_user_msg || ""}`;
         logs.push({ step: "fase2_exclusion_audience", status: "error", ts: ts(), detail: errDetail });
-        return respond({ ok: false, step: "exclusion_audience", campaign_id: campaignId, error_message: `Falha ao criar audience VV50%: ${exclData.error.error_user_msg || exclData.error.message}`, raw_error: exclData.error });
+        // Não bloqueia publicação — segue sem exclusion. User cria manualmente depois.
+        logs.push({ step: "fase2_exclusion_audience", status: "warning", ts: ts(), detail: `⚠️ Continuando SEM audience de exclusão. Crie manualmente no Meta UI e adicione aos adsets.` });
+      } else {
+        exclusionAudienceId = exclData.id;
+        logs.push({ step: "fase2_exclusion_audience", status: "success", ts: ts(), detail: `id=${exclusionAudienceId}, name="${exclName}"` });
       }
-      const exclusionAudienceId = exclData.id;
-      logs.push({ step: "fase2_exclusion_audience", status: "success", ts: ts(), detail: `id=${exclusionAudienceId}, name="${exclName}"` });
 
       // 2. Cria 1 creative compartilhado
       const creativePayload: Record<string, any> = { name: `Creative - ${cr.name}`, ...cr.spec, access_token };
