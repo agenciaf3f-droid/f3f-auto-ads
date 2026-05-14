@@ -615,11 +615,11 @@ async function buildFase1Creative(
     const spec: Record<string, any> = {
       source_instagram_media_id: result.instagram_media_id,
       instagram_user_id: resolvedIgActor,
-      call_to_action: { type: "VISIT_PROFILE", value: { link: igProfileLink } },
+      call_to_action: { type: "VISIT_INSTAGRAM_PROFILE", value: { link: igProfileLink } },
     };
 
-    console.log(`[FASE1-creative] OK: media=${result.instagram_media_id}, ig=${resolvedIgActor}, CTA=VISIT_PROFILE`);
-    logs.push({ step: "fase1_creative", status: "success", ts: ts(), detail: `media=${result.instagram_media_id}, CTA=VISIT_PROFILE` });
+    console.log(`[FASE1-creative] OK: media=${result.instagram_media_id}, ig=${resolvedIgActor}, CTA=VISIT_INSTAGRAM_PROFILE`);
+    logs.push({ step: "fase1_creative", status: "success", ts: ts(), detail: `media=${result.instagram_media_id}, CTA=VISIT_INSTAGRAM_PROFILE` });
     return { spec };
 
   } else if (isDriveLink) {
@@ -631,12 +631,12 @@ async function buildFase1Creative(
         image_hash: result.image_hash,
         message: creativeName,
         link: igProfileLink,
-        call_to_action: { type: "VISIT_PROFILE", value: { link: igProfileLink } },
+        call_to_action: { type: "VISIT_INSTAGRAM_PROFILE", value: { link: igProfileLink } },
       };
       const storySpec: Record<string, any> = { page_id: pageId, link_data: linkData };
       if (igActorId) storySpec.instagram_user_id = igActorId;
-      console.log(`[FASE1-creative] OK: image_hash, CTA=VISIT_PROFILE, link=${igProfileLink}`);
-      logs.push({ step: "fase1_creative", status: "success", ts: ts(), detail: `image_hash=${result.image_hash}, CTA=VISIT_PROFILE` });
+      console.log(`[FASE1-creative] OK: image_hash, CTA=VISIT_INSTAGRAM_PROFILE, link=${igProfileLink}`);
+      logs.push({ step: "fase1_creative", status: "success", ts: ts(), detail: `image_hash=${result.image_hash}, CTA=VISIT_INSTAGRAM_PROFILE` });
       return { spec: { object_story_spec: storySpec } };
 
     } else if (result.video_id) {
@@ -670,12 +670,12 @@ async function buildFase1Creative(
         video_id: result.video_id,
         ...thumbnailField,
         message: creativeName,
-        call_to_action: { type: "VISIT_PROFILE", value: { link: igProfileLink } },
+        call_to_action: { type: "VISIT_INSTAGRAM_PROFILE", value: { link: igProfileLink } },
       };
       const storySpec: Record<string, any> = { page_id: pageId, video_data: videoData };
       if (igActorId) storySpec.instagram_user_id = igActorId;
-      console.log(`[FASE1-creative] OK: video_id=${result.video_id}, CTA=VISIT_PROFILE`);
-      logs.push({ step: "fase1_creative", status: "success", ts: ts(), detail: `video_id=${result.video_id}, CTA=VISIT_PROFILE` });
+      console.log(`[FASE1-creative] OK: video_id=${result.video_id}, CTA=VISIT_INSTAGRAM_PROFILE`);
+      logs.push({ step: "fase1_creative", status: "success", ts: ts(), detail: `video_id=${result.video_id}, CTA=VISIT_INSTAGRAM_PROFILE` });
       return { spec: { object_story_spec: storySpec } };
     }
   }
@@ -1149,7 +1149,7 @@ Deno.serve(async (req) => {
       console.log(`[publish]   objective: OUTCOME_TRAFFIC`);
       console.log(`[publish]   optimization_goal: PROFILE_VISIT`);
       console.log(`[publish]   destination_type: INSTAGRAM_PROFILE`);
-      console.log(`[publish]   CTA: VISIT_PROFILE (automatic)`);
+      console.log(`[publish]   CTA: VISIT_INSTAGRAM_PROFILE (automatic)`);
       console.log(`[publish]   advantage_audience: DISABLED (enforced)`);
     }
     console.log(`[publish] ═══════════════════════════════════════════`);
