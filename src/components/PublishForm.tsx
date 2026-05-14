@@ -129,6 +129,20 @@ const PRESETS = [
     requires_whatsapp: true,
     not_implemented: false,
   },
+  {
+    id: "fase3-vendas-lp",
+    label: "FASE 3 - VENDAS | LP",
+    objective: "OUTCOME_SALES",
+    optimization_goal: "OFFSITE_CONVERSIONS",
+    billing_event: "IMPRESSIONS",
+    bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+    destination_type: "WEBSITE",
+    default_cta: "LEARN_MORE",
+    status: "PAUSED",
+    fase: "FASE 3",
+    requires_whatsapp: false,
+    not_implemented: false,
+  },
 ] as const;
 type PresetId = typeof PRESETS[number]["id"];
 
@@ -1031,7 +1045,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         lp_url: selectedPreset.destination_type === "WEBSITE" ? lpUrl : undefined,
         pixel_id: (selectedPreset.destination_type === "WEBSITE" || isFase3VendasZap) ? selectedPixelId : undefined,
         custom_event_type: selectedPreset.destination_type === "WEBSITE"
-          ? "LEAD"
+          ? (selectedPreset.objective === "OUTCOME_SALES" ? "PURCHASE" : "LEAD")
           : (isFase3VendasZap ? "PURCHASE" : undefined),
         fase2_audiences: isFase2 ? fase2Audiences : undefined,
         fase2_audience_names: isFase2
