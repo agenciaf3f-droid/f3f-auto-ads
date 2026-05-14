@@ -607,14 +607,12 @@ async function buildFase1Creative(
     const resolvedIgActor = result.ig_account_id || igActorId;
     if (!resolvedIgActor) return { error: "instagram_user_id não disponível." };
 
-    // FASE 1 IG-link creative: spec flat com page_id + instagram_user_id top-level.
-    // Meta v25 exige page_id binding pra creative casar com adset INSTAGRAM_PROFILE,
-    // senão o ad é rejeitado com #1346001 na revisão (mesmo com publish bem-sucedido).
-    // Não usar object_story_spec aqui — ele exige link_data, incompatível com source_instagram_media_id.
+    // FASE 1 IG-link: spec mínima para boostar IG media existente.
+    // page_id NÃO pode ir no top-level do creative — Meta retorna #3 "capability" error.
+    // O binding com a Page é feito via promoted_object.page_id no ADSET.
     const spec: Record<string, any> = {
-      page_id: pageId,
-      instagram_user_id: resolvedIgActor,
       source_instagram_media_id: result.instagram_media_id,
+      instagram_user_id: resolvedIgActor,
       call_to_action: { type: "VISIT_PROFILE", value: { link: igProfileLink } },
     };
 
