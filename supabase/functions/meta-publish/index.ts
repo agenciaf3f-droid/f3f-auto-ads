@@ -1324,12 +1324,11 @@ Deno.serve(async (req) => {
     const buildFase1Adset = (name: string): Record<string, any> => {
       // FASE 1 adset:
       // - advantage_audience FORÇADO = 0 (override user input)
-      // - promoted_object DEVE ter { page_id, instagram_profile_id } — sem instagram_profile_id
-      //   o ad falha #1346001/#100/2446391 quando o connected user não é admin direto da Page
-      //   (cenário típico: agência conectada via Business Manager).
+      // - promoted_object SÓ com page_id (formato historicamente funcional, conforme
+      //   commit e2da2d5). Adicionar instagram_profile_id causa #1346001 ao linkar o ad
+      //   quando user conectado não é admin direto da Page (cenário típico de agência via BM).
       // - sem attribution_spec
       const promotedObject: Record<string, any> = { page_id: pageId };
-      if (igActorId) promotedObject.instagram_profile_id = igActorId;
       const p: Record<string, any> = {
         name,
         campaign_id: campaignId,
