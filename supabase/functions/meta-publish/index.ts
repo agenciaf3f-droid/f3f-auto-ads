@@ -373,6 +373,7 @@ async function resolveInstagramMediaId(
   page_id?: string;
   shortcode?: string;
   media_permalink?: string;
+  media_type?: string;
   error?: string;
 }> {
   const normalizeUrl = (value?: string) => (value || "").trim().toLowerCase().split("?")[0].replace(/\/+$/, "");
@@ -395,8 +396,8 @@ async function resolveInstagramMediaId(
   const resolveMediaFromIgActor = async (
     igActorId: string,
     pageId?: string,
-  ): Promise<{ mediaId?: string; permalink?: string; pageId?: string; igActorId?: string; error?: string }> => {
-    let url: string | null = `https://graph.facebook.com/v25.0/${igActorId}/media?fields=id,shortcode,permalink&limit=100&access_token=${accessToken}`;
+  ): Promise<{ mediaId?: string; permalink?: string; pageId?: string; igActorId?: string; mediaType?: string; error?: string }> => {
+    let url: string | null = `https://graph.facebook.com/v25.0/${igActorId}/media?fields=id,shortcode,permalink,media_type&limit=100&access_token=${accessToken}`;
     let scanned = 0;
     while (url && scanned < 500) {
       const res = await fetch(url);
@@ -414,16 +415,16 @@ async function resolveInstagramMediaId(
         return permalinkLc.includes(`/${shortcodeLc}`);
       });
       if (found) {
-        console.log(`[ig_media_resolve] FOUND media_id=${found.id}, ig_actor=${igActorId}, scanned=${scanned}`);
-        logs.push({ step: "ig_media_resolve", status: "success", ts: ts(), detail: `media_id=${found.id}, ig_actor=${igActorId}, scanned=${scanned}` });
-        return { mediaId: found.id, permalink: found.permalink, pageId, igActorId };
+        console.log(`[ig_media_resolve] FOUND media_id=${found.id}, type=${found.media_type}, ig_actor=${igActorId}, scanned=${scanned}`);
+        logs.push({ step: "ig_media_resolve", status: "success", ts: ts(), detail: `media_id=${found.id}, type=${found.media_type}, ig_actor=${igActorId}, scanned=${scanned}` });
+        return { mediaId: found.id, permalink: found.permalink, mediaType: found.media_type, pageId, igActorId };
       }
       url = data.paging?.next || null;
     }
     return {};
   };
 
-  let resolvedMedia: { mediaId?: string; permalink?: string; pageId?: string; igActorId?: string; error?: string } = {};
+  let resolvedMedia: { mediaId?: string; permalink?: string; pageId?: string; igActorId?: string; mediaType?: string; error?: string } = {};
 
   if (knownIgActorId) {
     resolvedMedia = await resolveMediaFromIgActor(knownIgActorId, knownPageId);
@@ -465,6 +466,7 @@ async function resolveInstagramMediaId(
     page_id: resolvedMedia.pageId || knownPageId,
     shortcode,
     media_permalink: resolvedMedia.permalink,
+    media_type: resolvedMedia.mediaType,
   };
 }
 
@@ -603,6 +605,14 @@ async function buildFase1Creative(
     const result = await resolveInstagramMediaId(accessToken, adAccountId, creativeLink, pageId, igActorId, logs);
     if (result.error) return { error: result.error };
     if (!result.instagram_media_id) return { error: "instagram_media_id não resolvido." };
+
+    // Carrossel IG (CAROUSEL_ALBUM) não é elegível pra source_instagram_media_id em
+    // PROFILE_VISIT/INSTAGRAM_PROFILE — Meta cria o creative mas falha o ad com #1346001.
+    if (result.media_type === "CAROUSEL_ALBUM") {
+      const err = `Post em carrossel não é suportado para FASE 1 — Meta exige imagem única, vídeo ou Reel. Use outro post.`;
+      logs.push({ step: "fase1_creative", status: "error", ts: ts(), detail: `media_type=CAROUSEL_ALBUM | shortcode=${result.shortcode}` });
+      return { error: err };
+    }
 
     const resolvedIgActor = result.ig_account_id || igActorId;
     if (!resolvedIgActor) return { error: "instagram_user_id não disponível." };
