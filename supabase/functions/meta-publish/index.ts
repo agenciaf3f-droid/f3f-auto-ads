@@ -606,14 +606,6 @@ async function buildFase1Creative(
     if (result.error) return { error: result.error };
     if (!result.instagram_media_id) return { error: "instagram_media_id não resolvido." };
 
-    // Carrossel IG (CAROUSEL_ALBUM) não é elegível pra source_instagram_media_id em
-    // PROFILE_VISIT/INSTAGRAM_PROFILE — Meta cria o creative mas falha o ad com #1346001.
-    if (result.media_type === "CAROUSEL_ALBUM") {
-      const err = `Post em carrossel não é suportado para FASE 1 — Meta exige imagem única, vídeo ou Reel. Use outro post.`;
-      logs.push({ step: "fase1_creative", status: "error", ts: ts(), detail: `media_type=CAROUSEL_ALBUM | shortcode=${result.shortcode}` });
-      return { error: err };
-    }
-
     const resolvedIgActor = result.ig_account_id || igActorId;
     if (!resolvedIgActor) return { error: "instagram_user_id não disponível." };
 
@@ -1670,7 +1662,11 @@ Deno.serve(async (req) => {
       const adData = await adRes.json();
       if (adData.error) {
         const blame = adData.error.blame_field_specs ? JSON.stringify(adData.error.blame_field_specs) : "none";
-        const errDetail = `${adData.error.message} | code=${adData.error.code} | subcode=${adData.error.error_subcode} | blame=${blame}`;
+        let hint = "";
+        if (adData.error.error_subcode === 1346001) {
+          hint = " | hint=Meta rejeitou esse post específico (provável política de conteúdo do anúncio para esse post). Tente outro post ou verifique no Gerenciador.";
+        }
+        const errDetail = `${adData.error.message} | code=${adData.error.code} | subcode=${adData.error.error_subcode} | blame=${blame}${hint}`;
         console.log(`[ad_${idx}] full_error: ${JSON.stringify(adData.error)}`);
         logs.push({ step: `ad_${idx}`, status: "error", ts: ts(), detail: errDetail });
         failures.push({ index: idx, name: cr.name, step: "ad", reason: errDetail });
