@@ -131,7 +131,7 @@ const PRESETS = [
   },
   {
     id: "fase3-vendas-lp",
-    label: "FASE 3 - VENDAS | LP",
+    label: "L.T",
     objective: "OUTCOME_SALES",
     optimization_goal: "OFFSITE_CONVERSIONS",
     billing_event: "IMPRESSIONS",
