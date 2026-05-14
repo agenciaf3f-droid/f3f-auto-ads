@@ -609,17 +609,18 @@ async function buildFase1Creative(
     const resolvedIgActor = result.ig_account_id || igActorId;
     if (!resolvedIgActor) return { error: "instagram_user_id não disponível." };
 
-    // FASE 1 IG-link: spec mínima para boostar IG media existente.
-    // page_id NÃO pode ir no top-level do creative — Meta retorna #3 "capability" error.
-    // O binding com a Page é feito via promoted_object.page_id no ADSET.
+    // FASE 1 IG-link: tenta instagram_permalink_url (caminho usado pelo botão
+    // "Promover" do app IG — mais permissivo para contas BM). source_instagram_media_id
+    // historicamente falhava com #1346001 em contas acessadas via Business Manager.
+    const permalink = result.media_permalink || `https://www.instagram.com/p/${result.shortcode}/`;
     const spec: Record<string, any> = {
-      source_instagram_media_id: result.instagram_media_id,
+      instagram_permalink_url: permalink,
       instagram_user_id: resolvedIgActor,
       call_to_action: { type: "VISIT_PROFILE", value: { link: igProfileLink } },
     };
 
-    console.log(`[FASE1-creative] OK: media=${result.instagram_media_id}, ig=${resolvedIgActor}, CTA=VISIT_PROFILE`);
-    logs.push({ step: "fase1_creative", status: "success", ts: ts(), detail: `media=${result.instagram_media_id}, CTA=VISIT_PROFILE` });
+    console.log(`[FASE1-creative] OK: permalink=${permalink}, ig=${resolvedIgActor}, CTA=VISIT_PROFILE`);
+    logs.push({ step: "fase1_creative", status: "success", ts: ts(), detail: `permalink=${permalink}, CTA=VISIT_PROFILE` });
     return { spec };
 
   } else if (isDriveLink) {
