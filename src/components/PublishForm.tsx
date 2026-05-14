@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   WhatsAppNumberSelector,
   WhatsAppMessages,
@@ -27,7 +27,6 @@ import {
   getMetaLoginUrl, fetchMetaStatus, fetchAdAccounts, fetchAudiences,
   validatePublish, publishAd, validateCreative, fetchCampaigns,
   fetchWhatsAppNumbers, fetchIgAccountsForAdAccount, disconnectMeta,
-  runCampaignDiagnostic,
   fetchImportedMetaTemplates, type ImportedMetaTemplate,
   fetchPixels, type AdPixel,
 } from "@/lib/meta-api";
@@ -177,9 +176,6 @@ export default function PublishForm() {
   const [publishResult, setPublishResult] = useState<PublishResult | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [validatingCreative, setValidatingCreative] = useState(false);
-  const [diagnosticResult, setDiagnosticResult] = useState<any>(null);
-  const [diagnosticLoading, setDiagnosticLoading] = useState(false);
-  const [diagnosticOpen, setDiagnosticOpen] = useState(false);
 
   // Multi-creative
   const [creatives, setCreatives] = useState<CreativeItem[]>([
@@ -307,14 +303,28 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     }
   }, [preset, identityLoaded, identityPageId]);
 
-  // Invalidate validated payload when any form field changes
+  // Invalidate validated payload when any form field changes — EXCETO creatives,
+  // que tem useEffect separado abaixo. Motivo: handleValidate grava resultado por-criativo
+  // via setCreatives() durante o próprio run, e se "creatives" estivesse aqui, este
+  // useEffect dispararia mid-flight e apagaria validationResult (bug do "precisa 2 cliques").
   useEffect(() => {
     setValidatedPayload(null);
     setValidationResult(null);
   }, [selectedAccount, selectedAudience, budget, preset, campaignStructure, distributionStructure,
       selectedCampaign, selectedWhatsappId, greetingText, readyMessage, selectedTemplateId,
-      useCustomMessage, creatives, scheduleEnabled, scheduleDate, scheduleTime,
+      useCustomMessage, scheduleEnabled, scheduleDate, scheduleTime,
       includedLocations, excludedLocations, campaignNameInput, adsetNameInput]);
+
+  // Reset validação quando o user MUDA algo visível em criativos (link/type/name/count).
+  // NÃO inclui `validation` em si — então gravar resultado de validação não dispara reset.
+  const creativeSignature = useMemo(
+    () => creatives.map(c => `${c.id}:${c.type}:${c.link}:${c.name}`).join("|"),
+    [creatives]
+  );
+  useEffect(() => {
+    setValidatedPayload(null);
+    setValidationResult(null);
+  }, [creativeSignature]);
 
   const loadAccountContext = async () => {
     if (!accessToken || !selectedAccount) return;
@@ -1183,42 +1193,6 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     toast.success("Relatório copiado!");
   };
 
-  const handleDiagnostic = async () => {
-    if (!accessToken || !selectedAccount) {
-      toast.error("Selecione uma conta de anúncios primeiro.");
-      return;
-    }
-    setDiagnosticLoading(true);
-    setDiagnosticResult(null);
-    setDiagnosticOpen(true);
-    addLog("🔬 [diagnostic] Buscando TODAS as campanhas existentes (payload bruto)...");
-    try {
-      const result = await runCampaignDiagnostic(accessToken, selectedAccount);
-      setDiagnosticResult(result);
-      if (result.ok) {
-        addLog(`✅ [diagnostic] ${result.total_campaigns} campanha(s) capturada(s) com payload completo`);
-        toast.success(`Diagnóstico: ${result.total_campaigns} campanha(s) capturada(s)`);
-      } else {
-        addLog(`❌ [diagnostic] Erro: ${result.error}`);
-        toast.error(`Diagnóstico falhou: ${result.error}`);
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Erro";
-      addLog(`❌ [diagnostic] Erro: ${msg}`);
-      toast.error(`Diagnóstico falhou: ${msg}`);
-    } finally {
-      setDiagnosticLoading(false);
-    }
-  };
-
-  const copyDiagnostic = () => {
-    if (diagnosticResult) {
-      navigator.clipboard.writeText(JSON.stringify(diagnosticResult, null, 2));
-      toast.success("Diagnóstico copiado!");
-    }
-  };
-
-
 
   if (metaLoading) {
     return (
@@ -1456,12 +1430,29 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               </Button>
             </div>
 
-            {creatives.map((cr, idx) => (
-              <div key={cr.id} className="border border-border/50 rounded-lg p-4 space-y-3 relative">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-muted-foreground">Criativo {idx + 1}</span>
+            {creatives.map((cr, idx) => {
+              const borderAccent = cr.validation?.ok
+                ? "border-l-success/60"
+                : cr.validation && !cr.validation.ok
+                ? "border-l-destructive/60"
+                : "border-l-primary/40";
+              return (
+              <div key={cr.id} className={`border border-border/50 border-l-4 ${borderAccent} rounded-lg p-4 space-y-3 relative`}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-xs font-medium text-muted-foreground shrink-0">Criativo {idx + 1}</span>
+                    {cr.name && (
+                      <span className="text-xs text-foreground/70 truncate">— {cr.name}</span>
+                    )}
+                    {cr.validation?.ok && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-success/15 text-success font-medium shrink-0">✓ OK</span>
+                    )}
+                    {cr.validation && !cr.validation.ok && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-destructive/15 text-destructive font-medium shrink-0">✗ Erro</span>
+                    )}
+                  </div>
                   {creatives.length > 1 && (
-                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => removeCreative(cr.id)}>
+                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 shrink-0" onClick={() => removeCreative(cr.id)}>
                       <X className="w-3.5 h-3.5 text-muted-foreground" />
                     </Button>
                   )}
@@ -1529,7 +1520,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </Card>
 
           {/* Audience — single (FASE 1/3) ou multi (FASE 2) */}
@@ -1902,64 +1894,16 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           )}
 
           {/* Actions */}
-          <div className="flex gap-3">
-            <Button variant="outline" onClick={handleValidate} disabled={loading || validatingCreative || selectedPreset.not_implemented} className="flex-1 gap-2">
+          <div className="border-t border-border pt-6 mt-2 flex gap-3">
+            <Button variant="secondary" size="lg" onClick={handleValidate} disabled={loading || validatingCreative || selectedPreset.not_implemented} className="flex-1 gap-2">
               {(loading || validatingCreative) ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
               Validar
             </Button>
-            <Button onClick={handlePublish} disabled={loading || !validatedPayload || !validationResult?.valid || (!!minBudget && Number(budget) < minBudget) || selectedPreset.not_implemented} className="flex-1 gap-2 glow-primary">
+            <Button size="lg" onClick={handlePublish} disabled={loading || !validatedPayload || !validationResult?.valid || (!!minBudget && Number(budget) < minBudget) || selectedPreset.not_implemented} className="flex-1 gap-2 glow-primary">
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              Publicar
+              {loading ? "Publicando..." : "Publicar"}
             </Button>
           </div>
-
-          {/* Diagnostic Button */}
-          <div className="flex gap-3">
-            <Button
-              variant="outline"
-              onClick={handleDiagnostic}
-              disabled={diagnosticLoading || !selectedAccount}
-              className="flex-1 gap-2 border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
-            >
-              {diagnosticLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Settings2 className="w-4 h-4" />}
-              🔬 Diagnóstico Completo
-            </Button>
-            {diagnosticResult && (
-              <Button variant="ghost" size="sm" onClick={copyDiagnostic} className="gap-1 text-xs">
-                <Copy className="w-3.5 h-3.5" /> Copiar JSON
-              </Button>
-            )}
-          </div>
-
-          {/* Diagnostic Result */}
-          {diagnosticOpen && diagnosticResult && (
-            <Card className="glass-card p-4 border-amber-500/30 space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-display font-semibold text-amber-400">
-                  🔬 Diagnóstico: {diagnosticResult.total_campaigns} campanha(s) — Payload Bruto
-                </p>
-                <Button variant="ghost" size="sm" onClick={() => setDiagnosticOpen(false)} className="h-6 w-6 p-0">
-                  <X className="w-4 h-4" />
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">Capturado em: {diagnosticResult.fetched_at}</p>
-              {diagnosticResult.logs && diagnosticResult.logs.length > 0 && (
-                <details className="text-xs">
-                  <summary className="cursor-pointer text-muted-foreground">Logs do diagnóstico ({diagnosticResult.logs.length})</summary>
-                  <pre className="mt-2 max-h-[200px] overflow-auto rounded bg-background/50 p-2 font-mono whitespace-pre-wrap break-all text-foreground/70">
-                    {diagnosticResult.logs.join("\n")}
-                  </pre>
-                </details>
-              )}
-              <div className="max-h-[500px] overflow-auto rounded bg-background/50 p-3">
-                <pre className="text-xs font-mono whitespace-pre-wrap break-all text-foreground/80">
-                  {JSON.stringify(diagnosticResult.diagnostic, null, 2)}
-                </pre>
-              </div>
-            </Card>
-          )}
-
-
 
           {publishResult && publishResult.ok && (
             <Card className="glass-card p-4 border-success/30 glow-primary space-y-2">
