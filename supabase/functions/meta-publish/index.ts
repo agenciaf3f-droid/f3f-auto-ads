@@ -481,12 +481,19 @@ async function uploadDriveCreative(
 ): Promise<{ image_hash?: string; video_id?: string; error?: string }> {
   let downloadUrl = driveLink;
   const fileIdMatch = driveLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
-  if (fileIdMatch) downloadUrl = `https://drive.google.com/uc?export=download&id=${fileIdMatch[1]}`;
+  // confirm=t bypassa o interstitial de "verificação de vírus" do Drive
+  // pra arquivos >100MB. Sem isso, fetch retorna HTML em vez do binário.
+  if (fileIdMatch) downloadUrl = `https://drive.google.com/uc?export=download&id=${fileIdMatch[1]}&confirm=t`;
   const fileRes = await fetch(downloadUrl, { redirect: "follow" });
   if (!fileRes.ok) return { error: "Falha ao baixar arquivo do Drive." };
   const contentType = fileRes.headers.get("content-type") || "";
   const contentDisp = fileRes.headers.get("content-disposition") || "";
   const fileBlob = await fileRes.blob();
+
+  // Se Drive devolveu HTML mesmo com confirm=t, fail fast com mensagem clara
+  if (contentType.includes("text/html") || contentType.includes("text/plain")) {
+    return { error: `Drive retornou página HTML em vez do arquivo (ct=${contentType}). Verifique se o link é público ("Qualquer pessoa com link"). Pra arquivos muito grandes, baixe e re-upload no Drive ou use link IG.` };
+  }
 
   // Detecção: content-type, content-disposition (filename) ou magic bytes.
   // Drive normalmente retorna application/octet-stream — precisa fallback.
@@ -501,7 +508,7 @@ async function uploadDriveCreative(
     if (head[0] === 0x1A && head[1] === 0x45 && head[2] === 0xDF && head[3] === 0xA3) bytesSayVideo = true;
   } catch {}
   const isVideo = headerSaysVideo || filenameSaysVideo || bytesSayVideo;
-  console.log(`[drive-upload] ct=${contentType}, disp_hint=${filenameSaysVideo}, magic_video=${bytesSayVideo} => isVideo=${isVideo}`);
+  console.log(`[drive-upload] ct=${contentType}, cd=${contentDisp.substring(0,100)}, magic_video=${bytesSayVideo} => isVideo=${isVideo}`);
 
   const formatMetaUploadError = (e: any) => {
     const parts = [e.message];
