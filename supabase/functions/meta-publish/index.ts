@@ -503,13 +503,25 @@ async function uploadDriveCreative(
   const isVideo = headerSaysVideo || filenameSaysVideo || bytesSayVideo;
   console.log(`[drive-upload] ct=${contentType}, disp_hint=${filenameSaysVideo}, magic_video=${bytesSayVideo} => isVideo=${isVideo}`);
 
+  const formatMetaUploadError = (e: any) => {
+    const parts = [e.message];
+    if (e.code) parts.push(`code=${e.code}`);
+    if (e.error_subcode) parts.push(`subcode=${e.error_subcode}`);
+    if (e.error_user_msg) parts.push(`user_msg=${e.error_user_msg}`);
+    if (e.error_user_title) parts.push(`user_title=${e.error_user_title}`);
+    return parts.join(" | ");
+  };
+
   if (isVideo) {
     const formData = new FormData();
     formData.append("access_token", accessToken);
     formData.append("file_url", downloadUrl);
     const uploadRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/advideos`, { method: "POST", body: formData });
     const uploadData = await uploadRes.json();
-    if (uploadData.error) return { error: uploadData.error.message };
+    if (uploadData.error) {
+      console.log(`[drive-upload] /advideos error: ${JSON.stringify(uploadData.error)}`);
+      return { error: formatMetaUploadError(uploadData.error) };
+    }
     return { video_id: uploadData.id };
   } else {
     const formData = new FormData();
@@ -518,7 +530,10 @@ async function uploadDriveCreative(
     formData.append("bytes", await blobToBase64(fileBlob));
     const uploadRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/adimages`, { method: "POST", body: formData });
     const uploadData = await uploadRes.json();
-    if (uploadData.error) return { error: uploadData.error.message };
+    if (uploadData.error) {
+      console.log(`[drive-upload] /adimages error: ${JSON.stringify(uploadData.error)}`);
+      return { error: formatMetaUploadError(uploadData.error) };
+    }
     const images = uploadData.images;
     if (images) {
       const firstKey = Object.keys(images)[0];
