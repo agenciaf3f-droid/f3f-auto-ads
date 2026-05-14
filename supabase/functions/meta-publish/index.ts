@@ -612,17 +612,10 @@ async function buildFase1Creative(
     // FASE 1 IG-link: spec mínima para boostar IG media existente.
     // page_id NÃO pode ir no top-level do creative — Meta retorna #3 "capability" error.
     // O binding com a Page é feito via promoted_object.page_id no ADSET.
-    // degrees_of_freedom_spec OPT_OUT: desativa enhancements automáticos que às vezes
-    // causam #1346001 ao linkar o creative no ad (esp. Reels em conta de agência via BM).
     const spec: Record<string, any> = {
       source_instagram_media_id: result.instagram_media_id,
       instagram_user_id: resolvedIgActor,
       call_to_action: { type: "VISIT_PROFILE", value: { link: igProfileLink } },
-      degrees_of_freedom_spec: {
-        creative_features_spec: {
-          standard_enhancements: { enroll_status: "OPT_OUT" },
-        },
-      },
     };
 
     console.log(`[FASE1-creative] OK: media=${result.instagram_media_id}, ig=${resolvedIgActor}, CTA=VISIT_PROFILE`);
