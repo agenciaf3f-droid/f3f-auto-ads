@@ -609,18 +609,18 @@ async function buildFase1Creative(
     const resolvedIgActor = result.ig_account_id || igActorId;
     if (!resolvedIgActor) return { error: "instagram_user_id não disponível." };
 
-    // FASE 1 IG-link: tenta instagram_permalink_url (caminho usado pelo botão
-    // "Promover" do app IG — mais permissivo para contas BM). source_instagram_media_id
-    // historicamente falhava com #1346001 em contas acessadas via Business Manager.
+    // FASE 1 IG-link: instagram_permalink_url (caminho do botão "Promover" do app IG).
+    // SEM call_to_action — Meta rejeita "CTA requer promoção de post existente"
+    // quando combinado com permalink_url. O destination_type=INSTAGRAM_PROFILE no
+    // adset cuida do destino do clique automaticamente.
     const permalink = result.media_permalink || `https://www.instagram.com/p/${result.shortcode}/`;
     const spec: Record<string, any> = {
       instagram_permalink_url: permalink,
       instagram_user_id: resolvedIgActor,
-      call_to_action: { type: "VISIT_PROFILE", value: { link: igProfileLink } },
     };
 
-    console.log(`[FASE1-creative] OK: permalink=${permalink}, ig=${resolvedIgActor}, CTA=VISIT_PROFILE`);
-    logs.push({ step: "fase1_creative", status: "success", ts: ts(), detail: `permalink=${permalink}, CTA=VISIT_PROFILE` });
+    console.log(`[FASE1-creative] OK: permalink=${permalink}, ig=${resolvedIgActor}`);
+    logs.push({ step: "fase1_creative", status: "success", ts: ts(), detail: `permalink=${permalink}` });
     return { spec };
 
   } else if (isDriveLink) {
