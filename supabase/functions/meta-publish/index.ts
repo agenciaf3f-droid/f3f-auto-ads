@@ -1661,13 +1661,11 @@ Deno.serve(async (req) => {
       });
       const adData = await adRes.json();
       if (adData.error) {
-        const blame = adData.error.blame_field_specs ? JSON.stringify(adData.error.blame_field_specs) : "none";
-        let hint = "";
-        if (adData.error.error_subcode === 1346001) {
-          hint = " | hint=Meta rejeitou esse post específico (provável política de conteúdo do anúncio para esse post). Tente outro post ou verifique no Gerenciador.";
-        }
-        const errDetail = `${adData.error.message} | code=${adData.error.code} | subcode=${adData.error.error_subcode} | blame=${blame}${hint}`;
-        console.log(`[ad_${idx}] full_error: ${JSON.stringify(adData.error)}`);
+        const e = adData.error;
+        const blame = e.blame_field_specs ? JSON.stringify(e.blame_field_specs) : "none";
+        const fullError = JSON.stringify(e);
+        const errDetail = `${e.message} | code=${e.code} | subcode=${e.error_subcode} | user_title=${e.error_user_title || ""} | user_msg=${e.error_user_msg || ""} | blame=${blame} | full=${fullError}`;
+        console.log(`[ad_${idx}] full_error: ${fullError}`);
         logs.push({ step: `ad_${idx}`, status: "error", ts: ts(), detail: errDetail });
         failures.push({ index: idx, name: cr.name, step: "ad", reason: errDetail });
         return false;
