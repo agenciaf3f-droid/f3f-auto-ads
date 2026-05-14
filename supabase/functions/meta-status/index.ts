@@ -87,6 +87,10 @@ Deno.serve(async (req) => {
     // Only verify with Meta API if forced or token expires within 7 days
     // This avoids hitting Meta API on every single page load
     let metaName: string | null = null;
+    let currentToken = conn.access_token;
+    let currentExpiresAt = conn.expires_at;
+    let refreshed = false;
+
     if (forceVerify || expiresSoon) {
       console.log("[meta-status] Verifying token with Meta API (force:", forceVerify, ", expiresSoon:", expiresSoon, ")");
       const meRes = await fetch(`https://graph.facebook.com/v25.0/me?fields=name&access_token=${conn.access_token}`);
@@ -99,16 +103,57 @@ Deno.serve(async (req) => {
         });
       }
       metaName = meData.name;
+
+      // AUTO-REFRESH: trocar long-lived token por novo long-lived (mais ~60 dias)
+      // antes de expirar. Mantém conexão viva enquanto admin abrir o app a cada ~53 dias.
+      if (expiresSoon) {
+        const appId = "910343951738258";
+        const appSecret = Deno.env.get("META_APP_SECRET");
+        if (appSecret) {
+          try {
+            const refreshUrl = `https://graph.facebook.com/v25.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${conn.access_token}`;
+            const refreshRes = await fetch(refreshUrl);
+            const refreshData = await refreshRes.json();
+            if (refreshData.access_token) {
+              const newExpiresIn = refreshData.expires_in || 5184000; // ~60 dias
+              const newExpiresAt = new Date(Date.now() + newExpiresIn * 1000).toISOString();
+              const { error: updateErr } = await adminClient
+                .from("meta_connections")
+                .update({ access_token: refreshData.access_token, expires_at: newExpiresAt })
+                .eq("user_id", sharedUserId);
+              if (!updateErr) {
+                currentToken = refreshData.access_token;
+                currentExpiresAt = newExpiresAt;
+                refreshed = true;
+                console.log("[meta-status] ✅ Token refreshed. New expires_at:", newExpiresAt);
+              } else {
+                console.error("[meta-status] Failed to save refreshed token:", updateErr);
+              }
+            } else {
+              console.warn("[meta-status] Refresh did not return access_token:", refreshData);
+            }
+          } catch (e) {
+            console.error("[meta-status] Refresh exception:", (e as Error).message);
+          }
+        } else {
+          console.warn("[meta-status] META_APP_SECRET not set — cannot auto-refresh");
+        }
+      }
     }
 
-    console.log("[meta-status] Token valid. Expires:", conn.expires_at, "expiresSoon:", expiresSoon);
+    // Recalcular expires_soon após possível refresh
+    const finalExpiresAt = currentExpiresAt ? new Date(currentExpiresAt) : null;
+    const finalExpiresSoon = finalExpiresAt && (finalExpiresAt.getTime() - now.getTime()) < sevenDaysMs;
+
+    console.log("[meta-status] Token valid. Expires:", currentExpiresAt, "expiresSoon:", finalExpiresSoon, "refreshed:", refreshed);
 
     return new Response(JSON.stringify({
       connected: true,
-      access_token: conn.access_token,
+      access_token: currentToken,
       meta_name: metaName,
-      expires_at: conn.expires_at,
-      expires_soon: expiresSoon || false,
+      expires_at: currentExpiresAt,
+      expires_soon: finalExpiresSoon || false,
+      refreshed,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
