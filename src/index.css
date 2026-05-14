@@ -107,26 +107,75 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-family: var(--font-body);
+    /* Subtle dotted background pattern em light mode */
+    background-image: radial-gradient(hsl(var(--border) / 0.5) 1px, transparent 0);
+    background-size: 24px 24px;
+    background-position: 0 0;
+  }
+
+  .dark body {
+    background-image: radial-gradient(hsl(var(--border) / 0.4) 1px, transparent 0);
   }
 
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-display);
+    letter-spacing: -0.02em;
   }
+
+  /* Heading scale padronizada */
+  h1 { @apply text-3xl font-bold tracking-tight; }
+  h2 { @apply text-2xl font-bold tracking-tight; }
+  h3 { @apply text-lg font-semibold; }
+
+  /* Focus ring mais visível em inputs/textareas */
+  input:focus-visible, textarea:focus-visible, select:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px hsl(var(--primary) / 0.2);
+    border-color: hsl(var(--primary) / 0.6);
+  }
+
+  /* Scrollbar mais elegante */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.4); background-clip: content-box; border: 2px solid transparent; }
 }
 
 @layer utilities {
   .glass-card {
-    @apply bg-card border border-border/60 rounded-xl shadow-sm;
+    @apply bg-card border border-border/60 rounded-xl;
     box-shadow:
       0 1px 0 rgba(255,255,255,0.06) inset,
-      0 4px 24px -4px rgba(0,0,0,0.06);
+      0 1px 2px rgba(0,0,0,0.04),
+      0 8px 24px -8px rgba(0,0,0,0.08);
+    transition: box-shadow 0.25s cubic-bezier(0.16,1,0.3,1), border-color 0.25s, transform 0.25s;
+  }
+
+  .glass-card:hover {
+    box-shadow:
+      0 1px 0 rgba(255,255,255,0.08) inset,
+      0 4px 8px rgba(0,0,0,0.06),
+      0 16px 32px -12px rgba(0,0,0,0.1);
+    border-color: hsl(var(--border));
   }
 
   .dark .glass-card {
-    @apply bg-card/80 backdrop-blur-xl border-border/50;
+    @apply bg-card/85 backdrop-blur-xl border-border/50;
     box-shadow:
       0 1px 0 rgba(255,255,255,0.05) inset,
-      0 8px 32px -8px rgba(0,0,0,0.32);
+      0 8px 32px -8px rgba(0,0,0,0.35);
+  }
+
+  .dark .glass-card:hover {
+    box-shadow:
+      0 1px 0 rgba(255,255,255,0.07) inset,
+      0 12px 40px -10px rgba(0,0,0,0.5);
+    border-color: hsl(var(--border) / 0.8);
   }
 
   .glow-primary {
@@ -145,6 +194,16 @@
   .fade-in-up {
     animation: fade-in-up 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
+
+  /* Botões: micro-interaction de hover sutil (não aplicado quando disabled) */
+  button:not(:disabled):not([data-no-scale]):active {
+    transform: translateY(1px);
+  }
+
+  /* Header gradient borda inferior */
+  .header-border {
+    background-image: linear-gradient(90deg, transparent, hsl(var(--border)), transparent);
+  }
 }
 
 @keyframes fade-in-up {
@@ -155,5 +214,13 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

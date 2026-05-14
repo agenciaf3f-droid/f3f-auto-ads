@@ -32,7 +32,7 @@ function MetaStatusDot() {
   return (
     <span
       title={connected ? "Meta conectado" : "Meta desconectado"}
-      className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
+      className={`inline-block w-2 h-2 rounded-full shrink-0 ${
         connected ? "bg-success animate-pulse-glow" : "bg-destructive"
       }`}
     />
@@ -54,27 +54,27 @@ export default function Header() {
   }, [user]);
 
   return (
-    <header className="border-b border-border/40 bg-background/90 backdrop-blur-xl sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
+    <header className="border-b border-border/40 bg-background/85 backdrop-blur-xl sticky top-0 z-50">
+      <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
 
         {/* Brand */}
-        <Link to="/" className="flex items-center gap-2.5 shrink-0 group">
-          <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center glow-primary">
-            <Zap className="w-4 h-4 text-primary" />
+        <Link to="/" className="flex items-center gap-3 shrink-0 group">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary/30 to-accent/20 flex items-center justify-center glow-primary transition-transform group-hover:scale-105">
+            <Zap className="w-4.5 h-4.5 text-primary" />
           </div>
-          <span className="font-display font-bold text-base tracking-tight">
+          <span className="font-display font-bold text-lg tracking-tight">
             F3F <span className="text-gradient">AUTO-ADS</span>
           </span>
         </Link>
 
         {/* Right cluster */}
-        <div className="flex items-center gap-1">
-          <nav className="flex gap-0.5 mr-1">
+        <div className="flex items-center gap-1.5">
+          <nav className="flex gap-1 mr-1">
             <Link to="/">
               <Button
                 variant={location.pathname === "/" ? "secondary" : "ghost"}
                 size="sm"
-                className="text-xs h-8 px-3"
+                className="text-sm h-9 px-3.5 font-medium"
               >
                 Publicar
               </Button>
@@ -83,7 +83,7 @@ export default function Header() {
               <Button
                 variant={location.pathname === "/settings" ? "secondary" : "ghost"}
                 size="sm"
-                className="text-xs h-8 px-3 gap-1.5"
+                className="text-sm h-9 px-3.5 gap-1.5 font-medium"
               >
                 <MetaStatusDot />
                 <Settings className="w-3.5 h-3.5" />
@@ -95,7 +95,7 @@ export default function Header() {
                 <Button
                   variant={location.pathname === "/admin" ? "secondary" : "ghost"}
                   size="sm"
-                  className="text-xs h-8 px-3 gap-1.5"
+                  className="text-sm h-9 px-3.5 gap-1.5 font-medium"
                 >
                   <ShieldCheck className="w-3.5 h-3.5" />
                   Admin
@@ -108,24 +108,26 @@ export default function Header() {
             variant="ghost"
             size="sm"
             onClick={toggleTheme}
-            className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+            className="h-9 w-9 p-0 text-muted-foreground hover:text-foreground"
+            title={theme === "light" ? "Modo escuro" : "Modo claro"}
           >
-            {theme === "light" ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
+            {theme === "light" ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
           </Button>
 
           {user && (
-            <div className="flex items-center gap-1 pl-2 ml-1 border-l border-border/50">
-              <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground px-1">
-                <User className="w-3 h-3" />
-                <span className="max-w-[120px] truncate">{user.email}</span>
+            <div className="flex items-center gap-1.5 pl-2 ml-1 border-l border-border/50">
+              <div className="hidden md:flex items-center gap-1.5 text-xs text-muted-foreground px-1">
+                <User className="w-3.5 h-3.5" />
+                <span className="max-w-[140px] truncate">{user.email}</span>
               </div>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={signOut}
-                className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                className="h-9 w-9 p-0 text-muted-foreground hover:text-destructive"
+                title="Sair"
               >
-                <LogOut className="w-3.5 h-3.5" />
+                <LogOut className="w-4 h-4" />
               </Button>
             </div>
           )}
