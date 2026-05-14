@@ -1766,8 +1766,12 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">Evento de conversão</Label>
                 <div className="bg-muted/50 border border-border rounded-md px-3 py-2">
-                  <p className="text-sm font-medium">LEAD</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">Otimizado para o evento "Lead" do pixel selecionado</p>
+                  <p className="text-sm font-medium">{selectedPreset.objective === "OUTCOME_SALES" ? "PURCHASE" : "LEAD"}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {selectedPreset.objective === "OUTCOME_SALES"
+                      ? "Otimizado para o evento \"Compra\" (Purchase) do pixel selecionado"
+                      : "Otimizado para o evento \"Lead\" do pixel selecionado"}
+                  </p>
                 </div>
               </div>
             </Card>
