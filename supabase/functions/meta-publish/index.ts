@@ -1280,9 +1280,24 @@ Deno.serve(async (req) => {
     //  CAMPAIGN BUILDER
     // ══════════════════════════════════════════════════════════════════
     let campaignId: string;
+    // Quando reutilizamos campanha existente, herdamos bid_strategy + bid_amount dela
+    // pra evitar Invalid parameter (Meta rejeita adset com strategy diferente da campanha).
+    let inheritedBidStrategy: string | null = null;
+    let inheritedBidAmount: number | null = null;
     if (existing_campaign_id) {
       logs.push({ step: "campaign", status: "success", ts: ts(), detail: `existing: ${existing_campaign_id}` });
       campaignId = existing_campaign_id;
+      try {
+        const existRes = await fetch(`https://graph.facebook.com/v25.0/${existing_campaign_id}?fields=bid_strategy,bid_amount&access_token=${access_token}`);
+        const existData = await existRes.json();
+        if (!existData.error) {
+          inheritedBidStrategy = existData.bid_strategy || null;
+          inheritedBidAmount = typeof existData.bid_amount === "number" ? existData.bid_amount : (existData.bid_amount ? Number(existData.bid_amount) : null);
+          logs.push({ step: "campaign", status: "success", ts: ts(), detail: `inherited bid_strategy=${inheritedBidStrategy}, bid_amount=${inheritedBidAmount}` });
+        }
+      } catch (e) {
+        logs.push({ step: "campaign", status: "error", ts: ts(), detail: `falha ao inferir bid_strategy: ${(e as Error).message}` });
+      }
     } else {
       logs.push({ step: "campaign", status: "start", ts: ts() });
       const resolvedCampaignObjective = isWhatsAppPreset ? fase3CampaignObjective : (preset?.objective || "OUTCOME_TRAFFIC");
@@ -1356,7 +1371,7 @@ Deno.serve(async (req) => {
         campaign_id: campaignId,
         billing_event: "IMPRESSIONS",
         optimization_goal: "PROFILE_VISIT",
-        bid_strategy: preset?.bid_strategy || "LOWEST_COST_WITHOUT_CAP",
+        bid_strategy: inheritedBidStrategy || preset?.bid_strategy || "LOWEST_COST_WITHOUT_CAP",
         targeting: { ...targeting, targeting_automation: { advantage_audience: 0 } },
         status: "ACTIVE",
         destination_type: "INSTAGRAM_PROFILE",
@@ -1365,6 +1380,10 @@ Deno.serve(async (req) => {
       };
       if (structure === "ABO") {
         p.daily_budget = Math.round(Number(budget) * 100);
+      }
+      // Quando bid_strategy herdado exige bid_amount (cap/target), propagar.
+      if (inheritedBidStrategy && inheritedBidStrategy !== "LOWEST_COST_WITHOUT_CAP" && inheritedBidAmount) {
+        p.bid_amount = inheritedBidAmount;
       }
       if (schedule?.start_time) p.start_time = schedule.start_time;
       else p.start_time = new Date().toISOString();
@@ -1492,14 +1511,17 @@ Deno.serve(async (req) => {
         status: "ACTIVE",
         billing_event: "IMPRESSIONS",
         optimization_goal: "CONVERSATIONS",
-        bid_strategy: "LOWEST_COST_WITHOUT_CAP",
-        daily_budget: String(Math.round(Number(budget) * 100)),
+        bid_strategy: inheritedBidStrategy || "LOWEST_COST_WITHOUT_CAP",
         destination_type: "WHATSAPP",
         promoted_object: promotedObject,
         targeting: fase3Targeting,
         attribution_spec: attributionSpec,
         access_token,
       };
+      if (structure === "ABO") p.daily_budget = String(Math.round(Number(budget) * 100));
+      if (inheritedBidStrategy && inheritedBidStrategy !== "LOWEST_COST_WITHOUT_CAP" && inheritedBidAmount) {
+        p.bid_amount = inheritedBidAmount;
+      }
       if (schedule?.start_time) p.start_time = schedule.start_time;
       if (schedule?.end_time) p.end_time = schedule.end_time;
 
@@ -1545,7 +1567,7 @@ Deno.serve(async (req) => {
         status: "ACTIVE",
         billing_event: "IMPRESSIONS",
         optimization_goal: "OFFSITE_CONVERSIONS",
-        bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+        bid_strategy: inheritedBidStrategy || "LOWEST_COST_WITHOUT_CAP",
         destination_type: "WEBSITE",
         promoted_object: {
           pixel_id: String(pixel_id),
@@ -1556,6 +1578,9 @@ Deno.serve(async (req) => {
         access_token,
       };
       if (structure === "ABO") p.daily_budget = Math.round(Number(budget) * 100);
+      if (inheritedBidStrategy && inheritedBidStrategy !== "LOWEST_COST_WITHOUT_CAP" && inheritedBidAmount) {
+        p.bid_amount = inheritedBidAmount;
+      }
       if (schedule?.start_time) p.start_time = schedule.start_time;
       else p.start_time = new Date().toISOString();
       if (schedule?.end_time) p.end_time = schedule.end_time;
@@ -1585,13 +1610,16 @@ Deno.serve(async (req) => {
         status: "ACTIVE",
         billing_event: "IMPRESSIONS",
         optimization_goal: "THRUPLAY",
-        bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+        bid_strategy: inheritedBidStrategy || "LOWEST_COST_WITHOUT_CAP",
         destination_type: "ON_VIDEO",
         targeting: f2Targeting,
         attribution_spec: [{ event_type: "CLICK_THROUGH", window_days: 1 }],
         access_token,
       };
       if (structure === "ABO") p.daily_budget = Math.round(Number(budget) * 100);
+      if (inheritedBidStrategy && inheritedBidStrategy !== "LOWEST_COST_WITHOUT_CAP" && inheritedBidAmount) {
+        p.bid_amount = inheritedBidAmount;
+      }
       if (schedule?.start_time) p.start_time = schedule.start_time;
       else p.start_time = new Date().toISOString();
       if (schedule?.end_time) p.end_time = schedule.end_time;
