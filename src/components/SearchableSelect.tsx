@@ -39,14 +39,31 @@ export default function SearchableSelect({
 
   const selectedName = options.find((o) => o.id === value)?.name;
 
-  // Close on scroll/resize
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close on resize. Reposition on scroll EXTERNO; ignora scroll dentro do dropdown.
   useEffect(() => {
     if (!open) return;
     const close = () => { setOpen(false); setSearch(""); };
-    window.addEventListener("scroll", close, true);
+    const onScroll = (e: Event) => {
+      const target = e.target as Node;
+      if (dropdownRef.current && target && dropdownRef.current.contains(target)) return;
+      // Scroll externo: reposiciona em vez de fechar
+      if (triggerRef.current) {
+        const rect = triggerRef.current.getBoundingClientRect();
+        setDropdownStyle({
+          position: "fixed",
+          top: rect.bottom + 4,
+          left: rect.left,
+          width: rect.width,
+          zIndex: 9999,
+        });
+      }
+    };
+    window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", close);
     return () => {
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", close);
     };
   }, [open]);
@@ -85,6 +102,7 @@ export default function SearchableSelect({
     <>
       <div className="fixed inset-0" style={{ zIndex: 9998 }} onClick={() => { setOpen(false); setSearch(""); }} />
       <div
+        ref={dropdownRef}
         style={dropdownStyle}
         className="rounded-md border border-border bg-popover shadow-xl"
         onWheel={(e) => e.stopPropagation()}
