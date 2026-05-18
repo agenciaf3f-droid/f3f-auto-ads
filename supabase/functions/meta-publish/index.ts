@@ -1314,7 +1314,10 @@ Deno.serve(async (req) => {
 
       if (structure === "CBO") {
         campaignPayload.daily_budget = Math.round(Number(budget) * 100);
-        console.log(`[publish] CAMPAIGN BUDGET (CBO): ${campaignPayload.daily_budget} cents`);
+        // CBO: bid_strategy vai no nível da CAMPANHA. Sem isso Meta default vira
+        // LOWEST_COST_WITH_BID_CAP/TARGET_COST e exige bid_amount no adset.
+        campaignPayload.bid_strategy = "LOWEST_COST_WITHOUT_CAP";
+        console.log(`[publish] CAMPAIGN BUDGET (CBO): ${campaignPayload.daily_budget} cents, bid_strategy=LOWEST_COST_WITHOUT_CAP`);
       }
 
       if (schedule?.start_time) campaignPayload.start_time = schedule.start_time;
@@ -1371,19 +1374,20 @@ Deno.serve(async (req) => {
         campaign_id: campaignId,
         billing_event: "IMPRESSIONS",
         optimization_goal: "PROFILE_VISIT",
-        bid_strategy: inheritedBidStrategy || preset?.bid_strategy || "LOWEST_COST_WITHOUT_CAP",
         targeting: { ...targeting, targeting_automation: { advantage_audience: 0 } },
         status: "ACTIVE",
         destination_type: "INSTAGRAM_PROFILE",
         promoted_object: promotedObject,
         access_token,
       };
+      // CBO: bid_strategy vive na campanha; adset NÃO declara nem budget nem bid_strategy.
+      // ABO: adset tem daily_budget + bid_strategy próprio.
       if (structure === "ABO") {
         p.daily_budget = Math.round(Number(budget) * 100);
-      }
-      // Quando bid_strategy herdado exige bid_amount (cap/target), propagar.
-      if (inheritedBidStrategy && inheritedBidStrategy !== "LOWEST_COST_WITHOUT_CAP" && inheritedBidAmount) {
-        p.bid_amount = inheritedBidAmount;
+        p.bid_strategy = inheritedBidStrategy || preset?.bid_strategy || "LOWEST_COST_WITHOUT_CAP";
+        if (inheritedBidStrategy && inheritedBidStrategy !== "LOWEST_COST_WITHOUT_CAP" && inheritedBidAmount) {
+          p.bid_amount = inheritedBidAmount;
+        }
       }
       if (schedule?.start_time) p.start_time = schedule.start_time;
       else p.start_time = new Date().toISOString();
@@ -1511,16 +1515,18 @@ Deno.serve(async (req) => {
         status: "ACTIVE",
         billing_event: "IMPRESSIONS",
         optimization_goal: "CONVERSATIONS",
-        bid_strategy: inheritedBidStrategy || "LOWEST_COST_WITHOUT_CAP",
         destination_type: "WHATSAPP",
         promoted_object: promotedObject,
         targeting: fase3Targeting,
         attribution_spec: attributionSpec,
         access_token,
       };
-      if (structure === "ABO") p.daily_budget = String(Math.round(Number(budget) * 100));
-      if (inheritedBidStrategy && inheritedBidStrategy !== "LOWEST_COST_WITHOUT_CAP" && inheritedBidAmount) {
-        p.bid_amount = inheritedBidAmount;
+      if (structure === "ABO") {
+        p.daily_budget = String(Math.round(Number(budget) * 100));
+        p.bid_strategy = inheritedBidStrategy || "LOWEST_COST_WITHOUT_CAP";
+        if (inheritedBidStrategy && inheritedBidStrategy !== "LOWEST_COST_WITHOUT_CAP" && inheritedBidAmount) {
+          p.bid_amount = inheritedBidAmount;
+        }
       }
       if (schedule?.start_time) p.start_time = schedule.start_time;
       if (schedule?.end_time) p.end_time = schedule.end_time;
@@ -1567,7 +1573,6 @@ Deno.serve(async (req) => {
         status: "ACTIVE",
         billing_event: "IMPRESSIONS",
         optimization_goal: "OFFSITE_CONVERSIONS",
-        bid_strategy: inheritedBidStrategy || "LOWEST_COST_WITHOUT_CAP",
         destination_type: "WEBSITE",
         promoted_object: {
           pixel_id: String(pixel_id),
@@ -1577,9 +1582,12 @@ Deno.serve(async (req) => {
         targeting: lpTargeting,
         access_token,
       };
-      if (structure === "ABO") p.daily_budget = Math.round(Number(budget) * 100);
-      if (inheritedBidStrategy && inheritedBidStrategy !== "LOWEST_COST_WITHOUT_CAP" && inheritedBidAmount) {
-        p.bid_amount = inheritedBidAmount;
+      if (structure === "ABO") {
+        p.daily_budget = Math.round(Number(budget) * 100);
+        p.bid_strategy = inheritedBidStrategy || "LOWEST_COST_WITHOUT_CAP";
+        if (inheritedBidStrategy && inheritedBidStrategy !== "LOWEST_COST_WITHOUT_CAP" && inheritedBidAmount) {
+          p.bid_amount = inheritedBidAmount;
+        }
       }
       if (schedule?.start_time) p.start_time = schedule.start_time;
       else p.start_time = new Date().toISOString();
@@ -1610,15 +1618,17 @@ Deno.serve(async (req) => {
         status: "ACTIVE",
         billing_event: "IMPRESSIONS",
         optimization_goal: "THRUPLAY",
-        bid_strategy: inheritedBidStrategy || "LOWEST_COST_WITHOUT_CAP",
         destination_type: "ON_VIDEO",
         targeting: f2Targeting,
         attribution_spec: [{ event_type: "CLICK_THROUGH", window_days: 1 }],
         access_token,
       };
-      if (structure === "ABO") p.daily_budget = Math.round(Number(budget) * 100);
-      if (inheritedBidStrategy && inheritedBidStrategy !== "LOWEST_COST_WITHOUT_CAP" && inheritedBidAmount) {
-        p.bid_amount = inheritedBidAmount;
+      if (structure === "ABO") {
+        p.daily_budget = Math.round(Number(budget) * 100);
+        p.bid_strategy = inheritedBidStrategy || "LOWEST_COST_WITHOUT_CAP";
+        if (inheritedBidStrategy && inheritedBidStrategy !== "LOWEST_COST_WITHOUT_CAP" && inheritedBidAmount) {
+          p.bid_amount = inheritedBidAmount;
+        }
       }
       if (schedule?.start_time) p.start_time = schedule.start_time;
       else p.start_time = new Date().toISOString();
