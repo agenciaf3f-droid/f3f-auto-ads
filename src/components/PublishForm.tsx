@@ -359,8 +359,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     let resolvedPageId: string | null = null;
     try {
       addLog(`📡 [pipeline] Buscando contas IG autorizadas para ${selectedAccount}...`);
-      const igAccounts = await fetchIgAccountsForAdAccount(accessToken, selectedAccount);
+      const { ig_accounts: igAccounts, diagnostic } = await fetchIgAccountsForAdAccount(accessToken, selectedAccount);
       addLog(`📄 [pipeline] contas IG autorizadas: ${igAccounts.length}`);
+      for (const d of diagnostic) {
+        addLog(`   🔎 ${d.endpoint} → ${d.status}${d.count !== undefined ? ` (${d.count})` : ""}${d.detail ? ` | ${d.detail}` : ""}`);
+      }
       for (const ig of igAccounts) {
         addLog(`   IG: id=${ig.ig_account_id}, @${ig.ig_username || "?"}, page=${ig.page_name || "sem página"}`);
       }
@@ -419,7 +422,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       resolvedPageId = foundPageId;
 
       if (!foundIgActorId) {
-        setIdentityError("Nenhuma conta Instagram autorizada encontrada para esta conta de anúncios.");
+        const diagSummary = diagnostic.map((d: any) => `${d.endpoint}=${d.status}${d.count !== undefined ? `(${d.count})` : ""}${d.detail ? `:${d.detail}` : ""}`).join(" • ");
+        setIdentityError(`Nenhuma conta Instagram autorizada encontrada. Tentativas: ${diagSummary || "n/a"}`);
       }
       addLog(`✅ [pipeline] identidade final: page=${foundPageId}, ig_actor=${foundIgActorId}, ig_user=@${foundIgUsername || "N/A"}, whatsapp_id=${foundWhatsappId || "N/A"}, whatsapp_phone=${foundWhatsappPhone || "N/A"}`);
     } catch (err: unknown) {

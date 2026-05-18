@@ -42,20 +42,68 @@ Deno.serve(async (req) => {
           status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      // Step 1: Get IG accounts authorized for this ad account
+      // Diagnóstico: armazena tentativas pra surfar motivo se 0 IG
+      const diagnostic: { endpoint: string; status: string; detail?: string; count?: number }[] = [];
+
+      // Step 1a: Get IG accounts authorized for this ad account
       const igRes = await fetch(
         `https://graph.facebook.com/v25.0/${ad_account_id}/instagram_accounts?fields=id,username&limit=25&access_token=${access_token}`
       );
       const igData = await igRes.json();
+      let igAccounts: { id: string; username: string | null }[] = [];
+
       if (igData.error) {
-        return new Response(JSON.stringify({ error: igData.error.message }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+        diagnostic.push({ endpoint: "/instagram_accounts", status: "error", detail: `code=${igData.error.code} subcode=${igData.error.error_subcode} | ${igData.error.message}` });
+      } else {
+        igAccounts = (igData.data || []).map((ig: any) => ({
+          id: ig.id,
+          username: ig.username || null,
+        }));
+        diagnostic.push({ endpoint: "/instagram_accounts", status: "ok", count: igAccounts.length });
       }
-      const igAccounts = (igData.data || []).map((ig: any) => ({
-        id: ig.id,
-        username: ig.username || null,
-      }));
+
+      // Step 1b: Fallback — /{ad_account_id}/connected_instagram_accounts
+      if (igAccounts.length === 0) {
+        try {
+          const ciaRes = await fetch(
+            `https://graph.facebook.com/v25.0/${ad_account_id}/connected_instagram_accounts?fields=id,username&limit=25&access_token=${access_token}`
+          );
+          const ciaData = await ciaRes.json();
+          if (ciaData.error) {
+            diagnostic.push({ endpoint: "/connected_instagram_accounts", status: "error", detail: `code=${ciaData.error.code} | ${ciaData.error.message}` });
+          } else if (ciaData.data?.length) {
+            igAccounts = ciaData.data.map((ig: any) => ({ id: ig.id, username: ig.username || null }));
+            diagnostic.push({ endpoint: "/connected_instagram_accounts", status: "ok", count: igAccounts.length });
+          } else {
+            diagnostic.push({ endpoint: "/connected_instagram_accounts", status: "empty" });
+          }
+        } catch (e) {
+          diagnostic.push({ endpoint: "/connected_instagram_accounts", status: "exception", detail: (e as Error).message });
+        }
+      }
+
+      // Step 1c: Fallback — buscar IG na própria ad account via /{ad_account_id}?fields=instagram_actor_id
+      if (igAccounts.length === 0) {
+        try {
+          const aaRes = await fetch(
+            `https://graph.facebook.com/v25.0/${ad_account_id}?fields=instagram_actor_id,business&access_token=${access_token}`
+          );
+          const aaData = await aaRes.json();
+          if (aaData.instagram_actor_id) {
+            // Hidrata username
+            const iuRes = await fetch(
+              `https://graph.facebook.com/v25.0/${aaData.instagram_actor_id}?fields=username&access_token=${access_token}`
+            );
+            const iuData = await iuRes.json();
+            igAccounts = [{ id: aaData.instagram_actor_id, username: iuData.username || null }];
+            diagnostic.push({ endpoint: "/act?instagram_actor_id", status: "ok", count: 1 });
+          } else {
+            diagnostic.push({ endpoint: "/act?instagram_actor_id", status: "empty", detail: aaData.business?.id ? `business=${aaData.business.id}` : "no_business" });
+          }
+        } catch (e) {
+          diagnostic.push({ endpoint: "/act?instagram_actor_id", status: "exception", detail: (e as Error).message });
+        }
+      }
 
       // Otimização: se 0 IG accounts, pular enumeração de páginas (cara para users com 100+ pages)
       const allPages: any[] = [];
@@ -113,7 +161,7 @@ Deno.serve(async (req) => {
         });
       }
 
-      return new Response(JSON.stringify({ ig_accounts: results, pages_scanned: allPages.length }), {
+      return new Response(JSON.stringify({ ig_accounts: results, pages_scanned: allPages.length, diagnostic }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
