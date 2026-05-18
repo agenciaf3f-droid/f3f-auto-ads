@@ -105,21 +105,45 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Otimização: se 0 IG accounts, pular enumeração de páginas (cara para users com 100+ pages)
+      // Otimização: se 0 IG accounts, pular enumeração de páginas
       const allPages: any[] = [];
       if (igAccounts.length > 0) {
-        // Step 2: Get ALL pages (with full pagination) to find which page owns each IG account
-        let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id},whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`;
-        while (pagesUrl) {
-          const pagesRes = await fetch(pagesUrl);
-          const pagesData = await pagesRes.json();
-          if (pagesData.data) allPages.push(...pagesData.data);
-          pagesUrl = pagesData.paging?.next || null;
-          if (allPages.length >= 500) break; // Safety limit
-          // Early exit: já achou todas as pages das IG accounts?
-          const igIds = new Set(igAccounts.map((ig: any) => ig.id));
-          const matched = allPages.filter((p: any) => p.instagram_business_account?.id && igIds.has(p.instagram_business_account.id));
-          if (matched.length >= igAccounts.length) break;
+        const igIds = new Set(igAccounts.map((ig: any) => ig.id));
+
+        // Step 2a: pages do BM dono da ad account (cobre o caso onde user não é admin direto da Page)
+        try {
+          const aaRes = await fetch(
+            `https://graph.facebook.com/v25.0/${ad_account_id}?fields=owner_business{owned_pages.limit(200){id,name,instagram_business_account{id},whatsapp_business_account{id,name}},client_pages.limit(200){id,name,instagram_business_account{id},whatsapp_business_account{id,name}}}&access_token=${access_token}`
+          );
+          const aaData = await aaRes.json();
+          const ownedBM: any[] = aaData?.owner_business?.owned_pages?.data || [];
+          const clientBM: any[] = aaData?.owner_business?.client_pages?.data || [];
+          allPages.push(...ownedBM, ...clientBM);
+          diagnostic.push({ endpoint: "/act?owner_business.pages", status: "ok", count: ownedBM.length + clientBM.length });
+        } catch (e) {
+          diagnostic.push({ endpoint: "/act?owner_business.pages", status: "exception", detail: (e as Error).message });
+        }
+
+        // Step 2b: pages que o user é admin direto (/me/accounts) — só se ainda não casou tudo
+        const matchedSoFar = (): number =>
+          allPages.filter((p: any) => p.instagram_business_account?.id && igIds.has(p.instagram_business_account.id)).length;
+
+        if (matchedSoFar() < igAccounts.length) {
+          let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id},whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`;
+          while (pagesUrl) {
+            const pagesRes = await fetch(pagesUrl);
+            const pagesData = await pagesRes.json();
+            if (pagesData.data) {
+              // dedup por id
+              const existingIds = new Set(allPages.map((p: any) => p.id));
+              for (const p of pagesData.data) {
+                if (!existingIds.has(p.id)) allPages.push(p);
+              }
+            }
+            pagesUrl = pagesData.paging?.next || null;
+            if (allPages.length >= 800) break;
+            if (matchedSoFar() >= igAccounts.length) break;
+          }
         }
       }
 

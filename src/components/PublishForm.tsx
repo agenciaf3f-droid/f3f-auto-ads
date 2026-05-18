@@ -400,16 +400,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         addLog(`⚠️ [pipeline] IG autorizado sem página vinculada: id=${foundIgActorId}`);
       }
 
-      if (!foundPageId) {
-        const { data: pagesData } = await supabase.functions.invoke("meta-ad-accounts", {
-          body: { access_token: accessToken, action: "get_pages" },
-        });
-        const pages: any[] = pagesData?.pages || [];
-        if (pages.length > 0) {
-          foundPageId = pages[0].id;
-          foundPageName = pages[0].name;
-          addLog(`⚠️ [pipeline] usando primeira página como fallback: ${foundPageName}`);
-        }
+      // NÃO usar "primeira página" como fallback — isso causava bug grave
+      // (ex: IG @claulopes.personal vinha com page "Jun yamaguchi").
+      // Se não casou IG↔Page corretamente, melhor falhar e mostrar diagnóstico.
+      if (!foundPageId && foundIgActorId) {
+        addLog(`❌ [pipeline] IG @${foundIgUsername} (id=${foundIgActorId}) não casou com nenhuma Page do BM. Possíveis causas: Page sem acesso/permissão pra esse user, IG não vinculado a Page do BM.`);
       }
 
       setIdentityPageId(foundPageId);
