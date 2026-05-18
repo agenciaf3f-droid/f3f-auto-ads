@@ -116,12 +116,36 @@ Deno.serve(async (req) => {
             `https://graph.facebook.com/v25.0/${ad_account_id}?fields=owner_business{owned_pages.limit(200){id,name,instagram_business_account{id},whatsapp_business_account{id,name}},client_pages.limit(200){id,name,instagram_business_account{id},whatsapp_business_account{id,name}}}&access_token=${access_token}`
           );
           const aaData = await aaRes.json();
-          const ownedBM: any[] = aaData?.owner_business?.owned_pages?.data || [];
-          const clientBM: any[] = aaData?.owner_business?.client_pages?.data || [];
-          allPages.push(...ownedBM, ...clientBM);
-          diagnostic.push({ endpoint: "/act?owner_business.pages", status: "ok", count: ownedBM.length + clientBM.length });
+          if (aaData.error) {
+            diagnostic.push({ endpoint: "/act?owner_business.pages", status: "error", detail: `code=${aaData.error.code} | ${aaData.error.message}` });
+          } else {
+            const ownedBM: any[] = aaData?.owner_business?.owned_pages?.data || [];
+            const clientBM: any[] = aaData?.owner_business?.client_pages?.data || [];
+            allPages.push(...ownedBM, ...clientBM);
+            diagnostic.push({ endpoint: "/act?owner_business.pages", status: "ok", count: ownedBM.length + clientBM.length });
+          }
         } catch (e) {
           diagnostic.push({ endpoint: "/act?owner_business.pages", status: "exception", detail: (e as Error).message });
+        }
+
+        // Step 2b: /{ad_account_id}/promote_pages — pages que essa ad account pode anunciar
+        if (allPages.filter((p: any) => p.instagram_business_account?.id && igIds.has(p.instagram_business_account.id)).length < igAccounts.length) {
+          try {
+            const ppRes = await fetch(
+              `https://graph.facebook.com/v25.0/${ad_account_id}/promote_pages?fields=id,name,instagram_business_account{id},whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`
+            );
+            const ppData = await ppRes.json();
+            if (ppData.error) {
+              diagnostic.push({ endpoint: "/act/promote_pages", status: "error", detail: `code=${ppData.error.code} | ${ppData.error.message}` });
+            } else {
+              const existingIds = new Set(allPages.map((p: any) => p.id));
+              const promote = (ppData.data || []).filter((p: any) => !existingIds.has(p.id));
+              allPages.push(...promote);
+              diagnostic.push({ endpoint: "/act/promote_pages", status: "ok", count: promote.length });
+            }
+          } catch (e) {
+            diagnostic.push({ endpoint: "/act/promote_pages", status: "exception", detail: (e as Error).message });
+          }
         }
 
         // Step 2b: pages que o user é admin direto (/me/accounts) — só se ainda não casou tudo
@@ -184,6 +208,9 @@ Deno.serve(async (req) => {
           waba_phone: wabaPhone,
         });
       }
+
+      // Adiciona contador final de pages no diagnóstico
+      diagnostic.push({ endpoint: "_total_pages_scanned", status: "info", count: allPages.length });
 
       return new Response(JSON.stringify({ ig_accounts: results, pages_scanned: allPages.length, diagnostic }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
