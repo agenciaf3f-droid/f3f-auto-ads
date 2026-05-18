@@ -431,50 +431,54 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       setIdentityLoading(false);
     }
 
-    // ===== STEP 4: LOAD FASE 3 RESOURCES (depends on identity) =====
-    if (resolvedPageId) {
-      await loadFase3Resources(resolvedPageId);
-    }
-
-    // ===== STEP 5: LOAD IMPORTED MESSAGE TEMPLATES (FASE 3) =====
-    // Auto-busca dos modelos de mensagem da própria conta Meta.
-    // Reseta a SELEÇÃO mas NÃO limpa a lista — se o fetch falhar, mantemos a anterior visível.
+    // ===== STEPS 4-6 EM PARALELO: WhatsApp, Templates, Pixels =====
+    // Antes era sequencial com 1.5s de sleep no meio — agora roda tudo junto.
     setSelectedImportedKey("");
     setImportedRawJson("");
-    // Pequeno delay pra evitar burst rate-limit do Meta logo após audiences/identity/whatsapp.
-    await new Promise(r => setTimeout(r, 1500));
-    setLoadingImported(true);
-    try {
-      addLog(`📡 [imported] Buscando modelos de mensagem da conta...`);
-      const result = await fetchImportedMetaTemplates(accessToken, selectedAccount);
-      setImportedTemplates(result.templates);
-      addLog(`✅ [imported] ${result.templates.length} modelo(s) extraído(s) (scanned=${result.scanned_adsets}, erros=${result.errors_during_scan})`);
-      if (result.error_summary) {
-        addLog(`⚠️ [imported] ${result.error_summary}`);
-        toast.error("Meta rate-limited. Tente o botão Buscar novamente em alguns segundos.");
-      } else if (result.errors_during_scan > 0 && result.error_sample) {
-        addLog(`ℹ️ [imported] sample de erro: ${result.error_sample}`);
-      }
-    } catch (err: unknown) {
-      addLog(`⚠️ [imported] erro: ${err instanceof Error ? err.message : "desconhecido"}`);
-    } finally {
-      setLoadingImported(false);
+    setSelectedPixelId("");
+
+    const tasks: Promise<unknown>[] = [];
+
+    if (resolvedPageId) {
+      tasks.push(loadFase3Resources(resolvedPageId));
     }
 
-    // ===== STEP 6: LOAD AD PIXELS (FASE 3 LP) =====
-    setSelectedPixelId("");
+    setLoadingImported(true);
+    tasks.push((async () => {
+      try {
+        addLog(`📡 [imported] Buscando modelos de mensagem da conta...`);
+        const result = await fetchImportedMetaTemplates(accessToken, selectedAccount);
+        setImportedTemplates(result.templates);
+        addLog(`✅ [imported] ${result.templates.length} modelo(s) extraído(s) (scanned=${result.scanned_adsets}, erros=${result.errors_during_scan})`);
+        if (result.error_summary) {
+          addLog(`⚠️ [imported] ${result.error_summary}`);
+          toast.error("Meta rate-limited. Tente o botão Buscar novamente em alguns segundos.");
+        } else if (result.errors_during_scan > 0 && result.error_sample) {
+          addLog(`ℹ️ [imported] sample de erro: ${result.error_sample}`);
+        }
+      } catch (err: unknown) {
+        addLog(`⚠️ [imported] erro: ${err instanceof Error ? err.message : "desconhecido"}`);
+      } finally {
+        setLoadingImported(false);
+      }
+    })());
+
     setLoadingPixels(true);
-    try {
-      addLog(`📡 [pixels] Carregando pixels da conta...`);
-      const list = await fetchPixels(accessToken, selectedAccount);
-      setPixels(list);
-      addLog(`✅ [pixels] ${list.length} pixel(s) encontrado(s)`);
-    } catch (err: unknown) {
-      addLog(`⚠️ [pixels] erro: ${err instanceof Error ? err.message : "desconhecido"}`);
-      setPixels([]);
-    } finally {
-      setLoadingPixels(false);
-    }
+    tasks.push((async () => {
+      try {
+        addLog(`📡 [pixels] Carregando pixels da conta...`);
+        const list = await fetchPixels(accessToken, selectedAccount);
+        setPixels(list);
+        addLog(`✅ [pixels] ${list.length} pixel(s) encontrado(s)`);
+      } catch (err: unknown) {
+        addLog(`⚠️ [pixels] erro: ${err instanceof Error ? err.message : "desconhecido"}`);
+        setPixels([]);
+      } finally {
+        setLoadingPixels(false);
+      }
+    })());
+
+    await Promise.all(tasks);
   };
 
   const loadFase3Resources = async (pageId: string) => {

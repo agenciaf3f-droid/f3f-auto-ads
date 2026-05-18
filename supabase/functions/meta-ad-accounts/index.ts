@@ -57,15 +57,22 @@ Deno.serve(async (req) => {
         username: ig.username || null,
       }));
 
-      // Step 2: Get ALL pages (with full pagination) to find which page owns each IG account
+      // Otimização: se 0 IG accounts, pular enumeração de páginas (cara para users com 100+ pages)
       const allPages: any[] = [];
-      let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id},whatsapp_business_account{id,name}&limit=25&access_token=${access_token}`;
-      while (pagesUrl) {
-        const pagesRes = await fetch(pagesUrl);
-        const pagesData = await pagesRes.json();
-        if (pagesData.data) allPages.push(...pagesData.data);
-        pagesUrl = pagesData.paging?.next || null;
-        if (allPages.length >= 300) break; // Safety limit
+      if (igAccounts.length > 0) {
+        // Step 2: Get ALL pages (with full pagination) to find which page owns each IG account
+        let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id},whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`;
+        while (pagesUrl) {
+          const pagesRes = await fetch(pagesUrl);
+          const pagesData = await pagesRes.json();
+          if (pagesData.data) allPages.push(...pagesData.data);
+          pagesUrl = pagesData.paging?.next || null;
+          if (allPages.length >= 500) break; // Safety limit
+          // Early exit: já achou todas as pages das IG accounts?
+          const igIds = new Set(igAccounts.map((ig: any) => ig.id));
+          const matched = allPages.filter((p: any) => p.instagram_business_account?.id && igIds.has(p.instagram_business_account.id));
+          if (matched.length >= igAccounts.length) break;
+        }
       }
 
       // Match IG accounts to pages
