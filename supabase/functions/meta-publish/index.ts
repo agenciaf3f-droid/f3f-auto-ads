@@ -320,6 +320,11 @@ function buildTargeting(audienceType: string, audienceId: string, targetingSpec:
       geo_locations: { countries: ["BR"] },
     };
   }
+  // age_range só é válido com targeting_automation ativado (Advantage+ Audience).
+  // Todos os presets forçam advantage_audience=0, então removemos age_range —
+  // age_min/age_max (campos manuais) cobrem o targeting de idade.
+  delete base.age_range;
+
   if (locationTargeting?.included && locationTargeting.included.length > 0) {
     const geo: Record<string, any> = {};
     const countries: string[] = [];
