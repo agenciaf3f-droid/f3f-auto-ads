@@ -1217,6 +1217,16 @@ Deno.serve(async (req) => {
       }
     }
 
+    // --- Fetch page name pra DSA fields (obrigatórios quando targeting atinge EEA) ---
+    let pageName: string = pageId;
+    try {
+      const pnRes = await fetch(`https://graph.facebook.com/v25.0/${pageId}?fields=name&access_token=${access_token}`);
+      const pnData = await pnRes.json();
+      if (pnData.name) pageName = pnData.name;
+    } catch (e) {
+      console.log(`[publish] failed to fetch page name: ${(e as Error).message}`);
+    }
+
     // --- Resolve ALL creatives using preset-specific builder ---
     logs.push({ step: "resolve_creatives", status: "start", ts: ts(), detail: `${creativesList.length} creative(s), builder=${presetLabel}` });
     const resolvedCreatives: { spec: Record<string, any>; name: string }[] = [];
@@ -1383,6 +1393,9 @@ Deno.serve(async (req) => {
         status: "ACTIVE",
         destination_type: "INSTAGRAM_PROFILE",
         promoted_object: promotedObject,
+        // DSA (EEA): obrigatório quando targeting atinge países da UE
+        dsa_beneficiary: pageName,
+        dsa_payor: pageName,
         access_token,
       };
       // CBO: bid_strategy vive na campanha; adset NÃO declara nem budget nem bid_strategy.
@@ -1524,6 +1537,8 @@ Deno.serve(async (req) => {
         promoted_object: promotedObject,
         targeting: fase3Targeting,
         attribution_spec: attributionSpec,
+        dsa_beneficiary: pageName,
+        dsa_payor: pageName,
         access_token,
       };
       if (structure === "ABO") {
@@ -1585,6 +1600,8 @@ Deno.serve(async (req) => {
         },
         attribution_spec: [{ event_type: "CLICK_THROUGH", window_days: 7 }],
         targeting: lpTargeting,
+        dsa_beneficiary: pageName,
+        dsa_payor: pageName,
         access_token,
       };
       if (structure === "ABO") {
@@ -1626,6 +1643,8 @@ Deno.serve(async (req) => {
         destination_type: "ON_VIDEO",
         targeting: f2Targeting,
         attribution_spec: [{ event_type: "CLICK_THROUGH", window_days: 1 }],
+        dsa_beneficiary: pageName,
+        dsa_payor: pageName,
         access_token,
       };
       if (structure === "ABO") {
