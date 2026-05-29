@@ -5,6 +5,9 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const timedFetch = (url: string, init?: RequestInit) =>
+  fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -17,7 +20,7 @@ Deno.serve(async (req) => {
       const allPages: any[] = [];
       let url: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id}&limit=25&access_token=${access_token}`;
       while (url) {
-        const pagesRes = await fetch(url);
+        const pagesRes = await timedFetch(url);
         const pagesData = await pagesRes.json();
         if (pagesData.error) {
           return new Response(JSON.stringify({ error: pagesData.error.message }), {
@@ -46,7 +49,7 @@ Deno.serve(async (req) => {
       const diagnostic: { endpoint: string; status: string; detail?: string; count?: number }[] = [];
 
       // Step 1a: Get IG accounts authorized for this ad account
-      const igRes = await fetch(
+      const igRes = await timedFetch(
         `https://graph.facebook.com/v25.0/${ad_account_id}/instagram_accounts?fields=id,username&limit=25&access_token=${access_token}`
       );
       const igData = await igRes.json();
@@ -65,7 +68,7 @@ Deno.serve(async (req) => {
       // Step 1b: Fallback — /{ad_account_id}/connected_instagram_accounts
       if (igAccounts.length === 0) {
         try {
-          const ciaRes = await fetch(
+          const ciaRes = await timedFetch(
             `https://graph.facebook.com/v25.0/${ad_account_id}/connected_instagram_accounts?fields=id,username&limit=25&access_token=${access_token}`
           );
           const ciaData = await ciaRes.json();
@@ -85,17 +88,12 @@ Deno.serve(async (req) => {
       // Step 1c: Fallback — buscar IG na própria ad account via /{ad_account_id}?fields=instagram_actor_id
       if (igAccounts.length === 0) {
         try {
-          const aaRes = await fetch(
-            `https://graph.facebook.com/v25.0/${ad_account_id}?fields=instagram_actor_id,business&access_token=${access_token}`
+          const aaRes = await timedFetch(
+            `https://graph.facebook.com/v25.0/${ad_account_id}?fields=instagram_actor_id{username},business&access_token=${access_token}`
           );
           const aaData = await aaRes.json();
           if (aaData.instagram_actor_id) {
-            // Hidrata username
-            const iuRes = await fetch(
-              `https://graph.facebook.com/v25.0/${aaData.instagram_actor_id}?fields=username&access_token=${access_token}`
-            );
-            const iuData = await iuRes.json();
-            igAccounts = [{ id: aaData.instagram_actor_id, username: iuData.username || null }];
+            igAccounts = [{ id: aaData.instagram_actor_id.id || aaData.instagram_actor_id, username: aaData.instagram_actor_id?.username || null }];
             diagnostic.push({ endpoint: "/act?instagram_actor_id", status: "ok", count: 1 });
           } else {
             diagnostic.push({ endpoint: "/act?instagram_actor_id", status: "empty", detail: aaData.business?.id ? `business=${aaData.business.id}` : "no_business" });
@@ -112,7 +110,7 @@ Deno.serve(async (req) => {
 
         // Step 2a: pages do BM dono da ad account (cobre o caso onde user não é admin direto da Page)
         try {
-          const aaRes = await fetch(
+          const aaRes = await timedFetch(
             `https://graph.facebook.com/v25.0/${ad_account_id}?fields=owner_business{owned_pages.limit(200){id,name,instagram_business_account{id},whatsapp_business_account{id,name}},client_pages.limit(200){id,name,instagram_business_account{id},whatsapp_business_account{id,name}}}&access_token=${access_token}`
           );
           const aaData = await aaRes.json();
@@ -131,7 +129,7 @@ Deno.serve(async (req) => {
         // Step 2b: /{ad_account_id}/promote_pages — pages que essa ad account pode anunciar
         if (allPages.filter((p: any) => p.instagram_business_account?.id && igIds.has(p.instagram_business_account.id)).length < igAccounts.length) {
           try {
-            const ppRes = await fetch(
+            const ppRes = await timedFetch(
               `https://graph.facebook.com/v25.0/${ad_account_id}/promote_pages?fields=id,name,instagram_business_account{id},whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`
             );
             const ppData = await ppRes.json();
@@ -155,7 +153,7 @@ Deno.serve(async (req) => {
         if (matchedSoFar() < igAccounts.length) {
           let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id},whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`;
           while (pagesUrl) {
-            const pagesRes = await fetch(pagesUrl);
+            const pagesRes = await timedFetch(pagesUrl);
             const pagesData = await pagesRes.json();
             if (pagesData.data) {
               // dedup por id
@@ -173,7 +171,7 @@ Deno.serve(async (req) => {
 
       // Match IG accounts to pages
       const results: any[] = [];
-      for (const ig of igAccounts) {
+      await Promise.all(igAccounts.map(async (ig) => {
         let matchedPage: any = null;
         for (const page of allPages) {
           if (page.instagram_business_account?.id === ig.id) {
@@ -187,7 +185,7 @@ Deno.serve(async (req) => {
         if (matchedPage?.whatsapp_business_account?.id) {
           try {
             const wabaId = matchedPage.whatsapp_business_account.id;
-            const phoneRes = await fetch(
+            const phoneRes = await timedFetch(
               `https://graph.facebook.com/v25.0/${wabaId}/phone_numbers?fields=id,display_phone_number&limit=1&access_token=${access_token}`
             );
             const phoneData = await phoneRes.json();
@@ -207,7 +205,7 @@ Deno.serve(async (req) => {
           waba_phone_id: wabaPhoneId,
           waba_phone: wabaPhone,
         });
-      }
+      }));
 
       // Adiciona contador final de pages no diagnóstico
       diagnostic.push({ endpoint: "_total_pages_scanned", status: "info", count: allPages.length });
@@ -223,7 +221,7 @@ Deno.serve(async (req) => {
     const paginate = async (initialUrl: string) => {
       let url: string | null = initialUrl;
       while (url) {
-        const res = await fetch(url);
+        const res = await timedFetch(url);
         const data = await res.json();
         if (data.error) throw new Error(data.error.message);
         if (data.data) {
@@ -244,7 +242,7 @@ Deno.serve(async (req) => {
     let businesses: any[] = [];
     let bizError: string | null = null;
     try {
-      const bizRes = await fetch(`https://graph.facebook.com/v25.0/me/businesses?fields=id,name&limit=50&access_token=${access_token}`);
+      const bizRes = await timedFetch(`https://graph.facebook.com/v25.0/me/businesses?fields=id,name&limit=50&access_token=${access_token}`);
       const bizData = await bizRes.json();
       if (bizData.error) {
         bizError = bizData.error.message;

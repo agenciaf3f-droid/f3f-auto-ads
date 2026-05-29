@@ -352,14 +352,15 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     setPublishResult(null);
     setMinBudget(null);
 
-    // ===== STEP 2: LOAD AUDIENCES (await pra evitar paralelismo com import templates) =====
+    // ===== STEP 2+3 EM PARALELO: dispara fetch IG ANTES de await loadAudiences pra rodar junto =====
+    addLog(`📡 [pipeline] Buscando contas IG autorizadas para ${selectedAccount}...`);
+    const igFetchPromise = fetchIgAccountsForAdAccount(accessToken, selectedAccount);
     await loadAudiences();
 
     // ===== STEP 3: LOAD IDENTITY (from ad account's authorized IG accounts) =====
     let resolvedPageId: string | null = null;
     try {
-      addLog(`📡 [pipeline] Buscando contas IG autorizadas para ${selectedAccount}...`);
-      const { ig_accounts: igAccounts, diagnostic } = await fetchIgAccountsForAdAccount(accessToken, selectedAccount);
+      const { ig_accounts: igAccounts, diagnostic } = await igFetchPromise;
       addLog(`📄 [pipeline] contas IG autorizadas: ${igAccounts.length}`);
       for (const d of diagnostic) {
         addLog(`   🔎 ${d.endpoint} → ${d.status}${d.count !== undefined ? ` (${d.count})` : ""}${d.detail ? ` | ${d.detail}` : ""}`);

@@ -5,6 +5,9 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const fetchMeta = (url: string, timeoutMs = 15_000) =>
+  fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+
 function normalizeInstagramUrl(url: string): { normalized: string; type: string; shortcode: string | null; error?: string } {
   let cleaned = url.trim();
   try {
@@ -85,7 +88,7 @@ Deno.serve(async (req) => {
 
         while (mediaUrl && mediaChecked < 200) {
           mediaApiCalls++;
-          const mediaRes = await fetch(mediaUrl);
+          const mediaRes = await fetchMeta(mediaUrl);
           const mediaData = await mediaRes.json();
 
           if (mediaData.error) {
@@ -121,7 +124,7 @@ Deno.serve(async (req) => {
       let pageRequests = 0;
       while (pagesUrl) {
         pageRequests++;
-        const pagesRes = await fetch(pagesUrl);
+        const pagesRes = await fetchMeta(pagesUrl);
         const pagesData = await pagesRes.json();
         if (pagesData.error) {
           mark("fetch_pages", tPages);
@@ -157,7 +160,7 @@ Deno.serve(async (req) => {
         let mediaChecked = 0;
         while (mediaUrl && mediaChecked < 200) {
           mediaApiCalls++;
-          const mediaRes = await fetch(mediaUrl);
+          const mediaRes = await fetchMeta(mediaUrl);
           const mediaData = await mediaRes.json();
 
           if (mediaData.data) {

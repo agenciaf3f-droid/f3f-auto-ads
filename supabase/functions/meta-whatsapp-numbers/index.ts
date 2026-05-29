@@ -16,9 +16,12 @@ interface PhoneNumber {
   waba_id: string;
 }
 
+const timedFetch = (url: string, init: RequestInit = {}) =>
+  fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
+
 async function fetchPhoneNumbersFromWaba(wabaId: string, wabaName: string, accessToken: string, pageId: string): Promise<PhoneNumber[]> {
   const nums: PhoneNumber[] = [];
-  const res = await fetch(
+  const res = await timedFetch(
     `https://graph.facebook.com/v25.0/${wabaId}/phone_numbers?fields=id,display_phone_number,verified_name,code_verification_status&limit=50&access_token=${accessToken}`
   );
   const data = await res.json();
@@ -68,7 +71,7 @@ Deno.serve(async (req) => {
     if (page_id) {
       console.log(`[whatsapp] Strategy 1: Page ${page_id} → whatsapp_business_account`);
       try {
-        const res = await fetch(
+        const res = await timedFetch(
           `https://graph.facebook.com/v25.0/${page_id}?fields=whatsapp_business_account{id,name}&access_token=${access_token}`
         );
         const data = await res.json();
@@ -90,7 +93,7 @@ Deno.serve(async (req) => {
     if (numbers.length === 0 && ad_account_id) {
       console.log(`[whatsapp] Strategy 2: Ad Account → Business → owned WABAs`);
       try {
-        const bizRes = await fetch(
+        const bizRes = await timedFetch(
           `https://graph.facebook.com/v25.0/${ad_account_id}?fields=business{id,name}&access_token=${access_token}`
         );
         const bizData = await bizRes.json();
@@ -100,33 +103,43 @@ Deno.serve(async (req) => {
           const businessId = bizData.business.id;
 
           // Try owned WABAs
-          const ownedRes = await fetch(
+          const ownedRes = await timedFetch(
             `https://graph.facebook.com/v25.0/${businessId}/owned_whatsapp_business_accounts?fields=id,name&limit=50&access_token=${access_token}`
           );
           const ownedData = await ownedRes.json();
           console.log(`[whatsapp] Strategy 2 owned WABAs:`, JSON.stringify(ownedData));
 
           if (ownedData.data?.length) {
-            for (const waba of ownedData.data) {
-              const nums = await fetchPhoneNumbersFromWaba(waba.id, waba.name || "", access_token, page_id || "");
-              addUnique(nums);
-            }
+            const results = await Promise.allSettled(
+              ownedData.data.map((waba: { id: string; name?: string }) =>
+                fetchPhoneNumbersFromWaba(waba.id, waba.name || "", access_token, page_id || "")
+              )
+            );
+            results.forEach((r) => {
+              if (r.status === "fulfilled") addUnique(r.value);
+              else console.log(`[whatsapp] Strategy 2 (owned) WABA fetch failed: ${r.reason?.message || r.reason}`);
+            });
             console.log(`[whatsapp] Strategy 2 (owned) found ${numbers.length} numbers`);
           }
 
           // Try client WABAs if still empty
           if (numbers.length === 0) {
-            const clientRes = await fetch(
+            const clientRes = await timedFetch(
               `https://graph.facebook.com/v25.0/${businessId}/client_whatsapp_business_accounts?fields=id,name&limit=50&access_token=${access_token}`
             );
             const clientData = await clientRes.json();
             console.log(`[whatsapp] Strategy 2 client WABAs:`, JSON.stringify(clientData));
 
             if (clientData.data?.length) {
-              for (const waba of clientData.data) {
-                const nums = await fetchPhoneNumbersFromWaba(waba.id, waba.name || "", access_token, page_id || "");
-                addUnique(nums);
-              }
+              const results = await Promise.allSettled(
+                clientData.data.map((waba: { id: string; name?: string }) =>
+                  fetchPhoneNumbersFromWaba(waba.id, waba.name || "", access_token, page_id || "")
+                )
+              );
+              results.forEach((r) => {
+                if (r.status === "fulfilled") addUnique(r.value);
+                else console.log(`[whatsapp] Strategy 2 (client) WABA fetch failed: ${r.reason?.message || r.reason}`);
+              });
               console.log(`[whatsapp] Strategy 2 (client) found ${numbers.length} numbers`);
             }
           }
@@ -140,25 +153,33 @@ Deno.serve(async (req) => {
     if (numbers.length === 0) {
       console.log(`[whatsapp] Strategy 3: scanning all pages for whatsapp_business_account`);
       try {
-        const pagesRes = await fetch(
+        const pagesRes = await timedFetch(
           `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,whatsapp_business_account{id,name}&limit=25&access_token=${access_token}`
         );
         const pagesData = await pagesRes.json();
         console.log(`[whatsapp] Strategy 3 pages count: ${pagesData.data?.length || 0}`);
 
         if (pagesData.data?.length) {
-          for (const page of pagesData.data) {
-            if (page.whatsapp_business_account?.id) {
-              console.log(`[whatsapp] Strategy 3: page ${page.id} (${page.name}) has WABA ${page.whatsapp_business_account.id}`);
-              const nums = await fetchPhoneNumbersFromWaba(
+          const pagesWithWaba = pagesData.data.filter(
+            (page: { whatsapp_business_account?: { id?: string } }) => page.whatsapp_business_account?.id
+          );
+          for (const page of pagesWithWaba) {
+            console.log(`[whatsapp] Strategy 3: page ${page.id} (${page.name}) has WABA ${page.whatsapp_business_account.id}`);
+          }
+          const results = await Promise.allSettled(
+            pagesWithWaba.map((page: { id: string; name?: string; whatsapp_business_account: { id: string; name?: string } }) =>
+              fetchPhoneNumbersFromWaba(
                 page.whatsapp_business_account.id,
-                page.whatsapp_business_account.name || page.name,
+                page.whatsapp_business_account.name || page.name || "",
                 access_token,
                 page.id
-              );
-              addUnique(nums);
-            }
-          }
+              )
+            )
+          );
+          results.forEach((r) => {
+            if (r.status === "fulfilled") addUnique(r.value);
+            else console.log(`[whatsapp] Strategy 3 WABA fetch failed: ${r.reason?.message || r.reason}`);
+          });
           console.log(`[whatsapp] Strategy 3 found ${numbers.length} numbers`);
         }
       } catch (e) {

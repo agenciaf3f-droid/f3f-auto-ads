@@ -76,7 +76,11 @@ function buildAdsetFingerprintInput(args: {
 
 async function fetchJsonWithTiming(url: string, init?: RequestInit): Promise<{ data: any; elapsedMs: number; status: number }> {
   const startedAt = Date.now();
-  const res = await fetch(url, init);
+  const mergedInit: RequestInit = {
+    ...(init || {}),
+    signal: init?.signal ?? AbortSignal.timeout(30_000),
+  };
+  const res = await fetch(url, mergedInit);
   const elapsedMs = Date.now() - startedAt;
 
   try {
@@ -228,9 +232,18 @@ async function runFase3SanityChecks(params: {
 }) {
   const checks: Record<string, any> = {};
 
-  const pageCheck = await fetchJsonWithTiming(
-    `https://graph.facebook.com/v25.0/${params.pageId}?fields=id,name&access_token=${params.accessToken}`,
-  );
+  // Em v25 o subfield whatsapp_business_account não existe mais no node de phone.
+  // Query só campos válidos. Se Meta rejeitar o phone na criação do adset, o erro vai
+  // aparecer no passo certo — não tentamos cross-validar via WABA aqui.
+  const [pageCheck, phoneCheck] = await Promise.all([
+    fetchJsonWithTiming(
+      `https://graph.facebook.com/v25.0/${params.pageId}?fields=id,name&access_token=${params.accessToken}`,
+    ),
+    fetchJsonWithTiming(
+      `https://graph.facebook.com/v25.0/${params.whatsappPhoneId}?fields=id,display_phone_number,verified_name&access_token=${params.accessToken}`,
+    ),
+  ]);
+
   checks.page = { elapsed_ms: pageCheck.elapsedMs, status: pageCheck.status, response: pageCheck.data };
   if (pageCheck.data?.error) {
     return {
@@ -240,12 +253,6 @@ async function runFase3SanityChecks(params: {
     };
   }
 
-  // Em v25 o subfield whatsapp_business_account não existe mais no node de phone.
-  // Query só campos válidos. Se Meta rejeitar o phone na criação do adset, o erro vai
-  // aparecer no passo certo — não tentamos cross-validar via WABA aqui.
-  const phoneCheck = await fetchJsonWithTiming(
-    `https://graph.facebook.com/v25.0/${params.whatsappPhoneId}?fields=id,display_phone_number,verified_name&access_token=${params.accessToken}`,
-  );
   checks.whatsapp_phone = { elapsed_ms: phoneCheck.elapsedMs, status: phoneCheck.status, response: phoneCheck.data };
   if (phoneCheck.data?.error) {
     return {

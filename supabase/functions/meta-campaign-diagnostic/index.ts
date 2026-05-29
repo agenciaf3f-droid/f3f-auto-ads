@@ -263,7 +263,7 @@ Deno.serve(async (req) => {
       }
       if (missingAdsetIds.size > 0) {
         logs.push(`🔍 [adsets] ${missingAdsetIds.size} adset(s) referenciado(s) por ads mas ausente(s) no edge — buscando individualmente`);
-        for (const adsetId of missingAdsetIds) {
+        await Promise.all(Array.from(missingAdsetIds).map(async (adsetId) => {
           try {
             const adsetBaseUrl = `https://graph.facebook.com/${API_VERSION}/${adsetId}?`;
             const adsetData = await resilientFetchSingle(adsetBaseUrl, ADSET_FIELDS, access_token, `adset(${adsetId})`, logs);
@@ -279,7 +279,7 @@ Deno.serve(async (req) => {
             entry.adsets.push({ id: adsetId, _error: e.message });
             logs.push(`❌ [adset] Erro ao buscar ${adsetId}: ${e.message}`);
           }
-        }
+        }));
       }
 
       // Fetch creative details for each ad
@@ -287,7 +287,7 @@ Deno.serve(async (req) => {
       for (const ad of entry.ads) {
         if (ad.creative?.id) creativeIds.add(ad.creative.id);
       }
-      for (const cid of creativeIds) {
+      await Promise.all(Array.from(creativeIds).map(async (cid) => {
         try {
           const crBaseUrl = `https://graph.facebook.com/${API_VERSION}/${cid}?`;
           const crData = await resilientFetchSingle(crBaseUrl, CREATIVE_FIELDS, access_token, `creative(${cid})`, logs);
@@ -297,7 +297,7 @@ Deno.serve(async (req) => {
           entry.creatives.push({ id: cid, _error: e.message });
           logs.push(`❌ Erro ao buscar creative ${cid}: ${e.message}`);
         }
-      }
+      }));
 
       if (entry._errors.length === 0) delete entry._errors;
       results.push(entry);

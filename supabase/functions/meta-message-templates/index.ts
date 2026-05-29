@@ -59,7 +59,7 @@ Deno.serve(async (req) => {
     let errorSample: string | null = null;
 
     // Busca em paralelo em chunks
-    const chunkSize = 10;
+    const chunkSize = 20;
     for (let i = 0; i < ctwAdsets.length; i += chunkSize) {
       const chunk = ctwAdsets.slice(i, i + chunkSize);
       await Promise.all(chunk.map(async (aset: any) => {
