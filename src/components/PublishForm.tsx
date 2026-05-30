@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   WhatsAppNumberSelector,
   WhatsAppMessages,
@@ -32,6 +33,7 @@ import {
 } from "@/lib/meta-api";
 import { generateCampaignName, generateAdsetName, generateAdName_v2 } from "@/lib/naming";
 import SearchableSelect from "@/components/SearchableSelect";
+import IDDisplay from "@/components/IDDisplay";
 import LocationSelector, { type LocationItem } from "@/components/LocationSelector";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { supabase } from "@/integrations/supabase/client";
@@ -48,6 +50,29 @@ interface ValidationResult { valid: boolean; checks?: { label: string; ok: boole
 type CreativeType = "instagram" | "drive";
 type CampaignStructure = "new" | "existing";
 type DistributionStructure = "ABO" | "CBO";
+
+function tryParseError(err: unknown): PublishResult | null {
+  // (1) try extrair .context
+  try {
+    if (err && typeof err === "object" && "context" in err) {
+      const ctx = (err as any).context;
+      if (ctx && typeof ctx === "object") return ctx as PublishResult;
+    }
+  } catch (parseErr) {
+    if (typeof console !== "undefined") console.debug("[tryParseError] context extract failed", parseErr);
+  }
+  // (2) try JSON.parse(message ou string)
+  try {
+    if (err && typeof err === "object") {
+      const raw = typeof err === "string" ? JSON.parse(err) : (err as any).message ? JSON.parse((err as any).message) : null;
+      if (raw && typeof raw === "object" && ("step" in raw || "error_message" in raw)) return raw as PublishResult;
+    }
+  } catch (parseErr) {
+    if (typeof console !== "undefined") console.debug("[tryParseError] JSON.parse failed", parseErr);
+  }
+  // (3) return null
+  return null;
+}
 
 interface CreativeItem {
   id: string;
@@ -151,6 +176,13 @@ let creativeCounter = 0;
 function nextCreativeId() { return `cr_${++creativeCounter}_${Date.now()}`; }
 
 export default function PublishForm() {
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [metaName, setMetaName] = useState("");
   const [metaLoading, setMetaLoading] = useState(true);
@@ -255,7 +287,10 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
             setMetaLoading(false);
             return;
           }
-        } catch { /* ignore parse errors */ }
+        } catch (parseErr) {
+          addLog(`⚠️ Cache JSON corrompido, descartando e re-validando contra API...`);
+          sessionStorage.removeItem("meta_status_cache");
+        }
       }
 
       addLog("🔍 Verificando conexão Meta...");
@@ -626,7 +661,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       } else {
         addLog(`⚠️ [modelos] Erro ao carregar: ${error?.message || "Desconhecido"}`);
       }
-    } catch {}
+    } catch (err: unknown) {
+      addLog(`❌ [modelos] Exceção ao carregar: ${err instanceof Error ? err.message : "desconhecido"}`);
+    }
   };
 
   const handleSaveTemplate = async () => {
@@ -937,9 +974,13 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           addLog(`❌ [validate-creative] Erro: ${r.reason}`);
         }
       }
-      setCreatives(prev => prev.map(c => validationMap.has(c.id) ? { ...c, validation: validationMap.get(c.id)! } : c));
+      if (isMountedRef.current) {
+        setCreatives(prev => prev.map(c => validationMap.has(c.id) ? { ...c, validation: validationMap.get(c.id)! } : c));
+      }
       addLog(`⏱️ [validate] Criativos validados em ${Math.round(performance.now() - tCr)}ms`);
-      setValidatingCreative(false);
+      if (isMountedRef.current) {
+        setValidatingCreative(false);
+      }
       if (hasError) return;
 
       // Build up-to-date list since React state still holds pre-update snapshot
@@ -997,7 +1038,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
       // Promoted object: must have phone number for display
       const hasPhone = !!(selectedWhatsapp?.phone);
-      checks.push({ label: "promoted_object (telefone)", ok: hasPhone, detail: hasPhone ? selectedWhatsapp!.phone : "ausente" });
+      checks.push({ label: "promoted_object (telefone)", ok: hasPhone, detail: hasPhone ? selectedWhatsapp?.phone : "ausente" });
 
       addLog(`🔍 [validate] ═══ VALIDAÇÃO ESTRUTURAL FASE 3 ═══`);
       addLog(`🔍 [validate] Campaign: objective=${campaignObj}`);
@@ -1160,19 +1201,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         else toast.error(`Falha ao publicar (${stepLabel})`);
       }
     } catch (err: unknown) {
-      let parsed: PublishResult | null = null;
-      if (err && typeof err === "object" && "context" in err) {
-        try {
-          const ctx = (err as any).context;
-          if (ctx && typeof ctx === "object") parsed = ctx as PublishResult;
-        } catch {}
-      }
-      if (!parsed && err && typeof err === "object") {
-        try {
-          const raw = typeof err === "string" ? JSON.parse(err) : (err as any).message ? JSON.parse((err as any).message) : null;
-          if (raw && typeof raw === "object" && ("step" in raw || "error_message" in raw)) parsed = raw;
-        } catch {}
-      }
+      const parsed = tryParseError(err);
       if (parsed && (parsed.step || parsed.error_message)) {
         addLog(`❌ Erro estruturado: step="${parsed.step}", msg="${parsed.error_message}"`);
         if (parsed.error_user_title) addLog(`   Título: ${parsed.error_user_title}`);
@@ -1253,7 +1282,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
           {/* Identity */}
           {selectedAccount && (
-            <Card className="glass-card p-6 space-y-3">
+            <Card className="glass-card p-6 space-y-4">
               <Label className="font-display font-semibold text-sm">Identidade da Conta</Label>
               {identityLoading ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -1261,11 +1290,14 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 </div>
               ) : identityLoaded ? (
                 identityError && !identityIgActorId ? (
-                  <div className="bg-destructive/10 border border-destructive/30 rounded-md p-3">
-                    <p className="text-xs text-destructive font-medium">
-                      Conta sem Instagram Business válido para FASE 1.
-                    </p>
-                    <p className="text-[10px] text-muted-foreground mt-1">{identityError}</p>
+                  <div className="bg-destructive/10 border border-destructive/30 border-l-4 border-l-destructive/60 rounded-md p-3">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+                      <div className="flex-1 space-y-1">
+                        <p className="text-xs text-destructive font-medium">Conta sem Instagram Business válido para FASE 1.</p>
+                        <p className="text-[10px] text-muted-foreground">{identityError}</p>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <div className="bg-muted/50 rounded-md p-3 space-y-1">
@@ -1276,7 +1308,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                       <p className="text-xs"><strong>Instagram:</strong> @{identityIgUsername}</p>
                     )}
                     {identityIgActorId && (
-                      <p className="text-xs font-mono text-muted-foreground"><strong>IG Actor ID:</strong> {identityIgActorId}</p>
+                      <IDDisplay id={identityIgActorId} label="IG Actor ID" />
                     )}
                     {!identityIgActorId && (
                       <p className="text-xs text-warning">⚠️ Sem Instagram Business vinculado (FASE 1 bloqueada)</p>
@@ -1398,7 +1430,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
             <Label className="font-display font-semibold text-sm">Nomes</Label>
             {campaignStructure === "new" && (
               <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">Nome da Campanha</Label>
+                <Label className="text-xs font-medium text-muted-foreground">Nome da Campanha</Label>
                 <Input
                   placeholder='Ex: "Campanha Tráfego - Joelho"'
                   value={campaignNameInput}
@@ -1407,7 +1439,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               </div>
             )}
             <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">
+              <Label className="text-xs font-medium text-muted-foreground">
                 {distributionStructure === "ABO" ? "Prefixo do Conjunto (AdSet)" : "Nome do Conjunto (AdSet)"}
               </Label>
               <Input
@@ -1514,8 +1546,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
                 {/* Validation feedback */}
                 {cr.validation && !cr.validation.ok && (
-                  <div className="bg-destructive/10 border border-destructive/30 rounded-md p-2">
-                    <p className="text-[10px] text-destructive font-medium">{cr.validation.error}</p>
+                  <div className="bg-destructive/10 border border-destructive/30 border-l-4 border-l-destructive/60 rounded-md p-3 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+                    <p className="text-[10px] text-destructive font-medium flex-1">{cr.validation.error}</p>
                   </div>
                 )}
                 {cr.validation?.ok && (
@@ -1536,19 +1569,27 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 : `Público ${audiences.length > 0 ? `(${audiences.length})` : ""}`}
             </Label>
             {loadingAudiences ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="w-4 h-4 animate-spin" /> Carregando públicos...
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">Selecione 2 a 10 públicos. Cada um vira um conjunto separado, todos com o mesmo criativo.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {[...Array(4)].map((_, i) => (
+                    <div key={i} className="flex items-center gap-2 px-2 py-1.5">
+                      <Skeleton className="w-4 h-4 rounded" />
+                      <Skeleton className="h-3 flex-1" />
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : audiences.length > 0 ? (
               isFase2 ? (
                 <div className="space-y-2">
                   <p className="text-xs text-muted-foreground">Selecione 2 a 10 públicos. Cada um vira um conjunto separado, todos com o mesmo criativo.</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-muted/20 rounded-lg p-4 max-h-64 overflow-y-auto">
                     {audiences.map((aud) => {
                       const checked = fase2Audiences.includes(aud.id);
                       const disabled = !checked && fase2Audiences.length >= 10;
                       return (
-                        <label key={aud.id} className={`flex items-center gap-2 px-2 py-1.5 rounded border ${checked ? "bg-primary/10 border-primary" : "border-border"} ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-muted/50"}`}>
+                        <label key={aud.id} className={`flex items-center gap-2 px-2 py-1.5 rounded border transition-colors ${checked ? "bg-primary/20 border-primary/70 font-semibold shadow-sm ring-1 ring-primary/30" : "border-border"} ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-muted/50 focus-within:ring-2 focus-within:ring-primary/40"}`}>
                           <input
                             type="checkbox"
                             checked={checked}
@@ -1578,8 +1619,12 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 />
               )
             ) : selectedAccount ? (
-              <div className="flex items-center gap-2 text-sm text-warning">
-                <AlertTriangle className="w-4 h-4" /> Nenhum público encontrado
+              <div className="bg-muted/30 rounded-lg p-6 text-center space-y-3">
+                <AlertTriangle className="w-8 h-8 mx-auto text-muted-foreground opacity-60" />
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-foreground">Nenhum público encontrado</p>
+                  <p className="text-xs text-muted-foreground">Verifique se a conta Meta tem públicos configurados no Gerenciador de Anúncios</p>
+                </div>
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">Selecione uma conta primeiro</p>
@@ -1596,6 +1641,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               min="1"
               value={budget}
               onChange={(e) => setBudget(e.target.value)}
+              disabled={loading}
             />
             {minBudget && (
               <p className="text-xs font-medium text-warning">
@@ -1611,10 +1657,13 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
           {/* ============ FASE 3 EXTRA FIELDS ============ */}
           {isFase3 && (
-            <Card className="glass-card p-6 space-y-5 border-accent/30">
+            <Card className="glass-card p-6 space-y-5 border-accent/50 bg-accent/5 glow-accent relative">
               <div className="flex items-center gap-2">
-                <MessageCircle className="w-5 h-5 text-accent" />
-                <Label className="font-display font-semibold text-sm">Configurações FASE 3 — WhatsApp</Label>
+                <MessageCircle className="w-6 h-6 text-accent" />
+                <div className="flex flex-col">
+                  <Label className="font-display font-semibold text-sm">Configurações FASE 3 — WhatsApp</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">Integração WhatsApp para automação de vendas</p>
+                </div>
               </div>
 
               <WhatsAppNumberSelector
@@ -1634,7 +1683,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                     </div>
                     {pixels.length > 0 ? (
                       <Select value={selectedPixelId} onValueChange={setSelectedPixelId}>
-                        <SelectTrigger><SelectValue placeholder={`${pixels.length} pixel(s) — selecione`} /></SelectTrigger>
+                        <SelectTrigger><SelectValue className="text-muted-foreground" placeholder={`${pixels.length} pixel(s) — selecione`} /></SelectTrigger>
                         <SelectContent>
                           {pixels.map((p) => (
                             <SelectItem key={p.id} value={p.id}>
@@ -1733,7 +1782,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 </div>
                 {pixels.length > 0 ? (
                   <Select value={selectedPixelId} onValueChange={setSelectedPixelId}>
-                    <SelectTrigger><SelectValue placeholder={`${pixels.length} pixel(s) — selecione`} /></SelectTrigger>
+                    <SelectTrigger><SelectValue className="text-muted-foreground" placeholder={`${pixels.length} pixel(s) — selecione`} /></SelectTrigger>
                     <SelectContent>
                       {pixels.map((p) => (
                         <SelectItem key={p.id} value={p.id}>
@@ -1786,11 +1835,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Data de início</Label>
-                    <Input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} />
+                    <Input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} disabled={loading} />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground flex items-center gap-1"><Clock className="w-3 h-3" /> Hora</Label>
-                    <Input type="time" value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} />
+                    <Input type="time" value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} disabled={loading} />
                   </div>
                 </div>
                 <Separator className="opacity-30" />
@@ -1798,11 +1847,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Data de término</Label>
-                    <Input type="date" value={scheduleEndDate} onChange={(e) => setScheduleEndDate(e.target.value)} />
+                    <Input type="date" value={scheduleEndDate} onChange={(e) => setScheduleEndDate(e.target.value)} disabled={loading} />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Hora de término</Label>
-                    <Input type="time" value={scheduleEndTime} onChange={(e) => setScheduleEndTime(e.target.value)} />
+                    <Input type="time" value={scheduleEndTime} onChange={(e) => setScheduleEndTime(e.target.value)} disabled={loading} />
                   </div>
                 </div>
               </div>
@@ -1811,60 +1860,93 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
           {/* Summary */}
           {(computedCampaignName || computedAdsetName || creatives.some(c => c.name) || isFase3) && (
-            <Card className="glass-card p-4 glow-primary space-y-2">
-              <Label className="font-display text-xs text-muted-foreground mb-1 block">Resumo</Label>
+            <Card className="glass-card p-4 glow-primary">
+              <div className="space-y-3">
+                <Label className="font-display text-xs text-muted-foreground mb-1 block">Resumo</Label>
 
-              {/* Structure */}
-              <div className="flex items-center gap-2">
-                <Badge variant="outline" className="text-[10px]">{selectedPreset.label}</Badge>
-                <Badge variant="outline" className="text-[10px]">{distributionStructure}</Badge>
-                <Badge variant="secondary" className="text-[10px]">{structureDescription}</Badge>
-              </div>
-
-              {campaignStructure === "new" && computedCampaignName && (
-                <p className="text-xs font-mono text-primary break-all"><strong>Campanha:</strong> {computedCampaignName}</p>
-              )}
-              {campaignStructure === "existing" && selectedCampaign && (
-                <p className="text-xs font-mono text-muted-foreground break-all"><strong>Campanha:</strong> {campaigns.find(c => c.id === selectedCampaign)?.name || selectedCampaign}</p>
-              )}
-
-              {/* ABO: show numbered adsets */}
-              {distributionStructure === "ABO" && creatives.length > 1 ? (
-                creatives.map((cr, idx) => (
-                  <div key={cr.id} className="text-[10px] text-muted-foreground pl-2 border-l border-border/50">
-                    <p><strong>Conjunto {idx + 1}:</strong> [{selectedAudienceName}] - {adsetNameInput || "Conjunto"} {String(idx + 1).padStart(2, "0")}</p>
-                    <p className="pl-2"><strong>Anúncio:</strong> {cr.name || `Criativo ${idx + 1}`}</p>
+                {/* Seção 1: Estrutura */}
+                <div>
+                  <p className="text-[10px] font-semibold text-foreground mb-1">Estrutura</p>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge variant="outline" className="text-[10px]">{selectedPreset.label}</Badge>
+                      <Badge variant="outline" className="text-[10px]">{distributionStructure}</Badge>
+                      <Badge variant="secondary" className="text-[10px]">{structureDescription}</Badge>
+                    </div>
                   </div>
-                ))
-              ) : (
-                <>
-                  {computedAdsetName && <p className="text-xs font-mono text-primary break-all"><strong>Conjunto:</strong> {computedAdsetName}</p>}
-                  {creatives.map((cr, idx) => (
-                    <p key={cr.id} className="text-xs font-mono text-primary break-all"><strong>Anúncio {creatives.length > 1 ? idx + 1 : ""}:</strong> {cr.name || `Criativo ${idx + 1}`}</p>
-                  ))}
-                </>
-              )}
+                </div>
 
-              <Separator className="opacity-20" />
+                <Separator className="opacity-20" />
 
-              {/* FASE 3 summary */}
-              {isFase3 && (
-                <>
-                  {selectedWhatsapp && <p className="text-[10px] text-muted-foreground"><strong>WhatsApp:</strong> {selectedWhatsapp.display}</p>}
-                  {includedLocations.length > 0 && <p className="text-[10px] text-muted-foreground"><strong>Incluir:</strong> {includedLocations.map(l => l.display || l.name).join(", ")}</p>}
-                  {excludedLocations.length > 0 && <p className="text-[10px] text-muted-foreground"><strong>Excluir:</strong> {excludedLocations.map(l => l.display || l.name).join(", ")}</p>}
-                  {isFase3 && <p className="text-[10px] text-muted-foreground"><strong>CTA:</strong> WHATSAPP_MESSAGE (automático)</p>}
-                  {(greetingText || readyMessage) && (
-                    <p className="text-[10px] text-muted-foreground"><strong>Mensagem:</strong> {greetingText ? `"${greetingText}" + ` : ""}{readyMessage ? `"${readyMessage}"` : "modelo selecionado"}</p>
-                  )}
-                </>
-              )}
+                {/* Seção 2: Campanha */}
+                <div>
+                  <p className="text-[10px] font-semibold text-foreground mb-1">Campanha</p>
+                  <div className="space-y-1">
+                    {campaignStructure === "new" && computedCampaignName && (
+                      <p className="text-xs font-mono text-primary break-all">{computedCampaignName}</p>
+                    )}
+                    {campaignStructure === "existing" && selectedCampaign && (
+                      <p className="text-xs font-mono text-muted-foreground break-all">{campaigns.find(c => c.id === selectedCampaign)?.name || selectedCampaign}</p>
+                    )}
+                  </div>
+                </div>
 
-              {scheduleEnabled && scheduleDate && scheduleTime && (
-                <p className="text-[10px] text-muted-foreground"><strong>Início agendado:</strong> {scheduleDate} às {scheduleTime}</p>
-              )}
+                <Separator className="opacity-20" />
 
-              <p className="text-[10px] font-mono text-muted-foreground break-all"><strong>UTM:</strong> {UTM_TEMPLATE}</p>
+                {/* Seção 3: Anúncios/Conjuntos */}
+                <div>
+                  <p className="text-[10px] font-semibold text-foreground mb-1">Anúncios / Conjuntos</p>
+                  <div className="space-y-1">
+                    {distributionStructure === "ABO" && creatives.length > 1 ? (
+                      creatives.map((cr, idx) => (
+                        <div key={cr.id} className="text-xs text-muted-foreground pl-2 border-l border-border/50">
+                          <p>Conjunto {idx + 1}: [{selectedAudienceName}] - {adsetNameInput || "Conjunto"} {String(idx + 1).padStart(2, "0")}</p>
+                          <p className="pl-2">Anúncio: {cr.name || `Criativo ${idx + 1}`}</p>
+                        </div>
+                      ))
+                    ) : (
+                      <>
+                        {computedAdsetName && <p className="text-xs font-mono text-primary break-all">Conjunto: {computedAdsetName}</p>}
+                        {creatives.map((cr, idx) => (
+                          <p key={cr.id} className="text-xs font-mono text-primary break-all">Anúncio {creatives.length > 1 ? idx + 1 : ""}: {cr.name || `Criativo ${idx + 1}`}</p>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Seção 4: Fase 3 (se ativo) */}
+                {isFase3 && (
+                  <>
+                    <Separator className="opacity-20" />
+                    <div>
+                      <p className="text-[10px] font-semibold text-foreground mb-1">Fase 3</p>
+                      <div className="space-y-1">
+                        {selectedWhatsapp && <p className="text-xs text-muted-foreground">WhatsApp: {selectedWhatsapp.display}</p>}
+                        {includedLocations.length > 0 && <p className="text-xs text-muted-foreground">Incluir: {includedLocations.map(l => l.display || l.name).join(", ")}</p>}
+                        {excludedLocations.length > 0 && <p className="text-xs text-muted-foreground">Excluir: {excludedLocations.map(l => l.display || l.name).join(", ")}</p>}
+                        <p className="text-xs text-muted-foreground">CTA: WHATSAPP_MESSAGE (automático)</p>
+                        {(greetingText || readyMessage) && (
+                          <p className="text-xs text-muted-foreground">Mensagem: {greetingText ? `"${greetingText}" + ` : ""}{readyMessage ? `"${readyMessage}"` : "modelo selecionado"}</p>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                <Separator className="opacity-20" />
+
+                {/* Seção 5: Agendamento + UTM */}
+                <div>
+                  <p className="text-[10px] font-semibold text-foreground mb-1">Agendamento + UTM</p>
+                  <div className="space-y-1">
+                    {scheduleEnabled && scheduleDate && scheduleTime && (
+                      <p className="text-xs text-muted-foreground">Início agendado: {scheduleDate} às {scheduleTime}</p>
+                    )}
+                    <p className="text-xs font-mono text-muted-foreground break-all">UTM: {UTM_TEMPLATE}</p>
+                  </div>
+                </div>
+              </div>
             </Card>
           )}
 
@@ -1877,9 +1959,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 {validationResult.valid ? "✅ Validação OK" : "❌ Validação falhou"}
               </p>
               {validationResult.checks?.map((c, i) => (
-                <div key={i} className="flex items-center justify-between text-xs">
-                  <span>{c.label}</span>
-                  <span className={c.ok ? "text-success" : "text-destructive"}>{c.detail}</span>
+                <div key={i} className="flex items-center justify-between text-xs gap-3">
+                  <span className="font-semibold text-foreground">{c.label}</span>
+                  <span className={`font-normal ${c.ok ? "text-success" : "text-destructive"}`}>{c.detail}</span>
                 </div>
               ))}
               {validationResult.min_budget && (
@@ -1903,7 +1985,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               {(loading || validatingCreative) ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
               Validar
             </Button>
-            <Button size="lg" onClick={handlePublish} disabled={loading || !validatedPayload || !validationResult?.valid || (!!minBudget && Number(budget) < minBudget) || selectedPreset.not_implemented} className="flex-1 gap-2 glow-primary">
+            <Button variant="default" size="lg" onClick={handlePublish} disabled={loading || !validatedPayload || !validationResult?.valid || (!!minBudget && Number(budget) < minBudget) || selectedPreset.not_implemented} className="flex-1 gap-2 glow-primary bg-gradient-to-r from-primary via-primary to-accent/30">
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               {loading ? "Publicando..." : "Publicar"}
             </Button>
@@ -1931,9 +2013,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 {publishResult.error_user_msg && <p className="text-xs text-muted-foreground">{publishResult.error_user_msg}</p>}
               </div>
               {(publishResult.campaign_id || publishResult.adset_id) && (
-                <div className="space-y-1 text-xs font-mono text-muted-foreground">
-                  {publishResult.campaign_id && <p>Campaign: {publishResult.campaign_id}</p>}
-                  {publishResult.adset_id && <p>AdSet: {publishResult.adset_id}</p>}
+                <div className="space-y-1">
+                  {publishResult.campaign_id && <IDDisplay id={publishResult.campaign_id} label="Campaign" />}
+                  {publishResult.adset_id && <IDDisplay id={publishResult.adset_id} label="AdSet" />}
                 </div>
               )}
             </Card>

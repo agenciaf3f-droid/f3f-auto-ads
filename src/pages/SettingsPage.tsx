@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import Header from "@/components/Header";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { CheckCircle2, XCircle, Loader2, LogIn, Unplug, RefreshCw, AlertTriangle, Plug } from "lucide-react";
+import { CheckCircle2, AlertCircle, Loader2, LogIn, Unplug, RefreshCw, AlertTriangle, Plug } from "lucide-react";
 import { fetchMetaStatus, getMetaLoginUrl, disconnectMeta } from "@/lib/meta-api";
 import { isCurrentUserAdmin } from "@/lib/admin";
 import { toast } from "sonner";
@@ -123,11 +123,11 @@ export default function SettingsPage() {
                       Trocar conta
                     </Button>
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
                       onClick={handleDisconnect}
                       disabled={disconnecting}
-                      className="gap-1.5 text-xs h-8 text-destructive hover:text-destructive hover:bg-destructive/8"
+                      className="gap-1.5 text-xs h-8 text-destructive hover:text-destructive"
                     >
                       {disconnecting ? (
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -146,8 +146,8 @@ export default function SettingsPage() {
             ) : (
               <div className="space-y-5">
                 <div className="flex items-start gap-3">
-                  <XCircle className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
-                  <div>
+                  <AlertCircle className="w-5 h-5 text-warning shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium mb-0.5">Desconectado</p>
                     <p className="text-xs text-muted-foreground">
                       {isAdmin

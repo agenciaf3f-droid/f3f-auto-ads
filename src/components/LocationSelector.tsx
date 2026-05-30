@@ -143,10 +143,10 @@ export default function LocationSelector({
           Escolha os lugares que deseja incluir ou excluir
         </CardDescription>
       </CardHeader>
-      <CardContent className="px-4 pb-4 space-y-4">
+      <CardContent className="px-4 pb-4 space-y-3">
         {/* Presets */}
         <div className="space-y-1.5">
-          <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">Presets rápidos</Label>
+          <Label className="text-xs text-muted-foreground uppercase tracking-wider">Presets rápidos</Label>
           <div className="flex gap-2">
             <Button
               type="button"
@@ -175,7 +175,7 @@ export default function LocationSelector({
         <div className="flex rounded-md border border-border overflow-hidden">
           <button
             type="button"
-            className={`flex-1 text-xs py-1.5 font-medium flex items-center justify-center gap-1 transition-colors ${
+            className={`flex-1 text-xs py-2 font-medium flex items-center justify-center gap-1 transition-colors ${
               activeTab === "include"
                 ? "bg-primary text-primary-foreground"
                 : "bg-muted/50 text-muted-foreground hover:bg-muted"
@@ -186,7 +186,7 @@ export default function LocationSelector({
           </button>
           <button
             type="button"
-            className={`flex-1 text-xs py-1.5 font-medium flex items-center justify-center gap-1 transition-colors ${
+            className={`flex-1 text-xs py-2 font-medium flex items-center justify-center gap-1 transition-colors ${
               activeTab === "exclude"
                 ? "bg-destructive text-destructive-foreground"
                 : "bg-muted/50 text-muted-foreground hover:bg-muted"
@@ -207,7 +207,7 @@ export default function LocationSelector({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onFocus={() => { if (results.length > 0) setShowResults(true); }}
-              className="pl-8 h-8 text-xs"
+              className="pl-8 h-9 text-xs"
             />
             {loading && <Loader2 className="w-3.5 h-3.5 animate-spin absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />}
           </div>
@@ -244,7 +244,7 @@ export default function LocationSelector({
 
         {/* Included chips */}
         <div className="space-y-1.5">
-          <Label className="text-[10px] text-muted-foreground flex items-center gap-1">
+          <Label className="text-xs text-muted-foreground flex items-center gap-1">
             <Plus className="w-3 h-3" /> Incluir ({includedLocations.length})
           </Label>
           {includedLocations.length > 0 ? (
@@ -269,7 +269,7 @@ export default function LocationSelector({
 
         {/* Excluded chips */}
         <div className="space-y-1.5">
-          <Label className="text-[10px] text-muted-foreground flex items-center gap-1">
+          <Label className="text-xs text-muted-foreground flex items-center gap-1">
             <Minus className="w-3 h-3" /> Excluir ({excludedLocations.length})
           </Label>
           {excludedLocations.length > 0 ? (

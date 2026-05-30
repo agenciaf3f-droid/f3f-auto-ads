@@ -74,7 +74,7 @@ export function WhatsAppNumberSelector({
       </Label>
       {loading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="w-4 h-4 animate-spin" /> Buscando números...
+          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Buscando números...
         </div>
       ) : numbers.length > 0 ? (
         <Select value={selectedId} onValueChange={onSelect}>
@@ -88,7 +88,7 @@ export function WhatsAppNumberSelector({
       ) : (
         <div className="bg-warning/10 border border-warning/30 rounded-md p-3">
           <p className="text-xs text-warning font-medium">Nenhum número de WhatsApp conectado encontrado.</p>
-          <p className="text-[10px] text-muted-foreground mt-1">Conecte um número no Meta Business Suite.</p>
+          <p className="text-xs text-muted-foreground mt-1">Conecte um número no Meta Business Suite.</p>
         </div>
       )}
     </div>
@@ -147,8 +147,8 @@ export function WhatsAppMessages({
       <div className="flex items-center justify-between gap-2">
         <Label className="text-xs text-muted-foreground">Modelo de mensagem (obrigatório)</Label>
         {onLoadImported && (
-          <Button variant="outline" size="sm" onClick={onLoadImported} disabled={loadingImported} className="text-xs h-7 gap-1">
-            {loadingImported ? <Loader2 className="w-3 h-3 animate-spin" /> : "Buscar"}
+          <Button variant="outline" size="sm" onClick={onLoadImported} disabled={loadingImported} className="text-xs gap-1">
+            {loadingImported ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Buscar"}
           </Button>
         )}
       </div>
@@ -165,7 +165,7 @@ export function WhatsAppMessages({
           </SelectContent>
         </Select>
       ) : (
-        <p className="text-[10px] text-muted-foreground italic">
+        <p className="text-xs text-muted-foreground italic">
           {loadingImported
             ? "Carregando modelos da conta..."
             : "Nenhum modelo encontrado. Esta conta de anúncios precisa ter campanhas WhatsApp publicadas com 'Modelo de mensagem' no Gerenciador da Meta. Clique em Buscar para tentar novamente."}
@@ -175,10 +175,10 @@ export function WhatsAppMessages({
       {selectedImportedKey && (() => {
         const t = importedTemplates.find(x => x.key === selectedImportedKey);
         return t ? (
-          <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 rounded-md p-2.5 space-y-1">
-            <p className="text-[10px]"><strong>Saudação:</strong> {t.welcome_text}</p>
-            <p className="text-[10px]"><strong>Autofill:</strong> {t.autofill}</p>
-            {t.template_id !== "inline" && <p className="text-[9px] text-muted-foreground">template_id: {t.template_id}</p>}
+          <div className="bg-warning/10 border border-warning/30 rounded-md p-3 space-y-1">
+            <p className="text-xs"><strong>Saudação:</strong> {t.welcome_text}</p>
+            <p className="text-xs"><strong>Autofill:</strong> {t.autofill}</p>
+            {t.template_id !== "inline" && <p className="text-[8px] text-muted-foreground">template_id: {t.template_id}</p>}
           </div>
         ) : null;
       })()}
@@ -210,7 +210,7 @@ export function Fase3Summary({
   return (
     <div className="bg-accent/10 border border-accent/30 rounded-md p-3 space-y-2 mt-3">
       <p className="text-xs font-medium text-accent-foreground">Resumo FASE 3 — WhatsApp Leads</p>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[10px]">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
         <span className="text-muted-foreground">Objetivo:</span>
         <span>OUTCOME_LEADS</span>
         <span className="text-muted-foreground">Otimização:</span>
@@ -225,9 +225,9 @@ export function Fase3Summary({
         <span>{creativeCount}</span>
       </div>
       {readyMessage && (
-        <div className="mt-1 p-2 bg-muted/50 rounded border border-border">
-          <p className="text-[10px] text-muted-foreground">Mensagem pronta:</p>
-          <p className="text-[10px] italic">"{readyMessage.substring(0, 80)}{readyMessage.length > 80 ? "..." : ""}"</p>
+        <div className="mt-1 p-3 bg-muted/50 rounded border border-border">
+          <p className="text-xs text-muted-foreground">Mensagem pronta:</p>
+          <p className="text-xs italic">"{readyMessage.substring(0, 80)}{readyMessage.length > 80 ? "..." : ""}"</p>
         </div>
       )}
     </div>

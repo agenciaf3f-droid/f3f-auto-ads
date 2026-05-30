@@ -47,8 +47,20 @@ export default function LoginPage() {
   return (
     <div className="min-h-[100dvh] flex flex-col md:flex-row">
 
+      {/* Mobile header — compact brand */}
+      <div className="md:hidden bg-zinc-950 px-6 py-4 border-b border-white/10">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-lg bg-primary/20 flex items-center justify-center glow-primary">
+            <Zap className="w-5 h-5 text-primary" />
+          </div>
+          <span className="font-display font-bold text-lg text-white tracking-tight">
+            F3F <span className="text-gradient">AUTO-ADS</span>
+          </span>
+        </div>
+      </div>
+
       {/* Left panel — brand story */}
-      <div className="relative md:w-[52%] bg-zinc-950 flex flex-col justify-between p-8 md:p-12 min-h-[40dvh] md:min-h-[100dvh] overflow-hidden">
+      <div className="relative md:w-[52%] bg-zinc-950 flex-col justify-between p-8 md:p-12 hidden md:flex md:min-h-[100dvh] overflow-hidden">
 
         <div
           className="absolute inset-0 opacity-[0.035] pointer-events-none"
@@ -86,7 +98,7 @@ export default function LoginPage() {
       </div>
 
       {/* Right panel — login form */}
-      <div className="flex-1 flex items-center justify-center px-6 py-12 md:py-0 bg-background">
+      <div className="flex-1 flex items-center justify-center px-6 md:px-8 py-12 md:py-0 bg-background">
         <div className="w-full max-w-sm fade-in-up" style={{ animationDelay: "120ms" }}>
 
           <div className="mb-8">
@@ -95,8 +107,8 @@ export default function LoginPage() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Email</Label>
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Email</Label>
               <Input
                 type="email"
                 value={email}
@@ -107,9 +119,9 @@ export default function LoginPage() {
               />
             </div>
 
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label className="text-xs font-medium">Senha</Label>
+                <Label className="text-sm font-medium">Senha</Label>
                 <button
                   type="button"
                   onClick={handleResetPassword}

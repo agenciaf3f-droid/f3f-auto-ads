@@ -1140,6 +1140,15 @@ Deno.serve(async (req) => {
       schedule, utm_template,
     } = body;
 
+    // Validação de access_token (cobre todos os usos subsequentes)
+    if (!access_token || typeof access_token !== "string" || access_token.trim().length === 0) {
+      return respond({
+        ok: false,
+        step: "auth",
+        error_message: "access_token inválido ou ausente. Faça login novamente.",
+      });
+    }
+
     const structure = distribution_structure || "ABO";
     const isWhatsAppPreset = preset?.destination_type === "WHATSAPP";
     const isIgProfilePreset = preset?.destination_type === "INSTAGRAM_PROFILE";
@@ -1950,7 +1959,7 @@ Deno.serve(async (req) => {
           detail: `attempt_number=${attempt}/${maxAdsetAttempts} | response_ms=${elapsedMs} | response=${JSON.stringify(data)}`,
         });
 
-        const retryable = normalizedError.code === 2;
+        const retryable = [2, 4, 17].includes(normalizedError.code);
         if (retryable && attempt < maxAdsetAttempts) {
           const backoffMs = adsetRetryBackoffMs[Math.min(attempt - 1, adsetRetryBackoffMs.length - 1)];
           logs.push({

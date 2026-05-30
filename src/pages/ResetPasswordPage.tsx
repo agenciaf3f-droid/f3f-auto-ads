@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Lock, ArrowRight } from "lucide-react";
+import { Loader2, Lock, ArrowRight, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 
 export default function ResetPasswordPage() {
@@ -53,12 +53,21 @@ export default function ResetPasswordPage() {
   if (hasRecoverySession === false) {
     return (
       <div className="min-h-[100dvh] flex items-center justify-center bg-background px-4">
-        <div className="max-w-sm text-center fade-in-up">
-          <h1 className="font-display text-xl font-bold mb-2">Link inválido ou expirado</h1>
-          <p className="text-sm text-muted-foreground mb-6">
-            Solicite um novo link de redefinição na página de login.
-          </p>
-          <Button onClick={() => navigate("/")} size="sm">Voltar ao login</Button>
+        <div className="w-full max-w-sm fade-in-up">
+          <div className="glass-card p-6">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-destructive/15 border border-destructive/20 flex items-center justify-center">
+                <AlertCircle className="w-4 h-4 text-destructive" />
+              </div>
+              <div>
+                <h1 className="font-display text-xl font-bold tracking-tight">Link inválido ou expirado</h1>
+              </div>
+            </div>
+            <p className="text-sm text-muted-foreground mb-6">
+              Solicite um novo link de redefinição na página de login.
+            </p>
+            <Button onClick={() => navigate("/")} className="w-full">Voltar ao login</Button>
+          </div>
         </div>
       </div>
     );

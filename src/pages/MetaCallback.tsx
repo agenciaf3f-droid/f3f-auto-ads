@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { exchangeCodeForToken } from "@/lib/meta-api";
-import { Loader2 } from "lucide-react";
+import { Loader2, AlertCircle } from "lucide-react";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 
 export default function MetaCallback() {
   const REDIRECT_URI = `${window.location.origin}/auth/meta/callback`;
@@ -39,12 +40,15 @@ export default function MetaCallback() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <p className="text-destructive font-display font-semibold">Erro na autenticação</p>
-          <p className="text-sm text-muted-foreground">{error}</p>
-          <a href="/" className="text-primary underline text-sm">Voltar</a>
-        </div>
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <Alert variant="destructive" className="max-w-md">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle className="font-display font-semibold">Erro na autenticação</AlertTitle>
+          <AlertDescription className="space-y-2">
+            <p>{error}</p>
+            <a href="/" className="text-destructive hover:underline text-sm inline-block">Voltar</a>
+          </AlertDescription>
+        </Alert>
       </div>
     );
   }

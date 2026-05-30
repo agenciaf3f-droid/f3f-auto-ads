@@ -40,6 +40,18 @@ Deno.serve(async (req) => {
     try {
       const url = `https://graph.facebook.com/v25.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${conn.access_token}`;
       const res = await fetch(url);
+      if (!res.ok) {
+        let bodyText = "";
+        try { bodyText = await res.text(); } catch { /* ignore */ }
+        if (res.status >= 500) {
+          results.push({ id: conn.id, refreshed: false, error_type: "http_5xx", status: res.status, should_retry: true, body: bodyText.slice(0, 500) });
+        } else {
+          let parsedErr: string | undefined;
+          try { parsedErr = JSON.parse(bodyText)?.error?.message; } catch { /* ignore */ }
+          results.push({ id: conn.id, refreshed: false, error_type: "meta_permanent_error", status: res.status, should_retry: false, meta_error: parsedErr || bodyText.slice(0, 500) });
+        }
+        continue;
+      }
       const data = await res.json();
       if (data.access_token) {
         const newExpiresIn = data.expires_in || 5184000;
@@ -49,11 +61,13 @@ Deno.serve(async (req) => {
           .update({ access_token: data.access_token, expires_at: newExpiresAt })
           .eq("id", conn.id);
         results.push({ id: conn.id, refreshed: !updErr, new_expires_at: newExpiresAt, update_err: updErr?.message });
+      } else if (data.error) {
+        results.push({ id: conn.id, refreshed: false, error_type: "meta_permanent_error", should_retry: false, meta_error: data.error?.message || JSON.stringify(data.error) });
       } else {
-        results.push({ id: conn.id, refreshed: false, meta_error: data.error?.message || JSON.stringify(data) });
+        results.push({ id: conn.id, refreshed: false, error_type: "invalid_response", should_retry: true, raw: JSON.stringify(data).slice(0, 500) });
       }
     } catch (e) {
-      results.push({ id: conn.id, refreshed: false, exception: (e as Error).message });
+      results.push({ id: conn.id, refreshed: false, error_type: "network_error", should_retry: true, exception: (e as Error).message });
     }
   }
 
