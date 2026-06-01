@@ -493,9 +493,13 @@ async function uploadDriveCreative(
 ): Promise<{ image_hash?: string; video_id?: string; error?: string }> {
   const fileIdMatch = driveLink.match(/\/d\/([a-zA-Z0-9_-]+)/) || driveLink.match(/[?&]id=([a-zA-Z0-9_-]+)/);
   const fileId = fileIdMatch?.[1];
-  // Candidatos em ordem: uc?confirm=t → usercontent → uc com token parseado do HTML.
+  // Candidatos em ordem: Drive API key (bypassa interstitial) → uc?confirm=t → usercontent.
+  const driveApiKey = Deno.env.get("GOOGLE_DRIVE_API_KEY");
   const candidateUrls: string[] = [];
   if (fileId) {
+    if (driveApiKey) {
+      candidateUrls.push(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${driveApiKey}`);
+    }
     candidateUrls.push(`https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`);
     candidateUrls.push(`https://drive.usercontent.google.com/download?id=${fileId}&export=download&authuser=0&confirm=t`);
   } else {
