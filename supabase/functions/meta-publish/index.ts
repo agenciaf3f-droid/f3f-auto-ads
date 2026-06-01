@@ -542,8 +542,25 @@ async function uploadDriveCreative(
     break;
   }
 
+  // Fallback: nenhum candidato deu binário. Tentar passar file_url direto pra Meta /advideos.
+  // Meta tem User-Agent/IP servidor diferente que às vezes contorna interstitial Drive.
+  // ASSUME vídeo (caso ~99% FASE 1); se for imagem usuário verá erro Meta.
   if (!fileRes || !fileBlob) {
-    return { error: `Drive retornou página HTML em vez do arquivo. Verifique se o link é público ("Qualquer pessoa com link"). Pra arquivos >100MB, baixe local e re-upload no Drive ou use link IG.` };
+    console.log(`[drive-upload] all candidates returned HTML — falling back to file_url direct upload`);
+    const formData = new FormData();
+    formData.append("access_token", accessToken);
+    formData.append("file_url", downloadUrl);
+    const uploadRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/advideos`, { method: "POST", body: formData });
+    const uploadData = await uploadRes.json();
+    if (uploadData.error) {
+      console.log(`[drive-upload] fallback /advideos error: ${JSON.stringify(uploadData.error)}`);
+      return { error: `Drive bloqueou download anônimo (interstitial). Tentei fallback Meta direto e falhou: ${uploadData.error.message || JSON.stringify(uploadData.error)}. Soluções: 1) baixar arquivo localmente e re-upload no Drive (limpa cache); 2) usar link IG; 3) reduzir tamanho do arquivo.` };
+    }
+    if (uploadData.id) {
+      console.log(`[drive-upload] fallback OK: video_id=${uploadData.id}`);
+      return { video_id: uploadData.id };
+    }
+    return { error: `Drive bloqueou download. Fallback Meta retornou resposta inesperada: ${JSON.stringify(uploadData).slice(0, 300)}` };
   }
 
   // Detecção: content-type, content-disposition (filename) ou magic bytes.
