@@ -1300,64 +1300,36 @@ Deno.serve(async (req) => {
     }
 
     // --- Resolve ALL creatives using preset-specific builder ---
-    logs.push({ step: "resolve_creatives", status: "start", ts: ts(), detail: `${creativesList.length} creative(s), builder=${presetLabel}` });
-    const resolvedCreatives: { spec: Record<string, any>; name: string }[] = [];
+    logs.push({ step: "resolve_creatives", status: "start", ts: ts(), detail: `${creativesList.length} creative(s), builder=${presetLabel} (parallel)` });
 
-    for (let ci = 0; ci < creativesList.length; ci++) {
-      const cr = creativesList[ci];
+    // Paraleliza resolve dos criativos (cada um pode incluir upload Drive de até 30s).
+    // Sequencial fura timeout 150s da edge function com 5+ Drive uploads.
+    const buildOne = async (cr: typeof creativesList[number], ci: number): Promise<{ spec?: Record<string, any>; error?: string }> => {
       console.log(`[publish] creative ${ci + 1}/${creativesList.length}: type=${cr.type}, name=${cr.name}, builder=${presetLabel}`);
-
-      let result: { spec?: Record<string, any>; error?: string };
-
       if (isVideoEngagementPreset) {
-        // ── FASE 2: vídeo Drive ou IG re-upload (precisa video_id pra criar exclusion audience) ──
-        result = await buildFase2Creative(
-          access_token, ad_account_id, cr.link, cr.type, cr.name,
-          pageId, igActorId,
-          logs,
-        );
+        return buildFase2Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, logs);
       } else if (isWebsitePreset) {
-        // ── FASE 3 LP: creative com link pra site externo + pixel ──
-        result = await buildFase3LpCreative(
-          access_token, ad_account_id, cr.link, cr.type, cr.name,
-          pageId, igActorId,
-          lp_url || "",
-          logs,
-        );
+        return buildFase3LpCreative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, lp_url || "", logs);
       } else if (isWhatsAppPreset) {
-        // ── FASE 3: dedicated builder ──
-        result = await buildFase3Creative(
-          access_token, ad_account_id, cr.link, cr.type, cr.name,
-          pageId, igActorId,
-          whatsapp_number || "",  // phone display for WA link
-          greeting_text, ready_message,
-          imported_template_json,
-          logs,
-        );
-      } else if (isIgProfilePreset) {
-        // ── FASE 1: dedicated builder ──
-        result = await buildFase1Creative(
-          access_token, ad_account_id, cr.link, cr.type, cr.name,
-          pageId, igActorId,
-          identity?.instagram_username || undefined,
-          logs,
-        );
+        return buildFase3Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, whatsapp_number || "", greeting_text, ready_message, imported_template_json, logs);
       } else {
-        // ── GENERIC fallback ──
-        result = await buildFase1Creative(
-          access_token, ad_account_id, cr.link, cr.type, cr.name,
-          pageId, igActorId,
-          identity?.instagram_username || undefined,
-          logs,
-        );
+        // FASE 1 OR generic fallback (mesmo builder)
+        return buildFase1Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, identity?.instagram_username || undefined, logs);
       }
+    };
 
-      if (result.error) {
-        logs.push({ step: "resolve_creatives", status: "error", ts: ts(), detail: `creative ${ci + 1} "${cr.name}": ${result.error}` });
-        return respond({ ok: false, step: "resolve_creative", error_message: result.error });
-      }
-      resolvedCreatives.push({ spec: result.spec!, name: cr.name });
+    const settled = await Promise.all(creativesList.map((cr, ci) => buildOne(cr, ci)));
+    const firstError = settled.findIndex((r) => r.error);
+    if (firstError !== -1) {
+      const cr = creativesList[firstError];
+      const err = settled[firstError].error!;
+      logs.push({ step: "resolve_creatives", status: "error", ts: ts(), detail: `creative ${firstError + 1} "${cr.name}": ${err}` });
+      return respond({ ok: false, step: "resolve_creative", error_message: err });
     }
+    const resolvedCreatives: { spec: Record<string, any>; name: string }[] = settled.map((r, ci) => ({
+      spec: r.spec!,
+      name: creativesList[ci].name,
+    }));
     logs.push({ step: "resolve_creatives", status: "success", ts: ts(), detail: `${resolvedCreatives.length} resolved` });
 
     const targeting = buildTargeting(audience_type || "custom", audience_id, targeting_spec, location_targeting);
