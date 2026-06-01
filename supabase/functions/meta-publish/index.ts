@@ -542,25 +542,10 @@ async function uploadDriveCreative(
     break;
   }
 
-  // Fallback: nenhum candidato deu binário. Tentar passar file_url direto pra Meta /advideos.
-  // Meta tem User-Agent/IP servidor diferente que às vezes contorna interstitial Drive.
-  // ASSUME vídeo (caso ~99% FASE 1); se for imagem usuário verá erro Meta.
+  // Sem fallback file_url: Meta downloada HTML interstitial achando ser vídeo,
+  // cria creative WITH_ISSUES (#1487713/#2490446). Falha fast é melhor.
   if (!fileRes || !fileBlob) {
-    console.log(`[drive-upload] all candidates returned HTML — falling back to file_url direct upload`);
-    const formData = new FormData();
-    formData.append("access_token", accessToken);
-    formData.append("file_url", downloadUrl);
-    const uploadRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/advideos`, { method: "POST", body: formData });
-    const uploadData = await uploadRes.json();
-    if (uploadData.error) {
-      console.log(`[drive-upload] fallback /advideos error: ${JSON.stringify(uploadData.error)}`);
-      return { error: `Drive bloqueou download anônimo (interstitial). Tentei fallback Meta direto e falhou: ${uploadData.error.message || JSON.stringify(uploadData.error)}. Soluções: 1) baixar arquivo localmente e re-upload no Drive (limpa cache); 2) usar link IG; 3) reduzir tamanho do arquivo.` };
-    }
-    if (uploadData.id) {
-      console.log(`[drive-upload] fallback OK: video_id=${uploadData.id}`);
-      return { video_id: uploadData.id };
-    }
-    return { error: `Drive bloqueou download. Fallback Meta retornou resposta inesperada: ${JSON.stringify(uploadData).slice(0, 300)}` };
+    return { error: `Drive bloqueou download (interstitial de virus/quota). Soluções: 1) baixar arquivo localmente e re-upload no Drive (limpa cache que dispara interstitial); 2) usar link do Instagram em vez de Drive; 3) reduzir arquivo pra menos de 100MB.` };
   }
 
   // Detecção: content-type, content-disposition (filename) ou magic bytes.
@@ -597,7 +582,24 @@ async function uploadDriveCreative(
       console.log(`[drive-upload] /advideos error: ${JSON.stringify(uploadData.error)}`);
       return { error: formatMetaUploadError(uploadData.error) };
     }
-    return { video_id: uploadData.id };
+    const videoId = uploadData.id;
+    // Poll status pra evitar criar creative WITH_ISSUES (#1487713/#2490446).
+    // Meta processa async; status="error" significa upload corrompido (ex: file_url HTML).
+    for (let i = 0; i < 6; i++) {
+      await new Promise(r => setTimeout(r, 2500));
+      try {
+        const stRes = await fetch(`https://graph.facebook.com/v25.0/${videoId}?fields=status&access_token=${accessToken}`);
+        const stData = await stRes.json();
+        const vs = stData?.status?.video_status || stData?.status;
+        console.log(`[drive-upload] video ${videoId} status poll ${i + 1}: ${JSON.stringify(stData?.status)}`);
+        if (vs === "ready") return { video_id: videoId };
+        if (vs === "error") {
+          return { error: `Meta rejeitou vídeo após processamento (${stData?.status?.processing_progress || "n/a"}). Provável arquivo corrompido ou Drive devolveu HTML pra Meta. Re-upload o arquivo no Drive.` };
+        }
+      } catch (e) { console.log(`[drive-upload] status poll error: ${(e as Error).message}`); }
+    }
+    // Timeout polling: assume ok, ad creation vai retornar erro se ainda processando
+    return { video_id: videoId };
   } else {
     const formData = new FormData();
     formData.append("access_token", accessToken);
