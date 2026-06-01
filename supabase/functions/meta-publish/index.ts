@@ -577,9 +577,14 @@ async function uploadDriveCreative(
   };
 
   if (isVideo) {
+    // Upload bytes direto via multipart em vez de file_url:
+    // se passássemos file_url, Meta faria 2º fetch do Drive e poderia hitar interstitial
+    // (gerando creative WITH_ISSUES). Bytes locais elimina esse risco.
+    const filenameMatch = contentDisp.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)/i);
+    const filename = filenameMatch?.[1] || "creative.mp4";
     const formData = new FormData();
     formData.append("access_token", accessToken);
-    formData.append("file_url", downloadUrl);
+    formData.append("source", fileBlob, filename);
     const uploadRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/advideos`, { method: "POST", body: formData });
     const uploadData = await uploadRes.json();
     if (uploadData.error) {
