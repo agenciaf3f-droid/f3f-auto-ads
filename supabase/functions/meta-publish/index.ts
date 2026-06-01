@@ -491,20 +491,59 @@ async function uploadDriveCreative(
   adAccountId: string,
   driveLink: string
 ): Promise<{ image_hash?: string; video_id?: string; error?: string }> {
-  let downloadUrl = driveLink;
-  const fileIdMatch = driveLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
-  // confirm=t bypassa o interstitial de "verificação de vírus" do Drive
-  // pra arquivos >100MB. Sem isso, fetch retorna HTML em vez do binário.
-  if (fileIdMatch) downloadUrl = `https://drive.google.com/uc?export=download&id=${fileIdMatch[1]}&confirm=t`;
-  const fileRes = await fetch(downloadUrl, { redirect: "follow" });
-  if (!fileRes.ok) return { error: "Falha ao baixar arquivo do Drive." };
-  const contentType = fileRes.headers.get("content-type") || "";
-  const contentDisp = fileRes.headers.get("content-disposition") || "";
-  const fileBlob = await fileRes.blob();
+  const fileIdMatch = driveLink.match(/\/d\/([a-zA-Z0-9_-]+)/) || driveLink.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  const fileId = fileIdMatch?.[1];
+  // Candidatos em ordem: uc?confirm=t → usercontent → uc com token parseado do HTML.
+  const candidateUrls: string[] = [];
+  if (fileId) {
+    candidateUrls.push(`https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`);
+    candidateUrls.push(`https://drive.usercontent.google.com/download?id=${fileId}&export=download&authuser=0&confirm=t`);
+  } else {
+    candidateUrls.push(driveLink);
+  }
 
-  // Se Drive devolveu HTML mesmo com confirm=t, fail fast com mensagem clara
-  if (contentType.includes("text/html") || contentType.includes("text/plain")) {
-    return { error: `Drive retornou página HTML em vez do arquivo (ct=${contentType}). Verifique se o link é público ("Qualquer pessoa com link"). Pra arquivos muito grandes, baixe e re-upload no Drive ou use link IG.` };
+  const DOWNLOAD_HEADERS: HeadersInit = {
+    "User-Agent": "Mozilla/5.0 (compatible; f3f-auto-ads/1.0)",
+    "Accept": "*/*",
+  };
+
+  let fileRes: Response | null = null;
+  let contentType = "";
+  let contentDisp = "";
+  let fileBlob: Blob | null = null;
+  let downloadUrl = candidateUrls[0];
+
+  for (const url of candidateUrls) {
+    downloadUrl = url;
+    const r = await fetch(url, { redirect: "follow", headers: DOWNLOAD_HEADERS });
+    if (!r.ok) { console.log(`[drive-upload] ${url} status=${r.status}`); continue; }
+    const ct = r.headers.get("content-type") || "";
+    const cd = r.headers.get("content-disposition") || "";
+    if (ct.includes("text/html") || ct.includes("text/plain")) {
+      // Parse confirm token do HTML pra retry final
+      try {
+        const html = await r.text();
+        const confirmTok = html.match(/confirm=([0-9A-Za-z_-]+)/)?.[1];
+        const uuidTok = html.match(/uuid=([0-9A-Fa-f-]+)/)?.[1];
+        if (fileId && confirmTok) {
+          const retryUrl = `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=${confirmTok}${uuidTok ? `&uuid=${uuidTok}` : ""}`;
+          console.log(`[drive-upload] retry with parsed confirm=${confirmTok}`);
+          const r2 = await fetch(retryUrl, { redirect: "follow", headers: DOWNLOAD_HEADERS });
+          const ct2 = r2.headers.get("content-type") || "";
+          if (r2.ok && !ct2.includes("text/html")) {
+            fileRes = r2; contentType = ct2; contentDisp = r2.headers.get("content-disposition") || ""; fileBlob = await r2.blob(); downloadUrl = retryUrl;
+            break;
+          }
+        }
+      } catch (e) { console.log(`[drive-upload] parse html failed: ${(e as Error).message}`); }
+      continue;
+    }
+    fileRes = r; contentType = ct; contentDisp = cd; fileBlob = await r.blob();
+    break;
+  }
+
+  if (!fileRes || !fileBlob) {
+    return { error: `Drive retornou página HTML em vez do arquivo. Verifique se o link é público ("Qualquer pessoa com link"). Pra arquivos >100MB, baixe local e re-upload no Drive ou use link IG.` };
   }
 
   // Detecção: content-type, content-disposition (filename) ou magic bytes.
