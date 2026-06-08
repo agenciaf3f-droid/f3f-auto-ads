@@ -1300,7 +1300,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // --- Fetch page name pra DSA fields (obrigatórios quando targeting atinge EEA) ---
+    // --- Fetch page name pra DSA fields (obrigatórios quando targeting atinge EU/EEA) ---
     let pageName: string = pageId;
     try {
       const pnRes = await fetch(`https://graph.facebook.com/v25.0/${pageId}?fields=name&access_token=${access_token}`);
@@ -1309,6 +1309,16 @@ Deno.serve(async (req) => {
     } catch (e) {
       console.log(`[publish] failed to fetch page name: ${(e as Error).message}`);
     }
+
+    // DSA (Digital Services Act): MCP gabarito mostra que dsa_beneficiary/dsa_payor
+    // só são exigidos quando o targeting atinge país da EU/EEA. Pra BR-only (caso ~99%)
+    // o MCP NÃO envia esses campos. Aplicamos a mesma regra: gate por país EU/EEA.
+    const EU_EEA = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE","IS","LI","NO"]);
+    const applyDsa = (p: Record<string, any>) => {
+      const c = p?.targeting?.geo_locations?.countries;
+      const hasEu = Array.isArray(c) && c.some((cc: string) => EU_EEA.has(String(cc).toUpperCase()));
+      if (hasEu) { p.dsa_beneficiary = pageName; p.dsa_payor = pageName; }
+    };
 
     // --- Resolve ALL creatives using preset-specific builder ---
     logs.push({ step: "resolve_creatives", status: "start", ts: ts(), detail: `${creativesList.length} creative(s), builder=${presetLabel} (parallel)` });
@@ -1448,11 +1458,9 @@ Deno.serve(async (req) => {
         status: "ACTIVE",
         destination_type: "INSTAGRAM_PROFILE",
         promoted_object: promotedObject,
-        // DSA (EEA): obrigatório quando targeting atinge países da UE
-        dsa_beneficiary: pageName,
-        dsa_payor: pageName,
         access_token,
       };
+      applyDsa(p);
       // CBO: bid_strategy vive na campanha; adset NÃO declara nem budget nem bid_strategy.
       // ABO: adset tem daily_budget + bid_strategy próprio.
       if (structure === "ABO") {
@@ -1592,10 +1600,9 @@ Deno.serve(async (req) => {
         promoted_object: promotedObject,
         targeting: fase3Targeting,
         attribution_spec: attributionSpec,
-        dsa_beneficiary: pageName,
-        dsa_payor: pageName,
         access_token,
       };
+      applyDsa(p);
       if (structure === "ABO") {
         p.daily_budget = String(Math.round(Number(budget) * 100));
         p.bid_strategy = inheritedBidStrategy || "LOWEST_COST_WITHOUT_CAP";
@@ -1655,10 +1662,9 @@ Deno.serve(async (req) => {
         },
         attribution_spec: [{ event_type: "CLICK_THROUGH", window_days: 7 }],
         targeting: lpTargeting,
-        dsa_beneficiary: pageName,
-        dsa_payor: pageName,
         access_token,
       };
+      applyDsa(p);
       if (structure === "ABO") {
         p.daily_budget = Math.round(Number(budget) * 100);
         p.bid_strategy = inheritedBidStrategy || "LOWEST_COST_WITHOUT_CAP";
@@ -1698,10 +1704,9 @@ Deno.serve(async (req) => {
         destination_type: "ON_VIDEO",
         targeting: f2Targeting,
         attribution_spec: [{ event_type: "CLICK_THROUGH", window_days: 1 }],
-        dsa_beneficiary: pageName,
-        dsa_payor: pageName,
         access_token,
       };
+      applyDsa(p);
       if (structure === "ABO") {
         p.daily_budget = Math.round(Number(budget) * 100);
         p.bid_strategy = inheritedBidStrategy || "LOWEST_COST_WITHOUT_CAP";
