@@ -1398,12 +1398,19 @@ Deno.serve(async (req) => {
         // LOWEST_COST_WITH_BID_CAP/TARGET_COST e exige bid_amount no adset.
         campaignPayload.bid_strategy = "LOWEST_COST_WITHOUT_CAP";
         console.log(`[publish] CAMPAIGN BUDGET (CBO): ${campaignPayload.daily_budget} cents, bid_strategy=LOWEST_COST_WITHOUT_CAP`);
+      } else {
+        // ABO: Meta exige is_adset_budget_sharing_enabled explícito em certas contas
+        // (erro 4834011 "É necessário especificar True ou False"). Confirmado via teste
+        // direto na conta Mari Eiras (1195005257969003). false = orçamento por adset.
+        campaignPayload.is_adset_budget_sharing_enabled = false;
+        console.log(`[publish] CAMPAIGN (ABO): is_adset_budget_sharing_enabled=false`);
       }
 
       if (schedule?.start_time) campaignPayload.start_time = schedule.start_time;
 
       // Validação: bloquear se qualquer campo proibido existir na campaign
-      const forbiddenCampaignKeys = ["promoted_object", "page_id", "whatsapp_phone_number", "whats_app_business_phone_number_id", "destination_type", "optimization_goal", "billing_event", "targeting", "attribution_spec", "is_adset_budget_sharing_enabled"];
+      // (is_adset_budget_sharing_enabled NÃO é proibido — Meta exige no ABO)
+      const forbiddenCampaignKeys = ["promoted_object", "page_id", "whatsapp_phone_number", "whats_app_business_phone_number_id", "destination_type", "optimization_goal", "billing_event", "targeting", "attribution_spec"];
       const foundForbidden = forbiddenCampaignKeys.filter(k => k in campaignPayload);
       if (foundForbidden.length > 0) {
         console.log(`[publish] ❌ CAMPAIGN BLOQUEADA: campos proibidos detectados: ${foundForbidden.join(", ")}`);
