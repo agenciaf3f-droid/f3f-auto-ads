@@ -1453,7 +1453,11 @@ Deno.serve(async (req) => {
         name,
         campaign_id: campaignId,
         billing_event: "IMPRESSIONS",
-        optimization_goal: "PROFILE_VISIT",
+        // VISIT_INSTAGRAM_PROFILE (não PROFILE_VISIT): combo coerente com destino
+        // INSTAGRAM_PROFILE + CTA VIEW_INSTAGRAM_PROFILE. Confirmado como goal canônico
+        // do MCP pra visita de perfil IG. PROFILE_VISIT é genérico (FB ou IG) e a
+        // incoerência com destino/CTA IG dispara #1346001 em certas mídias.
+        optimization_goal: "VISIT_INSTAGRAM_PROFILE",
         targeting: { ...targeting, targeting_automation: { advantage_audience: 0 } },
         status: "ACTIVE",
         destination_type: "INSTAGRAM_PROFILE",
@@ -1474,7 +1478,7 @@ Deno.serve(async (req) => {
       else p.start_time = new Date().toISOString();
       if (schedule?.end_time) p.end_time = schedule.end_time;
 
-      console.log(`[FASE1-adset] ── FIXED: destination=INSTAGRAM_PROFILE, optimization=PROFILE_VISIT, advantage_audience=0`);
+      console.log(`[FASE1-adset] ── FIXED: destination=INSTAGRAM_PROFILE, optimization=VISIT_INSTAGRAM_PROFILE, advantage_audience=0`);
       console.log(`[FASE1-adset] ── VARIABLE: name="${name}", page=${pageId}, budget=${p.daily_budget || "CBO"}`);
       return p;
     };
