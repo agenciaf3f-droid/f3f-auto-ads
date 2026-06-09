@@ -1660,6 +1660,16 @@ Deno.serve(async (req) => {
         individual_setting: { age: 0, gender: 0 },
       };
 
+      const lpEvent = String(custom_event_type || "LEAD");
+      // Low-ticket (PURCHASE): attribution richer [CT7d, VT1d, EVV1d] — gabarito MCP/DDX
+      // pra otimização de venda. LEAD mantém CT7d simples.
+      const lpAttribution = lpEvent === "PURCHASE"
+        ? [
+            { event_type: "CLICK_THROUGH", window_days: 7 },
+            { event_type: "VIEW_THROUGH", window_days: 1 },
+            { event_type: "ENGAGED_VIDEO_VIEW", window_days: 1 },
+          ]
+        : [{ event_type: "CLICK_THROUGH", window_days: 7 }];
       const p: Record<string, any> = {
         campaign_id: campaignId,
         name,
@@ -1669,9 +1679,9 @@ Deno.serve(async (req) => {
         destination_type: "WEBSITE",
         promoted_object: {
           pixel_id: String(pixel_id),
-          custom_event_type: String(custom_event_type || "LEAD"),
+          custom_event_type: lpEvent,
         },
-        attribution_spec: [{ event_type: "CLICK_THROUGH", window_days: 7 }],
+        attribution_spec: lpAttribution,
         targeting: lpTargeting,
         access_token,
       };
