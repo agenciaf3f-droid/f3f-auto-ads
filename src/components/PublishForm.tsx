@@ -218,6 +218,8 @@ export default function PublishForm() {
   const [whatsappNumbers, setWhatsappNumbers] = useState<WhatsAppNumber[]>([]);
   const [loadingWhatsappNumbers, setLoadingWhatsappNumbers] = useState(false);
   const [selectedWhatsappId, setSelectedWhatsappId] = useState("");
+  // Fallback: número digitado manualmente quando auto-pull falha (token sem scope WhatsApp)
+  const [manualWhatsapp, setManualWhatsapp] = useState("");
   const [ctaText, setCtaText] = useState("");
   const [greetingText, setGreetingText] = useState("");
   const [readyMessage, setReadyMessage] = useState("");
@@ -378,6 +380,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     // Reset FASE 3 resources
     setWhatsappNumbers([]);
     setSelectedWhatsappId("");
+    setManualWhatsapp("");
     setSelectedTemplateId("");
     // Reset audiences
     setAudiences([]);
@@ -1027,7 +1030,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     checks.push({ label: "Identidade (Instagram)", ok: !!identityIgActorId, detail: identityIgUsername ? `@${identityIgUsername}` : (identityIgActorId || "ausente") });
     checks.push({ label: "Criativos", ok: finalCreatives.every(c => c.validation?.ok), detail: `${finalCreatives.filter(c => c.validation?.ok).length}/${finalCreatives.length} validados` });
     if (isFase3) {
-      checks.push({ label: "WhatsApp", ok: !!selectedWhatsappId, detail: selectedWhatsapp?.display || "ausente" });
+      const manualOk = manualWhatsapp.replace(/\D/g, "").length >= 10;
+      checks.push({ label: "WhatsApp", ok: !!selectedWhatsappId || manualOk, detail: selectedWhatsapp?.display || (manualOk ? `manual: ${manualWhatsapp}` : "ausente") });
       checks.push({ label: "CTA", ok: true, detail: "WHATSAPP_MESSAGE (automático)" });
       if (useCustomMessage) {
         checks.push({ label: "Saudação", ok: !!greetingText.trim(), detail: greetingText.trim() ? `"${greetingText.substring(0, 30)}..."` : "ausente" });
@@ -1050,13 +1054,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       // Attribution: must be 1 day for Leads+WhatsApp+Conversations
       checks.push({ label: "Attribution", ok: true, detail: "CLICK_THROUGH / 1 dia (fixo FASE 3)" });
 
-      // Promoted object: must have internal WhatsApp ID
-      const hasInternalId = !!(identityWhatsappId || selectedWhatsappId);
-      checks.push({ label: "promoted_object (WhatsApp ID interno)", ok: hasInternalId, detail: hasInternalId ? (identityWhatsappId || selectedWhatsappId) : "ausente — sem ID interno de WhatsApp" });
-
-      // Promoted object: must have phone number for display
-      const hasPhone = !!(selectedWhatsapp?.phone);
-      checks.push({ label: "promoted_object (telefone)", ok: hasPhone, detail: hasPhone ? selectedWhatsapp?.phone : "ausente" });
+      // Promoted object CTW: backend usa só { page_id, whatsapp_phone_number }.
+      // Não precisa de ID interno — basta o telefone (auto ou manual).
+      const manualDigits = manualWhatsapp.replace(/\D/g, "");
+      const hasPhone = !!(selectedWhatsapp?.phone) || manualDigits.length >= 10;
+      checks.push({ label: "promoted_object (telefone)", ok: hasPhone, detail: selectedWhatsapp?.phone || (manualDigits.length >= 10 ? manualDigits : "ausente") });
 
       addLog(`🔍 [validate] ═══ VALIDAÇÃO ESTRUTURAL FASE 3 ═══`);
       addLog(`🔍 [validate] Campaign: objective=${campaignObj}`);
@@ -1108,8 +1110,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           default_cta: selectedPreset.default_cta,
           status: selectedPreset.status,
         },
-        whatsapp_number: isFase3 ? (selectedWhatsapp?.phone || "") : undefined,
-        whatsapp_number_id: isFase3 ? selectedWhatsappId : undefined,
+        whatsapp_number: isFase3 ? (selectedWhatsapp?.phone || manualWhatsapp.replace(/\D/g, "") || "") : undefined,
+        whatsapp_number_id: isFase3 ? (selectedWhatsappId || undefined) : undefined,
         location_targeting: isFase3 ? buildLocationTargeting() : undefined,
         cta_text: undefined,
         greeting_text: greetingText || undefined,
@@ -1689,6 +1691,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 loading={loadingWhatsappNumbers}
                 selectedId={selectedWhatsappId}
                 onSelect={setSelectedWhatsappId}
+                manualNumber={manualWhatsapp}
+                onManualNumber={setManualWhatsapp}
               />
 
               {/* FASE 3 VENDAS ZAP — pixel + evento PURCHASE */}

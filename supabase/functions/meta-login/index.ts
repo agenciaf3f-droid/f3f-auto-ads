@@ -4,7 +4,9 @@ Deno.serve(async (req) => {
   const appId = "910343951738258";
   const appUrl = Deno.env.get("APP_URL") ?? "https://f3f-auto-ads-eight.vercel.app";
   const redirectUri = `${appUrl}/auth/meta/callback`;
-  const scopes = "ads_management,ads_read,business_management,pages_show_list,pages_read_engagement,instagram_basic";
+  // whatsapp_business_management: necessário pra ler WABA + phone_numbers (FASE 3 CTW).
+  // App Meta já tem essa permissão habilitada (confirmado no painel).
+  const scopes = "ads_management,ads_read,business_management,pages_show_list,pages_read_engagement,instagram_basic,whatsapp_business_management";
   const state = crypto.randomUUID();
 
   // auth_type=rerequest força Facebook a re-prompt todas as permissões

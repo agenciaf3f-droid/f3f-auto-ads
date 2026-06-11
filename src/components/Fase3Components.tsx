@@ -62,10 +62,12 @@ interface WhatsAppNumberSelectorProps {
   loading: boolean;
   selectedId: string;
   onSelect: (id: string) => void;
+  manualNumber?: string;
+  onManualNumber?: (phone: string) => void;
 }
 
 export function WhatsAppNumberSelector({
-  numbers, loading, selectedId, onSelect,
+  numbers, loading, selectedId, onSelect, manualNumber = "", onManualNumber,
 }: WhatsAppNumberSelectorProps) {
   return (
     <div className="space-y-2">
@@ -86,9 +88,18 @@ export function WhatsAppNumberSelector({
           </SelectContent>
         </Select>
       ) : (
-        <div className="bg-warning/10 border border-warning/30 rounded-md p-3">
-          <p className="text-xs text-warning font-medium">Nenhum número de WhatsApp conectado encontrado.</p>
-          <p className="text-xs text-muted-foreground mt-1">Conecte um número no Meta Business Suite.</p>
+        <div className="space-y-2">
+          <div className="bg-warning/10 border border-warning/30 rounded-md p-3">
+            <p className="text-xs text-warning font-medium">Não foi possível puxar o número automaticamente.</p>
+            <p className="text-xs text-muted-foreground mt-1">Digite o número do WhatsApp manualmente abaixo (com DDI+DDD, ex: 5511999999999).</p>
+          </div>
+          <Input
+            value={manualNumber}
+            onChange={(e) => onManualNumber?.(e.target.value)}
+            placeholder="5511999999999"
+            inputMode="numeric"
+            className="text-sm"
+          />
         </div>
       )}
     </div>
