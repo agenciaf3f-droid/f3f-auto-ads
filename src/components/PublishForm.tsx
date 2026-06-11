@@ -518,8 +518,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
   const loadFase3Resources = async (pageId: string) => {
     addLog(`📡 [pipeline] Carregando recursos FASE 3 (page=${pageId})...`);
-    // Load WhatsApp numbers (templates are loaded globally on mount)
-    await loadWhatsappNumbers();
+    // Passa o pageId resolvido explicitamente (state pode estar stale)
+    await loadWhatsappNumbers(pageId);
     addLog(`✅ [pipeline] Recursos FASE 3 carregados`);
   };
 
@@ -611,14 +611,16 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     }
   };
 
-  const loadWhatsappNumbers = async () => {
+  const loadWhatsappNumbers = async (explicitPageId?: string) => {
     if (!accessToken) return;
     setLoadingWhatsappNumbers(true);
     setWhatsappNumbers([]);
     setSelectedWhatsappId("");
     try {
       const adAccId = selectedAccount;
-      const pageId = identityPageId;
+      // explicitPageId vem direto da resolução de identidade (state ainda pode estar
+      // stale aqui). Sem isso, Strategy 1 (page→WABA, a mais confiável) era pulada.
+      const pageId = explicitPageId || identityPageId;
       addLog(`📡 Buscando números de WhatsApp (ad_account=${adAccId || "none"}, page_id=${pageId || "none"})...`);
       const nums = await fetchWhatsAppNumbers(accessToken, adAccId || undefined, pageId || undefined);
       setWhatsappNumbers(nums);
@@ -638,6 +640,22 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           setSelectedWhatsappId(nums[0].id);
           if (nums.length === 1) addLog(`📱 Número auto-selecionado: ${nums[0].display}`);
         }
+      } else if (identityWhatsappId && identityWhatsappPhone) {
+        // Fallback: a resolução de identidade já achou o WhatsApp da página (waba_phone).
+        // Usa ele direto mesmo que o fetch dedicado tenha vindo vazio (página pesada,
+        // rate limit, ou WABA acessível só pela página da identidade).
+        const seeded: WhatsAppNumber = {
+          id: identityWhatsappId,
+          display: identityWhatsappPhone,
+          phone: identityWhatsappPhone,
+          page_id: explicitPageId || identityPageId || "",
+          page_name: identityPageName || "",
+          status: "identity",
+          waba_id: "",
+        };
+        setWhatsappNumbers([seeded]);
+        setSelectedWhatsappId(seeded.id);
+        addLog(`📱 WhatsApp via identidade: ${seeded.display} (id=${seeded.id})`);
       } else {
         addLog("⚠️ Nenhum número de WhatsApp encontrado. Verifique se o Business Manager tem um WhatsApp Business Account vinculado.");
       }
