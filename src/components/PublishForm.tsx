@@ -109,7 +109,7 @@ const PRESETS = [
     status: "PAUSED",
     fase: "FASE 2",
     requires_whatsapp: false,
-    not_implemented: false,
+    not_implemented: true,
   },
   {
     id: "fase3-br",
