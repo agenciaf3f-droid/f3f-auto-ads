@@ -833,7 +833,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const previewChanTag = selectedPreset.destination_type === "WHATSAPP" ? "WHATS" : "PAGINA";
   const previewAudTag = (selectedAudienceName || "Público").trim();
   const previewAdsetName = (creativeName?: string) =>
-    creativeName ? `[${previewAudTag}] ${previewChanTag} - ${creativeName}` : `[${previewAudTag}] ${previewChanTag}`;
+    creativeName ? `[${previewAudTag}] {${previewChanTag}} - ${creativeName}` : `[${previewAudTag}] {${previewChanTag}}`;
 
   // Structure descriptions
   const structureDescription = isFase2

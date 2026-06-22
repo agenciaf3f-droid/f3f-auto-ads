@@ -2222,7 +2222,7 @@ Deno.serve(async (req) => {
     const chanTag = isWhatsAppPreset ? "WHATS" : "PAGINA";
     const audTag = (body.audience_name || adset_name || generated_name || "Público").trim();
     const makeAdsetName = (creativeName?: string) =>
-      creativeName ? `[${audTag}] ${chanTag} - ${creativeName}` : `[${audTag}] ${chanTag}`;
+      creativeName ? `[${audTag}] {${chanTag}} - ${creativeName}` : `[${audTag}] {${chanTag}}`;
 
     if (structure === "CBO") {
       const adsetPayloadName = makeAdsetName();
