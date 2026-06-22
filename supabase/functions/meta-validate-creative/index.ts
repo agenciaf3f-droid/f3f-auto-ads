@@ -82,11 +82,11 @@ Deno.serve(async (req) => {
       if (ig_account_id) {
         const tDirect = Date.now();
         console.log(`[validate-creative] FAST PATH: querying media directly from ig_account_id=${ig_account_id}`);
-        let mediaUrl: string | null = `https://graph.facebook.com/v25.0/${ig_account_id}/media?fields=id,shortcode,permalink&limit=30&access_token=${access_token}`;
+        let mediaUrl: string | null = `https://graph.facebook.com/v25.0/${ig_account_id}/media?fields=id,shortcode,permalink&limit=50&access_token=${access_token}`;
         let mediaApiCalls = 0;
         let mediaChecked = 0;
 
-        while (mediaUrl && mediaChecked < 200) {
+        while (mediaUrl && mediaChecked < 400) {
           mediaApiCalls++;
           const mediaRes = await fetchMeta(mediaUrl);
           const mediaData = await mediaRes.json();
@@ -99,7 +99,8 @@ Deno.serve(async (req) => {
 
           if (mediaData.data) {
             mediaChecked += mediaData.data.length;
-            const found = mediaData.data.find((m: any) => m.shortcode === shortcode || m.permalink?.includes(shortcode));
+            const scLc = shortcode.toLowerCase();
+            const found = mediaData.data.find((m: any) => (m.shortcode || "").toLowerCase() === scLc || (m.permalink || "").toLowerCase().includes(scLc));
             if (found) {
               mark("search_media_direct", tDirect);
               mark("TOTAL", t0);
@@ -114,10 +115,19 @@ Deno.serve(async (req) => {
           mediaUrl = mediaData.paging?.next || null;
         }
         mark("search_media_direct", tDirect);
-        console.log(`[validate-creative] FAST PATH: not found after ${mediaApiCalls} calls, ${mediaChecked} items checked. Falling back to page scan.`);
+        console.log(`[validate-creative] FAST PATH: not found after ${mediaApiCalls} calls, ${mediaChecked} items checked.`);
+        // ig_account_id conhecido (FASE 1/3): se o post não está no IG DESTA conta,
+        // NÃO varrer todas as páginas (slow path é catastrófico — varre cada IG até
+        // 200 medias; com 6 criativos paralelo trava + rate limit). Retorna não-achado.
+        mark("TOTAL", t0);
+        return new Response(JSON.stringify({
+          ok: false,
+          error: `Post não encontrado nas publicações recentes do Instagram desta conta. Confira se o link está certo e se é um post desta conta — ou use "Arquivo (Google Drive)".`,
+          suggest_drive: true, shortcode_searched: shortcode, media_checked: mediaChecked, timings,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // === SLOW PATH: Scan pages (only if fast path failed or no ig_account_id) ===
+      // === SLOW PATH: Scan pages (apenas quando NÃO há ig_account_id) ===
       const tPages = Date.now();
       const allPages: any[] = [];
       let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id}&limit=25&access_token=${access_token}`;
