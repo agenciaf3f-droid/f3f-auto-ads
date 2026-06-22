@@ -2215,8 +2215,17 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Nome do conjunto: [PUBLICO] {WHATS|PAGINA} - NomeCriativo
+    // WHATS se campanha vai pro WhatsApp; PAGINA se leva pra página/site/perfil.
+    // ABO: 1 criativo por conjunto → inclui nome do criativo.
+    // CBO: 1 conjunto, N criativos → sem nome do criativo.
+    const chanTag = isWhatsAppPreset ? "WHATS" : "PAGINA";
+    const audTag = (body.audience_name || adset_name || generated_name || "Público").trim();
+    const makeAdsetName = (creativeName?: string) =>
+      creativeName ? `[${audTag}] ${chanTag} - ${creativeName}` : `[${audTag}] ${chanTag}`;
+
     if (structure === "CBO") {
-      const adsetPayloadName = adset_name || `${generated_name || "Campaign"} - AdSet`;
+      const adsetPayloadName = makeAdsetName();
       const adsetBuild = buildAdsetPayload(adsetPayloadName);
       if (adsetBuild.error) {
         logs.push({ step: "adset", status: "error", ts: ts(), detail: adsetBuild.error });
@@ -2249,9 +2258,7 @@ Deno.serve(async (req) => {
       for (let i = 0; i < resolvedCreatives.length; i++) {
         const cr = resolvedCreatives[i];
         const idx = i + 1;
-        const adsetNum = String(idx).padStart(2, "0");
-        const baseAdsetName = adset_name || `${generated_name || "Campaign"} - AdSet`;
-        const adsetPayloadName = resolvedCreatives.length > 1 ? `${baseAdsetName} ${adsetNum}` : baseAdsetName;
+        const adsetPayloadName = makeAdsetName(cr.name);
 
         const adsetBuild = buildAdsetPayload(adsetPayloadName);
         if (adsetBuild.error) {

@@ -829,6 +829,12 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     : null;
   const generatedName = computedCampaignName || "";
 
+  // Preview do nome do conjunto (espelha o backend): [PUBLICO] {WHATS|PAGINA} - NomeCriativo
+  const previewChanTag = selectedPreset.destination_type === "WHATSAPP" ? "WHATS" : "PAGINA";
+  const previewAudTag = (selectedAudienceName || "Público").trim();
+  const previewAdsetName = (creativeName?: string) =>
+    creativeName ? `[${previewAudTag}] ${previewChanTag} - ${creativeName}` : `[${previewAudTag}] ${previewChanTag}`;
+
   // Structure descriptions
   const structureDescription = isFase2
     ? `1 Campanha → ${fase2Audiences.length || "N"} Conjunto(s) → 1 Ad/conjunto (criativo compartilhado)`
@@ -1922,13 +1928,18 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                     {distributionStructure === "ABO" && creatives.length > 1 ? (
                       creatives.map((cr, idx) => (
                         <div key={cr.id} className="text-xs text-muted-foreground pl-2 border-l border-border/50">
-                          <p>Conjunto {idx + 1}: [{selectedAudienceName}] - {adsetNameInput || "Conjunto"} {String(idx + 1).padStart(2, "0")}</p>
+                          <p>Conjunto {idx + 1}: {previewAdsetName(cr.name || `Criativo ${idx + 1}`)}</p>
                           <p className="pl-2">Anúncio: {cr.name || `Criativo ${idx + 1}`}</p>
                         </div>
                       ))
                     ) : (
                       <>
-                        {computedAdsetName && <p className="text-xs font-mono text-primary break-all">Conjunto: {computedAdsetName}</p>}
+                        {!isFase2 && selectedAudienceName && (
+                          <p className="text-xs font-mono text-primary break-all">
+                            Conjunto: {previewAdsetName(distributionStructure === "ABO" ? (creatives[0]?.name || "Criativo 1") : undefined)}
+                            {distributionStructure === "CBO" && creatives.length > 1 ? " (todos criativos)" : ""}
+                          </p>
+                        )}
                         {creatives.map((cr, idx) => (
                           <p key={cr.id} className="text-xs font-mono text-primary break-all">Anúncio {creatives.length > 1 ? idx + 1 : ""}: {cr.name || `Criativo ${idx + 1}`}</p>
                         ))}
