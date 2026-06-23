@@ -14,7 +14,7 @@ Deno.serve(async (req) => {
     const { code, redirect_uri } = await req.json();
     const appId = "910343951738258";
     const appSecret = Deno.env.get("META_APP_SECRET");
-    const appUrl = Deno.env.get("APP_URL") ?? "https://ads.agenciaf3f.com.br";
+    const appUrl = Deno.env.get("APP_URL") ?? "https://f3f-auto-ads-eight.vercel.app";
     const finalRedirectUri = redirect_uri || `${appUrl}/auth/meta/callback`;
 
     if (!appSecret) {
