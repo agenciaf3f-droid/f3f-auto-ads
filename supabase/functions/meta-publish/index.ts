@@ -2182,7 +2182,7 @@ Deno.serve(async (req) => {
         // Cria 1 ad referenciando o creative compartilhado
         const adPayload = {
           adset_id: adsetId,
-          name: `${cr.name} - ${adsetNum}`,
+          name: `${cr.name} - ${String(idx).padStart(2, "0")}`,
           status: "ACTIVE",
           creative: { creative_id: sharedCreativeId },
           access_token,
