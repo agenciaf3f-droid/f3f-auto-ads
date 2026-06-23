@@ -1339,6 +1339,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                     {!identityIgActorId && (
                       <p className="text-xs text-warning">⚠️ Sem Instagram Business vinculado (FASE 1 bloqueada)</p>
                     )}
+                    {identityWhatsappPhone ? (
+                      <p className="text-xs"><strong>WhatsApp:</strong> {identityWhatsappPhone}</p>
+                    ) : (
+                      <p className="text-xs text-warning">⚠️ WhatsApp não vinculado/encontrado nesta conta</p>
+                    )}
                   </div>
                 )
               ) : null}
