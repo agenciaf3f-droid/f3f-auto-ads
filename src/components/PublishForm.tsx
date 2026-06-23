@@ -1345,10 +1345,17 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                     {!identityIgActorId && (
                       <p className="text-xs text-warning">⚠️ Sem Instagram Business vinculado (FASE 1 bloqueada)</p>
                     )}
-                    {identityWhatsappPhone ? (
-                      <p className="text-xs"><strong>WhatsApp:</strong> {identityWhatsappPhone}</p>
-                    ) : (
-                      <p className="text-xs text-warning">⚠️ WhatsApp não vinculado/encontrado nesta conta</p>
+                    {/* WhatsApp só é relevante p/ FASE 3. Usa a MESMA fonte do seletor
+                        (business WABAs), não a resolução por página — evita "desconexo"
+                        (card dizia não-vinculado enquanto o seletor achava os números). */}
+                    {isFase3 && (
+                      loadingWhatsappNumbers ? (
+                        <p className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Buscando WhatsApp...</p>
+                      ) : whatsappNumbers.length > 0 ? (
+                        <p className="text-xs"><strong>WhatsApp:</strong> {whatsappNumbers.length} número(s) — ex: {whatsappNumbers[0].phone}</p>
+                      ) : (
+                        <p className="text-xs text-warning">⚠️ Nenhum número puxado — use entrada manual em FASE 3</p>
+                      )
                     )}
                   </div>
                 )

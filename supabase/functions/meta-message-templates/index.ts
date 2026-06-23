@@ -43,9 +43,16 @@ Deno.serve(async (req) => {
       const r = await fetch(nextUrl);
       const data = await r.json();
       if (data.error) {
-        return new Response(JSON.stringify({ error: data.error.message }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+        // Rate limit / erro na listagem de adsets: degradar gracioso (200 + lista vazia).
+        // Templates são opcionais (usuário pode digitar mensagem). Evita "non-2xx" no UI.
+        const isRate = data.error.code === 17 || data.error.code === 4 || data.error.code === 32 || /request limit/i.test(data.error.message || "");
+        return new Response(JSON.stringify({
+          templates: [],
+          scanned_adsets: ctwAdsets.length,
+          error_summary: isRate
+            ? "Limite de requisições do Meta atingido. Aguarde alguns minutos e clique em Buscar de novo (ou digite a mensagem manualmente)."
+            : `Erro ao listar conjuntos: ${data.error.message}`,
+        }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
       for (const a of (data.data || [])) {
         if (a.destination_type === "WHATSAPP") ctwAdsets.push(a);
