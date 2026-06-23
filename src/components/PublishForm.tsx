@@ -250,6 +250,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
   // FASE 2 — multi-audience (2-10 inclusion audiences, each becomes 1 adset)
   const [fase2Audiences, setFase2Audiences] = useState<string[]>([]);
+  const [fase2Search, setFase2Search] = useState("");
 
   // Scheduling
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
@@ -1648,8 +1649,21 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               isFase2 ? (
                 <div className="space-y-2">
                   <p className="text-xs text-muted-foreground">Selecione 2 a 10 públicos. Cada um vira um conjunto separado, todos com o mesmo criativo.</p>
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                    <Input
+                      value={fase2Search}
+                      onChange={(e) => setFase2Search(e.target.value)}
+                      placeholder="Pesquisar público..."
+                      className="h-8 pl-7 text-xs"
+                    />
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-muted/20 rounded-lg p-4 max-h-64 overflow-y-auto">
-                    {audiences.map((aud) => {
+                    {(() => {
+                      const q = fase2Search.trim().toLowerCase();
+                      const list = q ? audiences.filter(a => (a.name || "").toLowerCase().includes(q) || a.id.includes(q)) : audiences;
+                      if (list.length === 0) return <p className="text-xs text-muted-foreground col-span-full text-center py-2">Nenhum público encontrado</p>;
+                      return list.map((aud) => {
                       const checked = fase2Audiences.includes(aud.id);
                       const disabled = !checked && fase2Audiences.length >= 10;
                       return (
@@ -1667,7 +1681,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                           <span className="text-xs truncate">{aud.name}</span>
                         </label>
                       );
-                    })}
+                    });
+                    })()}
                   </div>
                   {fase2Audiences.length > 0 && fase2Audiences.length < 2 && (
                     <p className="text-[10px] text-warning">FASE 2 requer no mínimo 2 públicos.</p>
