@@ -56,12 +56,15 @@ Deno.serve(async (req) => {
     }
 
     const numbers: PhoneNumber[] = [];
-    const seenIds = new Set<string>();
+    const seenPhones = new Set<string>();
 
+    // Dedupe por NÚMERO (não por id): o mesmo número pode estar em várias WABAs
+    // com phone_number_id diferente. Usuário quer 1 entrada por número.
     const addUnique = (nums: PhoneNumber[]) => {
       for (const n of nums) {
-        if (!seenIds.has(n.id)) {
-          seenIds.add(n.id);
+        const key = (n.phone || n.id || "").replace(/\D/g, "") || n.id;
+        if (!seenPhones.has(key)) {
+          seenPhones.add(key);
           numbers.push(n);
         }
       }
