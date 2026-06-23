@@ -1377,7 +1377,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
             )}
           </Card>
 
-          {/* Distribution Structure (ABO / CBO) */}
+          {/* Distribution Structure (ABO / CBO) — só pra campanha NOVA.
+              Campanha existente herda a estrutura, então o card some. */}
+          {campaignStructure === "new" && (
           <Card className="glass-card p-6 space-y-4">
             <div className="flex items-center gap-2">
               <Layers className="w-4 h-4 text-primary" />
@@ -1418,6 +1420,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               <Badge variant="outline" className="text-[10px] mt-1">{structureDescription}</Badge>
             </div>
           </Card>
+          )}
 
           {/* Campaign Structure */}
           <Card className="glass-card p-6 space-y-4">
