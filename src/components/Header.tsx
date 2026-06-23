@@ -63,7 +63,7 @@ export default function Header() {
             <Zap className="w-4.5 h-4.5 text-primary" />
           </div>
           <span className="font-display font-bold text-lg tracking-tight">
-            F3F <span className="text-gradient">AUTO-ADS</span>
+            F3F <span className="text-gradient">ADS</span>
           </span>
         </Link>
 

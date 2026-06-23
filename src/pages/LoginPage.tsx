@@ -54,7 +54,7 @@ export default function LoginPage() {
             <Zap className="w-5 h-5 text-primary" />
           </div>
           <span className="font-display font-bold text-lg text-white tracking-tight">
-            F3F <span className="text-gradient">AUTO-ADS</span>
+            F3F <span className="text-gradient">ADS</span>
           </span>
         </div>
       </div>
@@ -75,7 +75,7 @@ export default function LoginPage() {
             <Zap className="w-5 h-5 text-primary" />
           </div>
           <span className="font-display font-bold text-lg text-white tracking-tight">
-            F3F <span className="text-gradient">AUTO-ADS</span>
+            F3F <span className="text-gradient">ADS</span>
           </span>
         </div>
 
