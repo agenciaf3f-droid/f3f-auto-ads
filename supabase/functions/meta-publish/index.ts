@@ -2109,19 +2109,43 @@ Deno.serve(async (req) => {
         return respond({ ok: false, step: "publish", error_message: "FASE 2 exige exatamente 1 criativo. Forneça 1 criativo." });
       }
       const cr = resolvedCreatives[0];
-      // Drive: video_id em object_story_spec.video_data. IG: source_instagram_media_id flat.
-      const driveVideoId = cr.spec?.object_story_spec?.video_data?.video_id;
-      const igMediaId = cr.spec?.source_instagram_media_id;
 
-      // 1. Cria audience de exclusão VV50% — APENAS pra Drive (precisa video_id válido).
-      // Pra IG link: skipa (Meta não permite criar audience VV50% de IG media direto).
+      // 1. Cria 1 creative compartilhado PRIMEIRO (precisamos do video_id dele p/ VV50%).
+      const creativePayload: Record<string, any> = { name: `Creative - ${cr.name}`, ...cr.spec, access_token };
+      if (utm_template) creativePayload.url_tags = utm_template;
+      logs.push({ step: "fase2_creative", status: "start", ts: ts() });
+      const creativeRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/adcreatives`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(creativePayload),
+      });
+      const creativeData = await creativeRes.json();
+      if (creativeData.error) {
+        logs.push({ step: "fase2_creative", status: "error", ts: ts(), detail: `${creativeData.error.message} | code=${creativeData.error.code}` });
+        return respond({ ok: false, step: "creative", campaign_id: campaignId, ...formatMetaError(creativeData.error) });
+      }
+      const sharedCreativeId = creativeData.id;
+      creativesCreated = 1;
+      logs.push({ step: "fase2_creative", status: "success", ts: ts(), detail: `id=${sharedCreativeId}` });
+
+      // 2. Extrai o video_id do creative. IG-source (source_instagram_media_id) TAMBÉM
+      // expõe video_id ao ler de volta — então VV50% agora funciona p/ IG e Drive.
+      let vvVideoId: string | null = cr.spec?.object_story_spec?.video_data?.video_id || null;
+      if (!vvVideoId) {
+        try {
+          const vRes = await fetch(`https://graph.facebook.com/v25.0/${sharedCreativeId}?fields=video_id&access_token=${access_token}`);
+          const vData = await vRes.json();
+          vvVideoId = vData.video_id || null;
+        } catch (e) { logs.push({ step: "fase2_video_id", status: "warning", ts: ts(), detail: `falha lendo video_id: ${(e as Error).message}` }); }
+      }
+      logs.push({ step: "fase2_video_id", status: vvVideoId ? "success" : "warning", ts: ts(), detail: vvVideoId ? `video_id=${vvVideoId}` : "sem video_id — VV50% pulada" });
+
+      // 3. Cria audience de exclusão VV50% (qualquer fonte — IG ou Drive)
       let exclusionAudienceId: string | null = null;
-      if (driveVideoId) {
-        logs.push({ step: "fase2_exclusion_audience", status: "start", ts: ts(), detail: `criando VV50% audience pro video=${driveVideoId}` });
+      if (vvVideoId) {
+        logs.push({ step: "fase2_exclusion_audience", status: "start", ts: ts(), detail: `criando VV50% audience pro video=${vvVideoId}` });
         const exclNameRaw = `VV50% [${(cr.name || "video").substring(0, 20)} - ${new Date().toISOString().slice(0,10)}]`;
         const exclName = exclNameRaw.length > 50 ? exclNameRaw.substring(0, 50) : exclNameRaw;
         const exclRuleLegacy = JSON.stringify([
-          { event_name: "video_view_50_percent", object_id: Number(driveVideoId) },
+          { event_name: "video_view_50_percent", object_id: Number(vvVideoId) },
         ]);
         const exclForm = new FormData();
         exclForm.append("access_token", access_token);
@@ -2138,7 +2162,7 @@ Deno.serve(async (req) => {
           if (exclData.error) {
             const errDetail = `${exclData.error.message} | code=${exclData.error.code} | subcode=${exclData.error.error_subcode || "-"} | user_msg=${exclData.error.error_user_msg || ""}`;
             logs.push({ step: "fase2_exclusion_audience", status: "error", ts: ts(), detail: errDetail });
-            logs.push({ step: "fase2_exclusion_audience", status: "warning", ts: ts(), detail: `⚠️ Continuando SEM audience de exclusão. Crie manualmente no Meta UI.` });
+            logs.push({ step: "fase2_exclusion_audience", status: "warning", ts: ts(), detail: `⚠️ Continuando SEM audience de exclusão.` });
           } else {
             exclusionAudienceId = exclData.id;
             logs.push({ step: "fase2_exclusion_audience", status: "success", ts: ts(), detail: `id=${exclusionAudienceId}` });
@@ -2147,24 +2171,8 @@ Deno.serve(async (req) => {
           logs.push({ step: "fase2_exclusion_audience", status: "warning", ts: ts(), detail: `⚠️ Skipped (timeout/erro): ${(e as Error).message}` });
         }
       } else {
-        logs.push({ step: "fase2_exclusion_audience", status: "skipped", ts: ts(), detail: `IG link não suporta VV50% audience direto. Crie manualmente.` });
+        logs.push({ step: "fase2_exclusion_audience", status: "skipped", ts: ts(), detail: `sem video_id — crie a VV50% manual.` });
       }
-
-      // 2. Cria 1 creative compartilhado
-      const creativePayload: Record<string, any> = { name: `Creative - ${cr.name}`, ...cr.spec, access_token };
-      if (utm_template) creativePayload.url_tags = utm_template;
-      logs.push({ step: "fase2_creative", status: "start", ts: ts() });
-      const creativeRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/adcreatives`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(creativePayload),
-      });
-      const creativeData = await creativeRes.json();
-      if (creativeData.error) {
-        logs.push({ step: "fase2_creative", status: "error", ts: ts(), detail: `${creativeData.error.message} | code=${creativeData.error.code}` });
-        return respond({ ok: false, step: "creative", campaign_id: campaignId, ...formatMetaError(creativeData.error) });
-      }
-      const sharedCreativeId = creativeData.id;
-      creativesCreated = 1;
-      logs.push({ step: "fase2_creative", status: "success", ts: ts(), detail: `id=${sharedCreativeId}` });
 
       // 3. Loop sobre audiences: 1 adset + 1 ad pra cada
       for (let i = 0; i < fase2AudienceIds.length; i++) {
