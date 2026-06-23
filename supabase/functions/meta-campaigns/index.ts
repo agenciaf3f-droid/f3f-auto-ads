@@ -16,7 +16,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    const url = `https://graph.facebook.com/v25.0/${ad_account_id}/campaigns?fields=id,name,status,objective,created_time&limit=100&access_token=${access_token}`;
+    // effective_status filter=ACTIVE: só campanhas ativas no dropdown.
+    // daily_budget/lifetime_budget: frontend detecta CBO (tem budget) vs ABO (sem).
+    const filtering = encodeURIComponent(JSON.stringify([{ field: "effective_status", operator: "IN", value: ["ACTIVE"] }]));
+    const url = `https://graph.facebook.com/v25.0/${ad_account_id}/campaigns?fields=id,name,status,effective_status,objective,created_time,daily_budget,lifetime_budget,bid_strategy&filtering=${filtering}&limit=200&access_token=${access_token}`;
     const res = await fetch(url);
     const data = await res.json();
 

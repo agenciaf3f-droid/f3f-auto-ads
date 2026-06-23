@@ -1216,7 +1216,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const structure = distribution_structure || "ABO";
+    let structure = distribution_structure || "ABO";
     const isWhatsAppPreset = preset?.destination_type === "WHATSAPP";
     const isIgProfilePreset = preset?.destination_type === "INSTAGRAM_PROFILE";
     const isWebsitePreset = preset?.destination_type === "WEBSITE";
@@ -1368,12 +1368,22 @@ Deno.serve(async (req) => {
       logs.push({ step: "campaign", status: "success", ts: ts(), detail: `existing: ${existing_campaign_id}` });
       campaignId = existing_campaign_id;
       try {
-        const existRes = await fetch(`https://graph.facebook.com/v25.0/${existing_campaign_id}?fields=bid_strategy,bid_amount&access_token=${access_token}`);
+        const existRes = await fetch(`https://graph.facebook.com/v25.0/${existing_campaign_id}?fields=bid_strategy,bid_amount,daily_budget,lifetime_budget&access_token=${access_token}`);
         const existData = await existRes.json();
         if (!existData.error) {
           inheritedBidStrategy = existData.bid_strategy || null;
           inheritedBidAmount = typeof existData.bid_amount === "number" ? existData.bid_amount : (existData.bid_amount ? Number(existData.bid_amount) : null);
-          logs.push({ step: "campaign", status: "success", ts: ts(), detail: `inherited bid_strategy=${inheritedBidStrategy}, bid_amount=${inheritedBidAmount}` });
+          // Estrutura é DITADA pela campanha existente, não pela escolha do frontend:
+          // se a campanha tem orçamento próprio → CBO (adset NÃO leva budget/bid).
+          // Senão → ABO (adset leva budget+bid). Evita erro "Must Use Campaign Bid
+          // Strategy" / orçamento conflitante.
+          const campHasBudget = !!(existData.daily_budget || existData.lifetime_budget);
+          const detectedStructure = campHasBudget ? "CBO" : "ABO";
+          if (detectedStructure !== structure) {
+            logs.push({ step: "campaign", status: "warning", ts: ts(), detail: `estrutura ajustada p/ ${detectedStructure} (campanha existente é ${detectedStructure}; frontend pediu ${structure})` });
+          }
+          structure = detectedStructure;
+          logs.push({ step: "campaign", status: "success", ts: ts(), detail: `inherited bid_strategy=${inheritedBidStrategy}, bid_amount=${inheritedBidAmount}, structure=${structure}` });
         }
       } catch (e) {
         logs.push({ step: "campaign", status: "error", ts: ts(), detail: `falha ao inferir bid_strategy: ${(e as Error).message}` });

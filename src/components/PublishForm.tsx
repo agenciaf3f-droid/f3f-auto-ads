@@ -40,7 +40,7 @@ import { supabase } from "@/integrations/supabase/client";
 
 interface AdAccount { id: string; name: string }
 interface Audience { id: string; name: string; type: "custom" | "saved"; targeting_spec?: any }
-interface Campaign { id: string; name: string; status: string; objective: string }
+interface Campaign { id: string; name: string; status: string; objective: string; effective_status?: string; daily_budget?: string; lifetime_budget?: string; bid_strategy?: string }
 interface WhatsAppNumber { id: string; display: string; phone: string; page_id: string; page_name: string }
 interface MessageTemplate { id: string; name: string; greeting: string; ready_message: string }
 interface PublishResult { ok?: boolean; campaign_id?: string; adset_id?: string; ad_id?: string; creative_id?: string; error?: string; step?: string; error_message?: string; error_code?: number | null; error_subcode?: number | null; error_user_msg?: string; error_user_title?: string; raw_error?: any; logs?: { step: string; status: string; ts: string; detail?: string }[]; adsets_created?: number; ads_created?: number; warning?: boolean }
@@ -1388,6 +1388,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 variant={distributionStructure === "ABO" ? "default" : "outline"}
                 size="sm"
                 className="flex-1"
+                disabled={campaignStructure === "existing"}
                 onClick={() => setDistributionStructure("ABO")}
               >
                 ABO
@@ -1396,11 +1397,15 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 variant={distributionStructure === "CBO" ? "default" : "outline"}
                 size="sm"
                 className="flex-1"
+                disabled={campaignStructure === "existing"}
                 onClick={() => setDistributionStructure("CBO")}
               >
                 CBO
               </Button>
             </div>
+            {campaignStructure === "existing" && (
+              <p className="text-[10px] text-muted-foreground">Estrutura travada — herdada da campanha existente selecionada.</p>
+            )}
             <div className="bg-muted/50 rounded-md p-3 space-y-1">
               <p className="text-xs font-medium text-foreground">
                 {distributionStructure === "ABO" ? "Ad Set Budget Optimization" : "Campaign Budget Optimization"}
@@ -1442,15 +1447,27 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                     <Loader2 className="w-4 h-4 animate-spin" /> Carregando campanhas...
                   </div>
                 ) : campaigns.length > 0 ? (
-                  <SearchableSelect
-                    options={campaigns.map(c => ({ id: c.id, name: `${c.name} (${c.status})` }))}
-                    value={selectedCampaign}
-                    onValueChange={setSelectedCampaign}
-                    placeholder="Selecione a campanha"
-                    searchPlaceholder="Pesquisar campanha..."
-                  />
+                  <>
+                    <SearchableSelect
+                      options={campaigns.map(c => ({ id: c.id, name: c.name }))}
+                      value={selectedCampaign}
+                      onValueChange={(id) => {
+                        setSelectedCampaign(id);
+                        // Estrutura ditada pela campanha: tem orçamento → CBO, senão ABO.
+                        const c = campaigns.find(x => x.id === id);
+                        if (c) setDistributionStructure((c.daily_budget || c.lifetime_budget) ? "CBO" : "ABO");
+                      }}
+                      placeholder="Selecione a campanha"
+                      searchPlaceholder="Pesquisar campanha..."
+                    />
+                    {selectedCampaign && (
+                      <p className="text-xs text-muted-foreground">
+                        Estrutura da campanha: <strong className="text-primary">{distributionStructure}</strong> (definida pela campanha, não editável)
+                      </p>
+                    )}
+                  </>
                 ) : (
-                  <p className="text-sm text-muted-foreground">Nenhuma campanha encontrada</p>
+                  <p className="text-sm text-muted-foreground">Nenhuma campanha ativa encontrada</p>
                 )}
               </div>
             )}
