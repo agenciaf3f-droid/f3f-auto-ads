@@ -22,7 +22,7 @@ import { toast } from "sonner";
 import {
   LogIn, Settings2, Send, CheckCircle2, Loader2, Copy, AlertTriangle, Unplug,
   Instagram, HardDrive, ArrowRight, FolderOpen, Plus, Calendar, Clock, MessageCircle, MapPin, Phone, Save, Trash2,
-  Layers, PlusCircle, X, Pencil,
+  Layers, PlusCircle, X, Pencil, Search,
 } from "lucide-react";
 import {
   getMetaLoginUrl, fetchMetaStatus, fetchAdAccounts, fetchAudiences,
