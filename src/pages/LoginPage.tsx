@@ -50,7 +50,7 @@ export default function LoginPage() {
       {/* Mobile header — compact brand */}
       <div className="md:hidden bg-zinc-950 px-6 py-4 border-b border-white/10">
         <div className="flex items-center gap-2.5">
-          <img src="/logo.png" alt="F3F ADS" className="h-9 w-auto rounded-md bg-white px-2 py-1" />
+          <img src="/logo.png" alt="F3F ADS" className="h-11 w-auto" />
         </div>
       </div>
 
@@ -66,7 +66,7 @@ export default function LoginPage() {
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_rgba(255,255,255,0.03)_0%,_transparent_50%)] pointer-events-none" />
 
         <div className="relative flex items-center gap-2.5 fade-in-up" style={{ animationDelay: "0ms" }}>
-          <img src="/logo.png" alt="F3F ADS" className="h-9 w-auto rounded-md bg-white px-2 py-1" />
+          <img src="/logo.png" alt="F3F ADS" className="h-11 w-auto" />
         </div>
 
         <div className="relative space-y-8 my-auto py-10 md:py-0">
