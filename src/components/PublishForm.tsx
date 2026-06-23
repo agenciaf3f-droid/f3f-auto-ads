@@ -254,6 +254,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const [fase2AgeMin, setFase2AgeMin] = useState("18");
   const [fase2AgeMax, setFase2AgeMax] = useState("65");
   const [fase2Gender, setFase2Gender] = useState<"all" | "male" | "female">("all");
+  // L.T (FASE 3 LP) — público Advantage + sugestões de idade/gênero
+  const [ltAdvantage, setLtAdvantage] = useState(true);
+  const [ltAgeMin, setLtAgeMin] = useState("18");
+  const [ltAgeMax, setLtAgeMax] = useState("65");
+  const [ltGender, setLtGender] = useState<"all" | "male" | "female">("all");
 
   // Scheduling
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
@@ -1145,6 +1150,10 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         fase2_age_min: isFase2 ? Number(fase2AgeMin) || 18 : undefined,
         fase2_age_max: isFase2 ? Number(fase2AgeMax) || 65 : undefined,
         fase2_genders: isFase2 ? (fase2Gender === "male" ? [1] : fase2Gender === "female" ? [2] : []) : undefined,
+        lt_advantage: isFase3Lp ? ltAdvantage : undefined,
+        lt_age_min: isFase3Lp ? Number(ltAgeMin) || 18 : undefined,
+        lt_age_max: isFase3Lp ? Number(ltAgeMax) || 65 : undefined,
+        lt_genders: isFase3Lp ? (ltGender === "male" ? [1] : ltGender === "female" ? [2] : []) : undefined,
         schedule,
         utm_template: UTM_TEMPLATE,
       };
@@ -1929,6 +1938,46 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                       : "Otimizado para o evento \"Lead\" do pixel selecionado"}
                   </p>
                 </div>
+              </div>
+
+              {/* Público Advantage + sugestões de idade/gênero */}
+              <div className="space-y-3 pt-1 border-t border-border/40">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-col">
+                    <Label className="text-xs font-medium">Público Advantage</Label>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      Meta expande além da idade/gênero, usando-os como sugestão.
+                    </p>
+                  </div>
+                  <Switch checked={ltAdvantage} onCheckedChange={setLtAdvantage} disabled={loading} />
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">Idade mín.</Label>
+                    <Input type="number" min={18} max={65} value={ltAgeMin} onChange={(e) => setLtAgeMin(e.target.value)} className="h-8 text-xs" disabled={loading} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">Idade máx.</Label>
+                    <Input type="number" min={18} max={65} value={ltAgeMax} onChange={(e) => setLtAgeMax(e.target.value)} className="h-8 text-xs" disabled={loading} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">Gênero</Label>
+                    <Select value={ltGender} onValueChange={(v) => setLtGender(v as "all" | "male" | "female")} disabled={loading}>
+                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todos</SelectItem>
+                        <SelectItem value="male">Homens</SelectItem>
+                        <SelectItem value="female">Mulheres</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  {ltAdvantage
+                    ? "Advantage ON — idade/gênero são sugestões; o Meta pode ir além para achar compradores."
+                    : "Advantage OFF — idade/gênero são limites rígidos (sem expansão)."}
+                </p>
               </div>
             </Card>
           )}

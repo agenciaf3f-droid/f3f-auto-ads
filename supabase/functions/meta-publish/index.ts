@@ -1667,10 +1667,28 @@ Deno.serve(async (req) => {
       } else if (!lpTargeting.geo_locations) {
         lpTargeting.geo_locations = { countries: ["BR"], location_types: ["home", "recent"] };
       }
-      lpTargeting.targeting_automation = {
-        advantage_audience: 0,
-        individual_setting: { age: 0, gender: 0 },
-      };
+
+      // L.T: idade/gênero + público Advantage (toggle do sistema).
+      // ON  → advantage_audience:1 e age/gender viram SUGESTÃO (Meta expande além).
+      // OFF → advantage_audience:0 + individual_setting{0,0} = limites rígidos.
+      const ltAdvantage = body.lt_advantage === true || body.lt_advantage === "true";
+      const ltAgeMin = Number(body.lt_age_min) || 18;
+      const ltAgeMax = Number(body.lt_age_max) || 65;
+      const ltGenders: number[] = Array.isArray(body.lt_genders)
+        ? body.lt_genders.map(Number).filter((g: number) => g === 1 || g === 2)
+        : [];
+      lpTargeting.age_min = ltAgeMin;
+      lpTargeting.age_max = ltAgeMax;
+      if (ltGenders.length === 1) lpTargeting.genders = ltGenders;
+      else delete lpTargeting.genders;
+      if (ltAdvantage) {
+        lpTargeting.targeting_automation = { advantage_audience: 1 };
+      } else {
+        lpTargeting.targeting_automation = {
+          advantage_audience: 0,
+          individual_setting: { age: 0, gender: 0 },
+        };
+      }
 
       const lpEvent = String(custom_event_type || "LEAD");
       // Low-ticket (PURCHASE): attribution richer [CT7d, VT1d, EVV1d] — gabarito MCP/DDX
@@ -1709,7 +1727,7 @@ Deno.serve(async (req) => {
       else p.start_time = new Date().toISOString();
       if (schedule?.end_time) p.end_time = schedule.end_time;
 
-      console.log(`[FASE3-LP-adset] promoted_object: ${JSON.stringify(p.promoted_object)} | destination=WEBSITE | URL=${lp_url}`);
+      console.log(`[FASE3-LP-adset] promoted_object: ${JSON.stringify(p.promoted_object)} | destination=WEBSITE | URL=${lp_url} | advantage=${ltAdvantage} age=${ltAgeMin}-${ltAgeMax} genders=${JSON.stringify(ltGenders)}`);
       return { payload: p };
     };
 
