@@ -526,15 +526,21 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     addLog(`✅ [pipeline] Recursos FASE 3 carregados`);
   };
 
+  const goToMetaLogin = () => {
+    // sessionStorage pode lançar (modo privado/bloqueado) — NUNCA pode impedir a navegação.
+    try { sessionStorage.removeItem("meta_status_cache"); } catch { /* ignore */ }
+    const url = getMetaLoginUrl();
+    if (!url) { toast.error("URL de login Meta indisponível. Recarregue a página."); return; }
+    // assign() é mais robusto que href= em alguns navegadores/extensões.
+    window.location.assign(url);
+  };
   const handleConnect = () => {
     addLog("🔐 Iniciando login Meta via redirect OAuth...");
-    sessionStorage.removeItem("meta_status_cache");
-    window.location.href = getMetaLoginUrl();
+    goToMetaLogin();
   };
   const handleReconnect = () => {
     addLog("🔄 Reconectando Meta via redirect OAuth...");
-    sessionStorage.removeItem("meta_status_cache");
-    window.location.href = getMetaLoginUrl();
+    goToMetaLogin();
   };
 
   const handleDisconnect = async () => {
