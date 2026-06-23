@@ -251,6 +251,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   // FASE 2 — multi-audience (2-10 inclusion audiences, each becomes 1 adset)
   const [fase2Audiences, setFase2Audiences] = useState<string[]>([]);
   const [fase2Search, setFase2Search] = useState("");
+  const [fase2AgeMin, setFase2AgeMin] = useState("18");
+  const [fase2AgeMax, setFase2AgeMax] = useState("65");
+  const [fase2Gender, setFase2Gender] = useState<"all" | "male" | "female">("all");
 
   // Scheduling
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
@@ -1139,6 +1142,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         fase2_audience_names: isFase2
           ? fase2Audiences.map(id => audiences.find(a => a.id === id)?.name || id)
           : undefined,
+        fase2_age_min: isFase2 ? Number(fase2AgeMin) || 18 : undefined,
+        fase2_age_max: isFase2 ? Number(fase2AgeMax) || 65 : undefined,
+        fase2_genders: isFase2 ? (fase2Gender === "male" ? [1] : fase2Gender === "female" ? [2] : []) : undefined,
         schedule,
         utm_template: UTM_TEMPLATE,
       };
@@ -1687,6 +1693,30 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                   {fase2Audiences.length > 0 && fase2Audiences.length < 2 && (
                     <p className="text-[10px] text-warning">FASE 2 requer no mínimo 2 públicos.</p>
                   )}
+
+                  {/* Segmentação manual: idade + gênero (sem sugestão automática) */}
+                  <div className="grid grid-cols-3 gap-2 pt-1">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Idade mín.</Label>
+                      <Input type="number" min={13} max={65} value={fase2AgeMin} onChange={(e) => setFase2AgeMin(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Idade máx.</Label>
+                      <Input type="number" min={13} max={65} value={fase2AgeMax} onChange={(e) => setFase2AgeMax(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Gênero</Label>
+                      <Select value={fase2Gender} onValueChange={(v) => setFase2Gender(v as "all" | "male" | "female")}>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todos</SelectItem>
+                          <SelectItem value="male">Homens</SelectItem>
+                          <SelectItem value="female">Mulheres</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">Segmentação manual — sem expansão/sugestão automática do Meta.</p>
                 </div>
               ) : (
                 <SearchableSelect

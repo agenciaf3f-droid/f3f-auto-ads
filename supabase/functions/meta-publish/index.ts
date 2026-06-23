@@ -1720,11 +1720,22 @@ Deno.serve(async (req) => {
       if (!includedAudienceId) {
         return { error: "FASE 2 requer audience_id de inclusão por adset." };
       }
+      // Segmentação manual (vinda do sistema): idade + gênero. genders: [1]=homens,
+      // [2]=mulheres, omitido=todos. targeting_relaxation_types {0,0} DESLIGA a
+      // "Usar como sugestão" (expansão de público semelhante) — antes vinha ligada
+      // por default mesmo com advantage_audience:0.
+      const f2AgeMin = Number(body.fase2_age_min) || 18;
+      const f2AgeMax = Number(body.fase2_age_max) || 65;
+      const f2Genders: number[] = Array.isArray(body.fase2_genders) ? body.fase2_genders.map(Number).filter((g: number) => g === 1 || g === 2) : [];
       const f2Targeting: Record<string, any> = {
         custom_audiences: [{ id: includedAudienceId }],
         geo_locations: { countries: ["BR"], location_types: ["home", "recent"] },
-        targeting_automation: { advantage_audience: 0, individual_setting: { age: 0, gender: 0 } },
+        age_min: f2AgeMin,
+        age_max: f2AgeMax,
+        targeting_automation: { advantage_audience: 0 },
+        targeting_relaxation_types: { lookalike: 0, custom_audience: 0 },
       };
+      if (f2Genders.length === 1) f2Targeting.genders = f2Genders;
       if (excludedAudienceId) {
         f2Targeting.excluded_custom_audiences = [{ id: excludedAudienceId }];
       }
