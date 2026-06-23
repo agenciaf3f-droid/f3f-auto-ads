@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Zap, ArrowRight } from "lucide-react";
+import { Loader2, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 
 export default function LoginPage() {
@@ -50,12 +50,7 @@ export default function LoginPage() {
       {/* Mobile header — compact brand */}
       <div className="md:hidden bg-zinc-950 px-6 py-4 border-b border-white/10">
         <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-lg bg-primary/20 flex items-center justify-center glow-primary">
-            <Zap className="w-5 h-5 text-primary" />
-          </div>
-          <span className="font-display font-bold text-lg text-white tracking-tight">
-            F3F <span className="text-gradient">ADS</span>
-          </span>
+          <img src="/logo.png" alt="F3F ADS" className="h-9 w-auto rounded-md bg-white px-2 py-1" />
         </div>
       </div>
 
@@ -71,12 +66,7 @@ export default function LoginPage() {
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_rgba(255,255,255,0.03)_0%,_transparent_50%)] pointer-events-none" />
 
         <div className="relative flex items-center gap-2.5 fade-in-up" style={{ animationDelay: "0ms" }}>
-          <div className="w-9 h-9 rounded-lg bg-primary/20 flex items-center justify-center glow-primary">
-            <Zap className="w-5 h-5 text-primary" />
-          </div>
-          <span className="font-display font-bold text-lg text-white tracking-tight">
-            F3F <span className="text-gradient">ADS</span>
-          </span>
+          <img src="/logo.png" alt="F3F ADS" className="h-9 w-auto rounded-md bg-white px-2 py-1" />
         </div>
 
         <div className="relative space-y-8 my-auto py-10 md:py-0">

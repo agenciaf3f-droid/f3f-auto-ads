@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { Settings, LogOut, User, Sun, Moon, Zap, ShieldCheck } from "lucide-react";
+import { Settings, LogOut, User, Sun, Moon, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -58,13 +58,8 @@ export default function Header() {
       <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
 
         {/* Brand */}
-        <Link to="/" className="flex items-center gap-3 shrink-0 group">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary/30 to-accent/20 flex items-center justify-center glow-primary transition-transform group-hover:scale-105">
-            <Zap className="w-4.5 h-4.5 text-primary" />
-          </div>
-          <span className="font-display font-bold text-lg tracking-tight">
-            F3F <span className="text-gradient">ADS</span>
-          </span>
+        <Link to="/" className="flex items-center shrink-0 group">
+          <img src="/logo.png" alt="F3F ADS" className="h-7 w-auto transition-transform group-hover:scale-105" />
         </Link>
 
         {/* Right cluster */}
