@@ -152,42 +152,75 @@ Deno.serve(async (req) => {
       }
     }
 
-    // === STRATEGY 3: All pages → whatsapp_business_account (scan) ===
+    // === STRATEGY 3: descoberta ampla de páginas → whatsapp_business_account ===
+    // Espelha a cobertura do meta-ad-accounts (owner_business + promote_pages +
+    // /me/accounts paginado). Necessário p/ contas SEM business (Strategy 2 morre)
+    // cujo WABA só é alcançável via página.
     if (numbers.length === 0) {
-      console.log(`[whatsapp] Strategy 3: scanning all pages for whatsapp_business_account`);
-      try {
-        const pagesRes = await timedFetch(
-          `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,whatsapp_business_account{id,name}&limit=25&access_token=${access_token}`
-        );
-        const pagesData = await pagesRes.json();
-        console.log(`[whatsapp] Strategy 3 pages count: ${pagesData.data?.length || 0}`);
-
-        if (pagesData.data?.length) {
-          const pagesWithWaba = pagesData.data.filter(
-            (page: { whatsapp_business_account?: { id?: string } }) => page.whatsapp_business_account?.id
-          );
-          for (const page of pagesWithWaba) {
-            console.log(`[whatsapp] Strategy 3: page ${page.id} (${page.name}) has WABA ${page.whatsapp_business_account.id}`);
+      console.log(`[whatsapp] Strategy 3: descoberta ampla de páginas`);
+      const candidatePages: { id: string; name?: string; waba?: { id: string; name?: string } }[] = [];
+      const seenPageIds = new Set<string>();
+      const addPages = (arr: any[]) => {
+        for (const p of arr || []) {
+          if (p?.id && !seenPageIds.has(p.id)) {
+            seenPageIds.add(p.id);
+            candidatePages.push({ id: p.id, name: p.name, waba: p.whatsapp_business_account });
           }
-          const results = await Promise.allSettled(
-            pagesWithWaba.map((page: { id: string; name?: string; whatsapp_business_account: { id: string; name?: string } }) =>
-              fetchPhoneNumbersFromWaba(
-                page.whatsapp_business_account.id,
-                page.whatsapp_business_account.name || page.name || "",
-                access_token,
-                page.id
-              )
-            )
+        }
+      };
+
+      // 3a: pages do BM dono da ad account (owned + client)
+      if (ad_account_id) {
+        try {
+          const aaRes = await timedFetch(
+            `https://graph.facebook.com/v25.0/${ad_account_id}?fields=owner_business{owned_pages.limit(200){id,name,whatsapp_business_account{id,name}},client_pages.limit(200){id,name,whatsapp_business_account{id,name}}}&access_token=${access_token}`
           );
-          results.forEach((r) => {
-            if (r.status === "fulfilled") addUnique(r.value);
-            else console.log(`[whatsapp] Strategy 3 WABA fetch failed: ${r.reason?.message || r.reason}`);
-          });
-          console.log(`[whatsapp] Strategy 3 found ${numbers.length} numbers`);
+          const aaData = await aaRes.json();
+          addPages(aaData?.owner_business?.owned_pages?.data);
+          addPages(aaData?.owner_business?.client_pages?.data);
+        } catch (e) {
+          console.log(`[whatsapp] 3a owner_business error: ${e.message}`);
+        }
+        // 3b: promote_pages — pages que essa ad account pode anunciar
+        try {
+          const ppRes = await timedFetch(
+            `https://graph.facebook.com/v25.0/${ad_account_id}/promote_pages?fields=id,name,whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`
+          );
+          const ppData = await ppRes.json();
+          addPages(ppData?.data);
+        } catch (e) {
+          console.log(`[whatsapp] 3b promote_pages error: ${e.message}`);
+        }
+      }
+
+      // 3c: /me/accounts (paginado)
+      try {
+        let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`;
+        let guard = 0;
+        while (pagesUrl && guard < 10) {
+          const r = await timedFetch(pagesUrl);
+          const d = await r.json();
+          addPages(d?.data);
+          pagesUrl = d?.paging?.next || null;
+          guard++;
         }
       } catch (e) {
-        console.log(`[whatsapp] Strategy 3 error: ${e.message}`);
+        console.log(`[whatsapp] 3c me/accounts error: ${e.message}`);
       }
+
+      const pagesWithWaba = candidatePages.filter((p) => p.waba?.id);
+      console.log(`[whatsapp] Strategy 3: ${candidatePages.length} páginas, ${pagesWithWaba.length} com WABA`);
+      for (const p of pagesWithWaba) {
+        console.log(`[whatsapp] Strategy 3: page ${p.id} (${p.name}) → WABA ${p.waba!.id}`);
+      }
+      const results = await Promise.allSettled(
+        pagesWithWaba.map((p) => fetchPhoneNumbersFromWaba(p.waba!.id, p.waba!.name || p.name || "", access_token, p.id))
+      );
+      results.forEach((r) => {
+        if (r.status === "fulfilled") addUnique(r.value);
+        else console.log(`[whatsapp] Strategy 3 WABA fetch failed: ${r.reason?.message || r.reason}`);
+      });
+      console.log(`[whatsapp] Strategy 3 found ${numbers.length} numbers`);
     }
 
     console.log(`[whatsapp] Final total: ${numbers.length} numbers`);
