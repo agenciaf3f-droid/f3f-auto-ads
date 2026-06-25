@@ -123,7 +123,7 @@ export async function fetchWhatsAppNumbers(accessToken: string, adAccountId?: st
     body: { access_token: accessToken, ad_account_id: adAccountId, page_id: pageId },
   });
   if (error) throw new Error(error.message);
-  return data?.numbers || [];
+  return { numbers: data?.numbers || [], error_summary: data?.error_summary || null };
 }
 
 export interface LocationResult {

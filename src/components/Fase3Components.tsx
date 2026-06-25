@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -62,12 +61,12 @@ interface WhatsAppNumberSelectorProps {
   loading: boolean;
   selectedId: string;
   onSelect: (id: string) => void;
-  manualNumber?: string;
-  onManualNumber?: (phone: string) => void;
+  errorReason?: string | null;
+  onRetry?: () => void;
 }
 
 export function WhatsAppNumberSelector({
-  numbers, loading, selectedId, onSelect, manualNumber = "", onManualNumber,
+  numbers, loading, selectedId, onSelect, errorReason, onRetry,
 }: WhatsAppNumberSelectorProps) {
   return (
     <div className="space-y-2">
@@ -88,18 +87,16 @@ export function WhatsAppNumberSelector({
           </SelectContent>
         </Select>
       ) : (
-        <div className="space-y-2">
-          <div className="bg-warning/10 border border-warning/30 rounded-md p-3">
-            <p className="text-xs text-warning font-medium">Não foi possível puxar o número automaticamente.</p>
-            <p className="text-xs text-muted-foreground mt-1">Digite o número do WhatsApp manualmente abaixo (com DDI+DDD, ex: 5511999999999).</p>
-          </div>
-          <Input
-            value={manualNumber}
-            onChange={(e) => onManualNumber?.(e.target.value)}
-            placeholder="5511999999999"
-            inputMode="numeric"
-            className="text-sm"
-          />
+        <div className="bg-destructive/10 border border-destructive/30 rounded-md p-3 space-y-2">
+          <p className="text-xs text-destructive font-medium">Não foi possível puxar o WhatsApp desta conta.</p>
+          <p className="text-xs text-muted-foreground whitespace-pre-wrap">
+            {errorReason || "Verifique se há um WhatsApp Business vinculado à página/conta no Gerenciador de Negócios da Meta."}
+          </p>
+          {onRetry && (
+            <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={onRetry}>
+              <Loader2 className="w-3 h-3" /> Tentar de novo
+            </Button>
+          )}
         </div>
       )}
     </div>

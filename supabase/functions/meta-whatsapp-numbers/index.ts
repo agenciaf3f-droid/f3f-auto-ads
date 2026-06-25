@@ -19,13 +19,16 @@ interface PhoneNumber {
 const timedFetch = (url: string, init: RequestInit = {}) =>
   fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
 
-async function fetchPhoneNumbersFromWaba(wabaId: string, wabaName: string, accessToken: string, pageId: string): Promise<PhoneNumber[]> {
+async function fetchPhoneNumbersFromWaba(wabaId: string, wabaName: string, accessToken: string, pageId: string): Promise<{ nums: PhoneNumber[]; error: string | null }> {
   const nums: PhoneNumber[] = [];
   const res = await timedFetch(
     `https://graph.facebook.com/v25.0/${wabaId}/phone_numbers?fields=id,display_phone_number,verified_name,code_verification_status&limit=50&access_token=${accessToken}`
   );
   const data = await res.json();
   console.log(`[whatsapp] WABA ${wabaId} phone_numbers:`, JSON.stringify(data));
+  if (data.error) {
+    return { nums, error: `WABA ${wabaId}: ${data.error.message}` };
+  }
   if (data.data) {
     for (const num of data.data) {
       nums.push({
@@ -39,7 +42,7 @@ async function fetchPhoneNumbersFromWaba(wabaId: string, wabaName: string, acces
       });
     }
   }
-  return nums;
+  return { nums, error: null };
 }
 
 Deno.serve(async (req) => {
@@ -70,6 +73,16 @@ Deno.serve(async (req) => {
       }
     };
 
+    // Diagnóstico p/ explicar falha (sem entrada manual: precisamos do motivo real).
+    const notes: string[] = [];
+    let wabaCount = 0; // WABAs descobertas (independente de ter número)
+    let scopeIssue = false;
+    const looksScope = (msg?: string | null) =>
+      !!msg && /whatsapp_business_management|permission|missing|#200|#10|OAuthException/i.test(msg);
+    const recordWabaError = (err: string | null) => {
+      if (err) { notes.push(err); if (looksScope(err)) scopeIssue = true; }
+    };
+
     // === STRATEGY 1: Page → whatsapp_business_account → phone_numbers ===
     if (page_id) {
       console.log(`[whatsapp] Strategy 1: Page ${page_id} → whatsapp_business_account`);
@@ -81,11 +94,17 @@ Deno.serve(async (req) => {
         console.log(`[whatsapp] Strategy 1 response:`, JSON.stringify(data));
         if (data.whatsapp_business_account?.id) {
           const waba = data.whatsapp_business_account;
-          const nums = await fetchPhoneNumbersFromWaba(waba.id, waba.name || "", access_token, page_id);
+          wabaCount++;
+          const { nums, error } = await fetchPhoneNumbersFromWaba(waba.id, waba.name || "", access_token, page_id);
+          recordWabaError(error);
           addUnique(nums);
           console.log(`[whatsapp] Strategy 1 found ${nums.length} numbers`);
+        } else if (data.error) {
+          recordWabaError(`Página: ${data.error.message}`);
+          console.log(`[whatsapp] Strategy 1 page error: ${data.error.message}`);
         } else {
-          console.log(`[whatsapp] Strategy 1: no whatsapp_business_account on page. Error: ${data.error?.message || "none"}`);
+          notes.push("A página vinculada não tem WhatsApp Business conectado.");
+          console.log(`[whatsapp] Strategy 1: no whatsapp_business_account on page.`);
         }
       } catch (e) {
         console.log(`[whatsapp] Strategy 1 error: ${e.message}`);
@@ -113,16 +132,19 @@ Deno.serve(async (req) => {
           console.log(`[whatsapp] Strategy 2 owned WABAs:`, JSON.stringify(ownedData));
 
           if (ownedData.data?.length) {
+            wabaCount += ownedData.data.length;
             const results = await Promise.allSettled(
               ownedData.data.map((waba: { id: string; name?: string }) =>
                 fetchPhoneNumbersFromWaba(waba.id, waba.name || "", access_token, page_id || "")
               )
             );
             results.forEach((r) => {
-              if (r.status === "fulfilled") addUnique(r.value);
+              if (r.status === "fulfilled") { recordWabaError(r.value.error); addUnique(r.value.nums); }
               else console.log(`[whatsapp] Strategy 2 (owned) WABA fetch failed: ${r.reason?.message || r.reason}`);
             });
             console.log(`[whatsapp] Strategy 2 (owned) found ${numbers.length} numbers`);
+          } else if (ownedData.error) {
+            recordWabaError(`Business owned WABAs: ${ownedData.error.message}`);
           }
 
           // Try client WABAs if still empty
@@ -134,18 +156,23 @@ Deno.serve(async (req) => {
             console.log(`[whatsapp] Strategy 2 client WABAs:`, JSON.stringify(clientData));
 
             if (clientData.data?.length) {
+              wabaCount += clientData.data.length;
               const results = await Promise.allSettled(
                 clientData.data.map((waba: { id: string; name?: string }) =>
                   fetchPhoneNumbersFromWaba(waba.id, waba.name || "", access_token, page_id || "")
                 )
               );
               results.forEach((r) => {
-                if (r.status === "fulfilled") addUnique(r.value);
+                if (r.status === "fulfilled") { recordWabaError(r.value.error); addUnique(r.value.nums); }
                 else console.log(`[whatsapp] Strategy 2 (client) WABA fetch failed: ${r.reason?.message || r.reason}`);
               });
               console.log(`[whatsapp] Strategy 2 (client) found ${numbers.length} numbers`);
+            } else if (clientData.error) {
+              recordWabaError(`Business client WABAs: ${clientData.error.message}`);
             }
           }
+        } else if (bizData.error) {
+          recordWabaError(`Conta de anúncios: ${bizData.error.message}`);
         }
       } catch (e) {
         console.log(`[whatsapp] Strategy 2 error: ${e.message}`);
@@ -209,6 +236,7 @@ Deno.serve(async (req) => {
       }
 
       const pagesWithWaba = candidatePages.filter((p) => p.waba?.id);
+      wabaCount += pagesWithWaba.length;
       console.log(`[whatsapp] Strategy 3: ${candidatePages.length} páginas, ${pagesWithWaba.length} com WABA`);
       for (const p of pagesWithWaba) {
         console.log(`[whatsapp] Strategy 3: page ${p.id} (${p.name}) → WABA ${p.waba!.id}`);
@@ -217,14 +245,29 @@ Deno.serve(async (req) => {
         pagesWithWaba.map((p) => fetchPhoneNumbersFromWaba(p.waba!.id, p.waba!.name || p.name || "", access_token, p.id))
       );
       results.forEach((r) => {
-        if (r.status === "fulfilled") addUnique(r.value);
+        if (r.status === "fulfilled") { recordWabaError(r.value.error); addUnique(r.value.nums); }
         else console.log(`[whatsapp] Strategy 3 WABA fetch failed: ${r.reason?.message || r.reason}`);
       });
+      if (candidatePages.length === 0) notes.push("Nenhuma página acessível encontrada pela conexão Meta (admin sem acesso às páginas dessa conta).");
+      else if (pagesWithWaba.length === 0) notes.push("Nenhuma das páginas dessa conta tem WhatsApp Business conectado.");
       console.log(`[whatsapp] Strategy 3 found ${numbers.length} numbers`);
     }
 
-    console.log(`[whatsapp] Final total: ${numbers.length} numbers`);
-    return new Response(JSON.stringify({ ok: true, numbers }), {
+    // Sem entrada manual: se vazio, montar motivo claro p/ o gestor.
+    let error_summary: string | null = null;
+    if (numbers.length === 0) {
+      if (scopeIssue) {
+        error_summary = "WhatsApp encontrado, mas a conexão Meta da agência não tem permissão para lê-lo. O admin precisa reconectar a conta Meta concedendo a permissão whatsapp_business_management.";
+      } else if (wabaCount > 0) {
+        error_summary = `Encontrei ${wabaCount} conta(s) WhatsApp Business, mas nenhuma com número de telefone disponível via API. ${notes[0] || "Verifique se há um número adicionado e verificado no WhatsApp Manager."}`;
+      } else {
+        error_summary = notes[0] || "Nenhum WhatsApp Business conectado à página/conta. Vincule um WhatsApp no Gerenciador de Negócios da Meta.";
+      }
+      if (notes.length) error_summary += ` [detalhe: ${notes.slice(0, 3).join(" • ")}]`;
+    }
+
+    console.log(`[whatsapp] Final total: ${numbers.length} numbers | summary: ${error_summary || "ok"}`);
+    return new Response(JSON.stringify({ ok: true, numbers, error_summary, waba_count: wabaCount }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {

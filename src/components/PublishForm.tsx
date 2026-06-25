@@ -218,8 +218,8 @@ export default function PublishForm() {
   const [whatsappNumbers, setWhatsappNumbers] = useState<WhatsAppNumber[]>([]);
   const [loadingWhatsappNumbers, setLoadingWhatsappNumbers] = useState(false);
   const [selectedWhatsappId, setSelectedWhatsappId] = useState("");
-  // Fallback: número digitado manualmente quando auto-pull falha (token sem scope WhatsApp)
-  const [manualWhatsapp, setManualWhatsapp] = useState("");
+  // Motivo da falha ao puxar WhatsApp (sem entrada manual: explicar o erro real).
+  const [whatsappError, setWhatsappError] = useState<string | null>(null);
   const [ctaText, setCtaText] = useState("");
   const [greetingText, setGreetingText] = useState("");
   const [readyMessage, setReadyMessage] = useState("");
@@ -634,13 +634,14 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     setLoadingWhatsappNumbers(true);
     setWhatsappNumbers([]);
     setSelectedWhatsappId("");
+    setWhatsappError(null);
     try {
       const adAccId = selectedAccount;
       // explicitPageId vem direto da resolução de identidade (state ainda pode estar
       // stale aqui). Sem isso, Strategy 1 (page→WABA, a mais confiável) era pulada.
       const pageId = explicitPageId || identityPageId;
       addLog(`📡 Buscando números de WhatsApp (ad_account=${adAccId || "none"}, page_id=${pageId || "none"})...`);
-      const nums = await fetchWhatsAppNumbers(accessToken, adAccId || undefined, pageId || undefined);
+      const { numbers: nums, error_summary } = await fetchWhatsAppNumbers(accessToken, adAccId || undefined, pageId || undefined);
       setWhatsappNumbers(nums);
       if (nums.length > 0) {
         addLog(`✅ ${nums.length} número(s) de WhatsApp encontrado(s)`);
@@ -675,7 +676,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         setSelectedWhatsappId(seeded.id);
         addLog(`📱 WhatsApp via identidade: ${seeded.display} (id=${seeded.id})`);
       } else {
-        addLog("⚠️ Nenhum número de WhatsApp encontrado. Verifique se o Business Manager tem um WhatsApp Business Account vinculado.");
+        const reason = error_summary || "Não foi possível puxar o número do WhatsApp. Verifique se há um WhatsApp Business vinculado à página/conta no Gerenciador de Negócios da Meta.";
+        setWhatsappError(reason);
+        addLog(`⚠️ ${reason}`);
       }
     } catch (err: unknown) {
       addLog(`❌ Erro ao buscar WhatsApp: ${err instanceof Error ? err.message : "Erro"}`);
@@ -1051,8 +1054,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     checks.push({ label: "Identidade (Instagram)", ok: !!identityIgActorId, detail: identityIgUsername ? `@${identityIgUsername}` : (identityIgActorId || "ausente") });
     checks.push({ label: "Criativos", ok: finalCreatives.every(c => c.validation?.ok), detail: `${finalCreatives.filter(c => c.validation?.ok).length}/${finalCreatives.length} validados` });
     if (isFase3) {
-      const manualOk = manualWhatsapp.replace(/\D/g, "").length >= 10;
-      checks.push({ label: "WhatsApp", ok: !!selectedWhatsappId || manualOk, detail: selectedWhatsapp?.display || (manualOk ? `manual: ${manualWhatsapp}` : "ausente") });
+      checks.push({ label: "WhatsApp", ok: !!selectedWhatsappId && !!selectedWhatsapp?.phone, detail: selectedWhatsapp?.display || whatsappError || "não puxado" });
       checks.push({ label: "CTA", ok: true, detail: "WHATSAPP_MESSAGE (automático)" });
       if (useCustomMessage) {
         checks.push({ label: "Saudação", ok: !!greetingText.trim(), detail: greetingText.trim() ? `"${greetingText.substring(0, 30)}..."` : "ausente" });
@@ -1076,10 +1078,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       checks.push({ label: "Attribution", ok: true, detail: "CLICK_THROUGH / 1 dia (fixo FASE 3)" });
 
       // Promoted object CTW: backend usa só { page_id, whatsapp_phone_number }.
-      // Não precisa de ID interno — basta o telefone (auto ou manual).
-      const manualDigits = manualWhatsapp.replace(/\D/g, "");
-      const hasPhone = !!(selectedWhatsapp?.phone) || manualDigits.length >= 10;
-      checks.push({ label: "promoted_object (telefone)", ok: hasPhone, detail: selectedWhatsapp?.phone || (manualDigits.length >= 10 ? manualDigits : "ausente") });
+      // Telefone vem SEMPRE do número puxado da conta (sem entrada manual).
+      const hasPhone = !!(selectedWhatsapp?.phone);
+      checks.push({ label: "promoted_object (telefone)", ok: hasPhone, detail: selectedWhatsapp?.phone || whatsappError || "não puxado" });
 
       addLog(`🔍 [validate] ═══ VALIDAÇÃO ESTRUTURAL FASE 3 ═══`);
       addLog(`🔍 [validate] Campaign: objective=${campaignObj}`);
@@ -1131,7 +1132,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           default_cta: selectedPreset.default_cta,
           status: selectedPreset.status,
         },
-        whatsapp_number: isFase3 ? (selectedWhatsapp?.phone || manualWhatsapp.replace(/\D/g, "") || "") : undefined,
+        whatsapp_number: isFase3 ? (selectedWhatsapp?.phone || "") : undefined,
         whatsapp_number_id: isFase3 ? (selectedWhatsappId || undefined) : undefined,
         location_targeting: isFase3 ? buildLocationTargeting() : undefined,
         cta_text: undefined,
@@ -1370,7 +1371,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                       ) : whatsappNumbers.length > 0 ? (
                         <p className="text-xs"><strong>WhatsApp:</strong> {whatsappNumbers.length} número(s) — ex: {whatsappNumbers[0].phone}</p>
                       ) : (
-                        <p className="text-xs text-warning">⚠️ Nenhum número puxado — use entrada manual em FASE 3</p>
+                        <p className="text-xs text-destructive">⚠️ {whatsappError || "Não foi possível puxar o WhatsApp."}</p>
                       )
                     )}
                   </div>
@@ -1789,8 +1790,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 loading={loadingWhatsappNumbers}
                 selectedId={selectedWhatsappId}
                 onSelect={setSelectedWhatsappId}
-                manualNumber={manualWhatsapp}
-                onManualNumber={setManualWhatsapp}
+                errorReason={whatsappError}
+                onRetry={() => loadWhatsappNumbers(identityPageId || undefined)}
               />
 
               {/* FASE 3 VENDAS ZAP — pixel + evento PURCHASE */}
