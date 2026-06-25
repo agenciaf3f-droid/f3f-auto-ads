@@ -170,7 +170,7 @@ const PRESETS = [
 ] as const;
 type PresetId = typeof PRESETS[number]["id"];
 
-const UTM_TEMPLATE = "utm_source=FB&utm_campaign={{campaign.name}}|{{campaign.id}}&utm_medium={{adset.name}}|{{adset.id}}&utm_content={{ad.name}}|{{ad.id}}&utm_term={{placement}}";
+const UTM_DEFAULT = "utm_source=FB&utm_campaign={{campaign.name}}|{{campaign.id}}&utm_medium={{adset.name}}|{{adset.id}}&utm_content={{ad.name}}|{{ad.id}}&utm_term={{placement}}";
 
 let creativeCounter = 0;
 function nextCreativeId() { return `cr_${++creativeCounter}_${Date.now()}`; }
@@ -261,6 +261,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const [ltGender, setLtGender] = useState<"all" | "male" | "female">("all");
 
   // Scheduling
+  const [utmTemplate, setUtmTemplate] = useState(UTM_DEFAULT);
+  const [editingUtm, setEditingUtm] = useState(false);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("");
@@ -1214,7 +1216,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         lt_age_max: isFase3Lp ? Number(ltAgeMax) || 65 : undefined,
         lt_genders: isFase3Lp ? (ltGender === "male" ? [1] : ltGender === "female" ? [2] : []) : undefined,
         schedule,
-        utm_template: UTM_TEMPLATE,
+        utm_template: utmTemplate.trim() || UTM_DEFAULT,
       };
       setValidatedPayload(payload);
       addLog("✅ [validate] Payload completo construído e armazenado para publicação");
@@ -2091,6 +2093,39 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
             )}
           </Card>
 
+          {/* ============ UTMs ============ */}
+          <Card className="glass-card p-6 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <Label className="font-display font-semibold text-sm">UTMs (parâmetros de rastreio)</Label>
+              {!editingUtm ? (
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1" onClick={() => setEditingUtm(true)} disabled={loading}>
+                  <Pencil className="w-3.5 h-3.5" /> Editar
+                </Button>
+              ) : (
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1" onClick={() => setUtmTemplate(UTM_DEFAULT)} disabled={loading}>
+                  <X className="w-3.5 h-3.5" /> Restaurar padrão
+                </Button>
+              )}
+            </div>
+            {editingUtm ? (
+              <div className="space-y-2">
+                <Textarea
+                  value={utmTemplate}
+                  onChange={(e) => setUtmTemplate(e.target.value)}
+                  rows={4}
+                  className="text-xs font-mono"
+                  placeholder={UTM_DEFAULT}
+                  disabled={loading}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Query string aplicada no <span className="font-mono">url_tags</span> do criativo. Macros do Meta: <span className="font-mono">{"{{campaign.name}}"}</span>, <span className="font-mono">{"{{adset.id}}"}</span>, <span className="font-mono">{"{{ad.name}}"}</span>, <span className="font-mono">{"{{placement}}"}</span>. Vazio = padrão.
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs font-mono text-muted-foreground break-all bg-muted/30 rounded p-2">{utmTemplate.trim() || UTM_DEFAULT}</p>
+            )}
+          </Card>
+
           {/* Summary */}
           {(computedCampaignName || computedAdsetName || creatives.some(c => c.name) || isFase3) && (
             <Card className="glass-card p-4 glow-primary">
@@ -2181,7 +2216,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                     {scheduleEnabled && scheduleDate && scheduleTime && (
                       <p className="text-xs text-muted-foreground">Início agendado: {scheduleDate} às {scheduleTime}</p>
                     )}
-                    <p className="text-xs font-mono text-muted-foreground break-all">UTM: {UTM_TEMPLATE}</p>
+                    <p className="text-xs font-mono text-muted-foreground break-all">UTM: {utmTemplate.trim() || UTM_DEFAULT}</p>
                   </div>
                 </div>
               </div>
