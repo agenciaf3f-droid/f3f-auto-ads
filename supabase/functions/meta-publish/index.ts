@@ -1318,46 +1318,30 @@ Deno.serve(async (req) => {
       }
     }
 
-    // --- Fetch page name pra DSA fields (obrigatórios quando targeting atinge EU/EEA) ---
-    let pageName: string = pageId;
-    try {
-      const pnRes = await fetch(`https://graph.facebook.com/v25.0/${pageId}?fields=name&access_token=${access_token}`);
-      const pnData = await pnRes.json();
-      if (pnData.name) pageName = pnData.name;
-    } catch (e) {
-      console.log(`[publish] failed to fetch page name: ${(e as Error).message}`);
-    }
-
-    // DSA (Digital Services Act): MCP gabarito mostra que dsa_beneficiary/dsa_payor
-    // só são exigidos quando o targeting atinge país da EU/EEA. Pra BR-only (caso ~99%)
-    // o MCP NÃO envia esses campos. Aplicamos a mesma regra: gate por país EU/EEA.
-    const EU_EEA = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE","IS","LI","NO"]);
-    // Beneficiário/pagador (transparência). Buscamos o beneficiário recomendado/salvo
-    // da conta (dsa_recommendations) — é o que a Meta aceita. NUNCA usar o pageId numérico
-    // (causa "anunciante ausente"). Prioridade: valor do gestor (UI) → recomendação da conta
-    // → nome da página (só se não for o ID numérico).
+    // DSA / Verificação do anunciante: o erro 100/3858634 (compliance_section,
+    // "anunciante ausente") NÃO é resolvido por string — exige um ANUNCIANTE VERIFICADO
+    // configurado no Meta Business Manager. O único valor que a Meta aceita por API é o
+    // que ela mesma retorna em /dsa_recommendations (ou o que o gestor digitou e que case
+    // com uma entidade verificada). NUNCA mandar nome de página (não-verificado → rejeita).
     let accountDsaRec: string | null = null;
     try {
       const rRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/dsa_recommendations?access_token=${access_token}`);
       const rData = await rRes.json();
-      const recs = rData?.data?.[0]?.recommendations;
-      if (Array.isArray(recs) && recs.length && String(recs[0]).trim()) accountDsaRec = String(recs[0]).trim();
+      const d = rData?.data?.[0];
+      // a API retorna {data:[{beneficiary, payor}]}; versões antigas usam {recommendations:[...]}
+      const benef = d?.beneficiary ?? (Array.isArray(d?.recommendations) ? d.recommendations[0] : null);
+      if (benef && String(benef).trim()) accountDsaRec = String(benef).trim();
     } catch (e) {
       console.log(`[publish] dsa_recommendations failed: ${(e as Error).message}`);
     }
     const userBenef = (typeof body.dsa_beneficiary === "string" && body.dsa_beneficiary.trim()) ? body.dsa_beneficiary.trim() : "";
-    const pageNameValid = pageName && pageName !== pageId ? pageName : ""; // evita ID numérico
-    const dsaBeneficiary = userBenef || accountDsaRec || pageNameValid || "";
-    console.log(`[publish] DSA beneficiary resolvido: "${dsaBeneficiary}" (user="${userBenef}", rec="${accountDsaRec}", page="${pageNameValid}")`);
+    const dsaBeneficiary = userBenef || accountDsaRec || "";
+    console.log(`[publish] DSA beneficiary resolvido: "${dsaBeneficiary}" (user="${userBenef}", rec="${accountDsaRec}")`);
     const applyDsa = (p: Record<string, any>) => {
-      const c = p?.targeting?.geo_locations?.countries;
-      const hasEu = Array.isArray(c) && c.some((cc: string) => EU_EEA.has(String(cc).toUpperCase()));
-      // GABARITO (act_835492491950992, 200 adsets, 192 com advantage_audience:1, ZERO com DSA):
-      // adset BR-only com Advantage+ NÃO leva dsa_beneficiary/dsa_payor e roda normal.
-      // Enviar uma string não-verificada é o que DISPARA "anunciante ausente"
-      // (compliance_section, subcode 3858634). Só envia DSA quando há país EU/EEA real
-      // no targeting, ou quando o gestor digitou o beneficiário manualmente na UI.
-      if ((hasEu || !!userBenef) && dsaBeneficiary) {
+      // Só aplica beneficiário VERIFICADO (gestor ou dsa_recommendations). Sem valor confiável,
+      // não manda nada — o requisito de "anunciante verificado" (3858634) se resolve no Meta
+      // Business Manager, não por string aqui. Mandar nome de página só piora (rejeição).
+      if (dsaBeneficiary) {
         p.dsa_beneficiary = dsaBeneficiary;
         p.dsa_payor = dsaBeneficiary;
       }
@@ -2186,6 +2170,19 @@ Deno.serve(async (req) => {
           last_error: finalError,
         },
       });
+
+      // 3858634 = compliance_section / "anunciante ausente": exige VERIFICAÇÃO DO ANUNCIANTE
+      // no Meta Business Manager (não resolvível por API / por string no payload).
+      if (finalError && Number(finalError.error_subcode) === 3858634) {
+        finalError = {
+          ...finalError,
+          error_user_title: "Anunciante não verificado",
+          error_user_msg: "Esta conta precisa de um ANUNCIANTE VERIFICADO para veicular no Brasil. " +
+            "Não dá pra resolver pelo app: no Meta, vá em Gerenciador de Anúncios → Configurações de Publicidade → " +
+            "'Verificações e transparência dos anúncios', conclua a verificação do anunciante/pagador e defina o anunciante padrão da conta. " +
+            "Resolva também páginas restritas em facebook.com/accountquality. Depois reenvie a campanha. (erro Meta 3858634)",
+        };
+      }
 
       return {
         error: finalError || {

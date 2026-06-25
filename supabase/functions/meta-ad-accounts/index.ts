@@ -64,8 +64,10 @@ Deno.serve(async (req) => {
         J(`${base}/dsa_recommendations?access_token=${access_token}`),
       ]);
       const dsaBeneficiary: string | null = (() => {
-        const recs = dsaData?.data?.[0]?.recommendations;
-        if (Array.isArray(recs) && recs.length && String(recs[0]).trim()) return String(recs[0]).trim();
+        const d = dsaData?.data?.[0];
+        // a API retorna {data:[{beneficiary, payor}]}; versões antigas usam {recommendations:[...]}
+        const benef = d?.beneficiary ?? (Array.isArray(d?.recommendations) ? d.recommendations[0] : null);
+        if (benef && String(benef).trim()) return String(benef).trim();
         return null;
       })();
 
