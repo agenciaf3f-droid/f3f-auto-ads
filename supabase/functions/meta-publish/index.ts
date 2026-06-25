@@ -1160,8 +1160,24 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   const logs: StepLog[] = [];
-  const respond = (body: Record<string, any>, status = 200) =>
-    new Response(JSON.stringify({ ...body, logs }), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  // Cleanup: se a publicação falhar DEPOIS de criar a campanha, deletamos a campanha
+  // pra não acumular órfãs. Só deleta a que NÓS criamos (createdCampaignId), nunca
+  // campanha existente selecionada pelo gestor.
+  let createdCampaignId: string | null = null;
+  let publishToken: string | null = null;
+  const respond = async (body: Record<string, any>, status = 200) => {
+    if (body && body.ok === false && !body.warning && createdCampaignId && publishToken) {
+      try {
+        await fetch(`https://graph.facebook.com/v25.0/${createdCampaignId}?access_token=${publishToken}`, { method: "DELETE" });
+        body.campaign_deleted = createdCampaignId;
+        logs.push({ step: "cleanup", status: "success", ts: ts(), detail: `campanha ${createdCampaignId} deletada após falha` });
+        createdCampaignId = null;
+      } catch (e) {
+        logs.push({ step: "cleanup", status: "error", ts: ts(), detail: `falha ao deletar campanha ${createdCampaignId}: ${(e as Error).message}` });
+      }
+    }
+    return new Response(JSON.stringify({ ...body, logs }), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  };
 
   try {
     const authHeader = req.headers.get("authorization");
@@ -1206,6 +1222,7 @@ Deno.serve(async (req) => {
       lp_url, pixel_id, custom_event_type,
       schedule, utm_template,
     } = body;
+    publishToken = typeof access_token === "string" ? access_token : null;
 
     // Validação de access_token (cobre todos os usos subsequentes)
     if (!access_token || typeof access_token !== "string" || access_token.trim().length === 0) {
@@ -1314,10 +1331,22 @@ Deno.serve(async (req) => {
     // só são exigidos quando o targeting atinge país da EU/EEA. Pra BR-only (caso ~99%)
     // o MCP NÃO envia esses campos. Aplicamos a mesma regra: gate por país EU/EEA.
     const EU_EEA = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE","IS","LI","NO"]);
+    // Beneficiário/pagador (transparência). Prioridade: valor do gestor (UI) → nome da página.
+    const dsaBeneficiary = (typeof body.dsa_beneficiary === "string" && body.dsa_beneficiary.trim())
+      ? body.dsa_beneficiary.trim()
+      : pageName;
     const applyDsa = (p: Record<string, any>) => {
       const c = p?.targeting?.geo_locations?.countries;
       const hasEu = Array.isArray(c) && c.some((cc: string) => EU_EEA.has(String(cc).toUpperCase()));
-      if (hasEu) { p.dsa_beneficiary = pageName; p.dsa_payor = pageName; }
+      // Advantage+ expande o público (pode atingir EU) → Meta exige beneficiário/pagador
+      // (erro "anunciante ausente" / compliance_section, subcode 3858634). Também enviamos
+      // se o targeting tem país EU ou se o gestor definiu beneficiário explicitamente.
+      const adv = p?.targeting?.targeting_automation?.advantage_audience === 1;
+      const explicit = typeof body.dsa_beneficiary === "string" && !!body.dsa_beneficiary.trim();
+      if (hasEu || adv || explicit) {
+        p.dsa_beneficiary = dsaBeneficiary;
+        p.dsa_payor = dsaBeneficiary;
+      }
     };
 
     // --- Resolve ALL creatives using preset-specific builder ---
@@ -1452,6 +1481,7 @@ Deno.serve(async (req) => {
         return respond({ ok: false, step: "campaign", ...formatMetaError(campaignData.error) });
       }
       campaignId = campaignData.id;
+      createdCampaignId = campaignId; // só a campanha que NÓS criamos é elegível pra cleanup em falha
       logs.push({ step: "campaign", status: "success", ts: ts(), detail: `id=${campaignId} | response=${JSON.stringify(campaignData)}` });
     }
 

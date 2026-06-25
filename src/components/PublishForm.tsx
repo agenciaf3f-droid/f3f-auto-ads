@@ -259,6 +259,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const [ltAgeMin, setLtAgeMin] = useState("18");
   const [ltAgeMax, setLtAgeMax] = useState("65");
   const [ltGender, setLtGender] = useState<"all" | "male" | "female">("all");
+  // Transparência (DSA): beneficiário/pagador. Vazio = usa o nome da página.
+  const [dsaBeneficiary, setDsaBeneficiary] = useState("");
 
   // Scheduling
   const [utmTemplate, setUtmTemplate] = useState(UTM_DEFAULT);
@@ -1217,6 +1219,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         lt_genders: isFase3Lp ? (ltGender === "male" ? [1] : ltGender === "female" ? [2] : []) : undefined,
         schedule,
         utm_template: utmTemplate.trim() || UTM_DEFAULT,
+        dsa_beneficiary: dsaBeneficiary.trim() || undefined,
       };
       setValidatedPayload(payload);
       addLog("✅ [validate] Payload completo construído e armazenado para publicação");
@@ -2124,6 +2127,21 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
             ) : (
               <p className="text-xs font-mono text-muted-foreground break-all bg-muted/30 rounded p-2">{utmTemplate.trim() || UTM_DEFAULT}</p>
             )}
+
+            <Separator className="opacity-20" />
+            <div className="space-y-1">
+              <Label className="text-xs font-medium text-muted-foreground">Beneficiário e pagador (transparência)</Label>
+              <Input
+                value={dsaBeneficiary}
+                onChange={(e) => setDsaBeneficiary(e.target.value)}
+                placeholder={identityPageName || "Ex: MARIANA EIRAS LTDA"}
+                disabled={loading}
+                className="text-sm"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Quem aparece como anunciante na Biblioteca de Anúncios. Obrigatório quando Advantage+ está ativo (público pode atingir a UE). Vazio = nome da página.
+              </p>
+            </div>
           </Card>
 
           {/* Summary */}
