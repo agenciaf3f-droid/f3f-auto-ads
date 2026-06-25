@@ -1311,15 +1311,16 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       // Use the EXACT payload built during validation — no reconstruction
       const result = await publishAd(validatedPayload);
       setPublishResult(result);
-      if (result.logs) {
-        for (const l of result.logs) addLog(`  [${l.step}] ${l.status}${l.detail ? ` — ${l.detail}` : ""}`);
-      }
       if (result.ok) {
-        addLog(`✅ Publicado! Campaign: ${result.campaign_id}`);
+        // Publicação sem erro → limpa o log por completo (confirmação aparece no card abaixo).
+        setLogs([]);
         toast.success("Anúncio(s) publicado(s) com sucesso!");
         // Clear validated payload after successful publish
         setValidatedPayload(null);
       } else {
+        if (result.logs) {
+          for (const l of result.logs) addLog(`  [${l.step}] ${l.status}${l.detail ? ` — ${l.detail}` : ""}`);
+        }
         const stepLabel = result.step || "desconhecido";
         const msg = result.error_message || result.error || "Erro desconhecido";
         const isWarning = result.warning || stepLabel === "idempotency";
@@ -2157,8 +2158,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               />
               <p className="text-[10px] text-muted-foreground">
                 {suggestedBeneficiary
-                  ? `Preenchido automaticamente com o beneficiário da conta. Em campanha BR não é enviado à Meta (não exige); vai só quando o targeting atingir a Europa. Edite para forçar outro.`
-                  : "Quem aparece como anunciante na Biblioteca de Anúncios. Deixe vazio para campanhas BR; só preencha se a campanha atingir a Europa."}
+                  ? `Anunciante verificado da conta. Enviado automaticamente à Meta (exigido para os anúncios rodarem). Edite só para forçar outro.`
+                  : "Quem aparece como anunciante na Biblioteca de Anúncios. Puxado automaticamente da conta quando disponível."}
               </p>
             </div>
           </Card>

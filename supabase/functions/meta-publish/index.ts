@@ -244,23 +244,30 @@ async function runFase3SanityChecks(params: {
     ),
   ]);
 
+  // Erro transitório (rate limit #4, #2, etc.) NÃO deve abortar o publish — é só pré-checagem.
+  // Pula o sanity e deixa a criação do adset validar de verdade (ela tem retry 3x com backoff).
+  const isTransient = (err: any) =>
+    !!err && (err.is_transient === true || [1, 2, 4, 17, 32, 341, 613].includes(Number(err.code)));
+
   checks.page = { elapsed_ms: pageCheck.elapsedMs, status: pageCheck.status, response: pageCheck.data };
-  if (pageCheck.data?.error) {
+  if (pageCheck.data?.error && !isTransient(pageCheck.data.error)) {
     return {
       ok: false,
       error_message: `Sem acesso à Página ${params.pageId}: ${pageCheck.data.error.message}`,
       checks,
     };
   }
+  if (pageCheck.data?.error) checks.page.skipped = `transitório — sanity pulado (${pageCheck.data.error.message})`;
 
   checks.whatsapp_phone = { elapsed_ms: phoneCheck.elapsedMs, status: phoneCheck.status, response: phoneCheck.data };
-  if (phoneCheck.data?.error) {
+  if (phoneCheck.data?.error && !isTransient(phoneCheck.data.error)) {
     return {
       ok: false,
       error_message: `WhatsApp Phone ID inválido/inacessível (${params.whatsappPhoneId}): ${phoneCheck.data.error.message}`,
       checks,
     };
   }
+  if (phoneCheck.data?.error) checks.whatsapp_phone.skipped = `transitório — sanity pulado (${phoneCheck.data.error.message})`;
 
   return { ok: true, checks };
 }
@@ -639,6 +646,46 @@ function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
+// Vídeo recém-upado exige thumbnail (image_url/image_hash) no video_data, senão a Meta dá
+// erro 100/1443226 "anúncio precisa de miniatura de vídeo". O campo `picture` demora a popular;
+// a edge /thumbnails costuma vir antes. Espera processar e devolve image_hash (mais estável).
+async function resolveVideoThumbnailField(
+  videoId: string,
+  accessToken: string,
+  adAccountId: string,
+): Promise<Record<string, string>> {
+  let thumbUri = "";
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await new Promise((r) => setTimeout(r, 3000));
+    try {
+      const r = await fetch(`https://graph.facebook.com/v25.0/${videoId}?fields=status,picture,thumbnails{uri,is_preferred}&access_token=${accessToken}`);
+      const d = await r.json();
+      const thumbs = d?.thumbnails?.data;
+      if (Array.isArray(thumbs) && thumbs.length) {
+        const pref = thumbs.find((t: any) => t.is_preferred) || thumbs[0];
+        if (pref?.uri) { thumbUri = pref.uri; break; }
+      }
+      if (d?.picture) { thumbUri = d.picture; break; }
+    } catch { /* segue tentando */ }
+  }
+  if (!thumbUri) return {};
+  // Sobe o thumbnail como adimage (image_hash é mais estável que image_url da CDN da Meta).
+  try {
+    const tr = await fetch(thumbUri);
+    if (tr.ok) {
+      const b64 = await blobToBase64(await tr.blob());
+      const form = new FormData();
+      form.append("access_token", accessToken);
+      form.append("filename", "video_thumb.jpg");
+      form.append("bytes", b64);
+      const up = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/adimages`, { method: "POST", body: form });
+      const upd = await up.json();
+      if (upd?.images) { const k = Object.keys(upd.images)[0]; return { image_hash: upd.images[k].hash }; }
+    }
+  } catch { /* cai pro image_url */ }
+  return { image_url: thumbUri };
+}
+
 async function resolvePageAndIg(accessToken: string, adAccountId?: string): Promise<{ pageId?: string; igActorId?: string; error?: string }> {
   async function getAllPages(): Promise<any[]> {
     const allPages: any[] = [];
@@ -742,31 +789,8 @@ async function buildFase1Creative(
       return { spec: { object_story_spec: storySpec } };
 
     } else if (result.video_id) {
-      // Wait for video processing and get thumbnail
-      let thumbnailField: Record<string, string> = {};
-      for (let attempt = 0; attempt < 12; attempt++) {
-        await new Promise(r => setTimeout(r, 5000));
-        const vidRes = await fetch(`https://graph.facebook.com/v25.0/${result.video_id}?fields=status,picture&access_token=${accessToken}`);
-        const vidData = await vidRes.json();
-        if (vidData.picture) {
-          try {
-            const thumbRes = await fetch(vidData.picture);
-            if (thumbRes.ok) {
-              const thumbBlob = await thumbRes.blob();
-              const thumbB64 = await blobToBase64(thumbBlob);
-              const imgForm = new FormData();
-              imgForm.append("access_token", accessToken);
-              imgForm.append("filename", "video_thumb.jpg");
-              imgForm.append("bytes", thumbB64);
-              const imgUpRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/adimages`, { method: "POST", body: imgForm });
-              const imgUpData = await imgUpRes.json();
-              if (imgUpData.images) { const firstKey = Object.keys(imgUpData.images)[0]; thumbnailField = { image_hash: imgUpData.images[firstKey].hash }; }
-            }
-          } catch {}
-          if (!thumbnailField.image_hash) thumbnailField = { image_url: vidData.picture };
-          break;
-        }
-      }
+      // Vídeo precisa de thumbnail no video_data (senão Meta erro 100/1443226).
+      const thumbnailField = await resolveVideoThumbnailField(result.video_id, accessToken, adAccountId);
 
       const videoData: Record<string, any> = {
         video_id: result.video_id,
@@ -904,14 +928,8 @@ async function buildFase2Creative(
     if (result.error) return { error: result.error };
     if (!result.video_id) return { error: "FASE 2 Drive: arquivo precisa ser vídeo (não imagem)." };
 
-    // Aguardar processing (15s max)
-    let thumbnailField: Record<string, string> = {};
-    for (let attempt = 0; attempt < 5; attempt++) {
-      await new Promise(r => setTimeout(r, 3000));
-      const vidRes = await fetch(`https://graph.facebook.com/v25.0/${result.video_id}?fields=picture&access_token=${accessToken}`);
-      const vidData = await vidRes.json();
-      if (vidData.picture) { thumbnailField = { image_url: vidData.picture }; break; }
-    }
+    // Vídeo precisa de thumbnail no video_data (senão Meta erro 100/1443226).
+    const thumbnailField = await resolveVideoThumbnailField(result.video_id, accessToken, adAccountId);
 
     const videoData: Record<string, any> = {
       video_id: result.video_id,
@@ -991,31 +1009,8 @@ async function buildFase3LpCreative(
     }
 
     if (result.video_id) {
-      // Aguardar processing + thumbnail (mesmo padrão do FASE 1 Drive video)
-      let thumbnailField: Record<string, string> = {};
-      for (let attempt = 0; attempt < 12; attempt++) {
-        await new Promise(r => setTimeout(r, 5000));
-        const vidRes = await fetch(`https://graph.facebook.com/v25.0/${result.video_id}?fields=status,picture&access_token=${accessToken}`);
-        const vidData = await vidRes.json();
-        if (vidData.picture) {
-          try {
-            const thumbRes = await fetch(vidData.picture);
-            if (thumbRes.ok) {
-              const thumbBlob = await thumbRes.blob();
-              const thumbB64 = await blobToBase64(thumbBlob);
-              const imgForm = new FormData();
-              imgForm.append("access_token", accessToken);
-              imgForm.append("filename", "video_thumb.jpg");
-              imgForm.append("bytes", thumbB64);
-              const imgUpRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/adimages`, { method: "POST", body: imgForm });
-              const imgUpData = await imgUpRes.json();
-              if (imgUpData.images) { const firstKey = Object.keys(imgUpData.images)[0]; thumbnailField = { image_hash: imgUpData.images[firstKey].hash }; }
-            }
-          } catch {}
-          if (!thumbnailField.image_hash) thumbnailField = { image_url: vidData.picture };
-          break;
-        }
-      }
+      // Vídeo precisa de thumbnail no video_data (senão Meta erro 100/1443226).
+      const thumbnailField = await resolveVideoThumbnailField(result.video_id, accessToken, adAccountId);
 
       const videoData: Record<string, any> = {
         video_id: result.video_id,
@@ -1107,31 +1102,8 @@ async function buildFase3Creative(
       return { spec: { object_story_spec: storySpec } };
 
     } else if (result.video_id) {
-      // Wait for thumbnail
-      let thumbnailField: Record<string, string> = {};
-      for (let attempt = 0; attempt < 12; attempt++) {
-        await new Promise(r => setTimeout(r, 5000));
-        const vidRes = await fetch(`https://graph.facebook.com/v25.0/${result.video_id}?fields=status,picture&access_token=${accessToken}`);
-        const vidData = await vidRes.json();
-        if (vidData.picture) {
-          try {
-            const thumbRes = await fetch(vidData.picture);
-            if (thumbRes.ok) {
-              const thumbBlob = await thumbRes.blob();
-              const thumbB64 = await blobToBase64(thumbBlob);
-              const imgForm = new FormData();
-              imgForm.append("access_token", accessToken);
-              imgForm.append("filename", "video_thumb.jpg");
-              imgForm.append("bytes", thumbB64);
-              const imgUpRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/adimages`, { method: "POST", body: imgForm });
-              const imgUpData = await imgUpRes.json();
-              if (imgUpData.images) { const firstKey = Object.keys(imgUpData.images)[0]; thumbnailField = { image_hash: imgUpData.images[firstKey].hash }; }
-            }
-          } catch {}
-          if (!thumbnailField.image_hash) thumbnailField = { image_url: vidData.picture };
-          break;
-        }
-      }
+      // Vídeo precisa de thumbnail no video_data (senão Meta erro 100/1443226).
+      const thumbnailField = await resolveVideoThumbnailField(result.video_id, accessToken, adAccountId);
 
       const videoData: Record<string, any> = {
         video_id: result.video_id,
@@ -1318,11 +1290,28 @@ Deno.serve(async (req) => {
       }
     }
 
-    // DSA / Verificação do anunciante: o erro 100/3858634 (compliance_section,
-    // "anunciante ausente") NÃO é resolvido por string — exige um ANUNCIANTE VERIFICADO
-    // configurado no Meta Business Manager. O único valor que a Meta aceita por API é o
-    // que ela mesma retorna em /dsa_recommendations (ou o que o gestor digitou e que case
-    // com uma entidade verificada). NUNCA mandar nome de página (não-verificado → rejeita).
+    // Anunciante/Pagador verificado (compliance). O erro 100/3858634 ("anunciante ausente")
+    // NÃO é resolvido por dsa_beneficiary/dsa_payor em TEXTO LIVRE — em mercados que exigem
+    // verificação (BR) a Meta rejeita até o valor recomendado. As campanhas que RODAM nesta
+    // conta usam regional_regulation_identities { universal_beneficiary, universal_payer } =
+    // ID da entidade VERIFICADA. Puxamos esses ids de um adset existente da conta e replicamos.
+    let universalBeneficiary: string | null = null;
+    let universalPayer: string | null = null;
+    try {
+      const aRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/adsets?fields=regional_regulation_identities&limit=50&access_token=${access_token}`);
+      const aData = await aRes.json();
+      for (const it of (aData?.data || [])) {
+        const rri = it?.regional_regulation_identities;
+        if (rri?.universal_beneficiary) {
+          universalBeneficiary = String(rri.universal_beneficiary);
+          universalPayer = String(rri.universal_payer || rri.universal_beneficiary);
+          break;
+        }
+      }
+    } catch (e) {
+      console.log(`[publish] regional_regulation_identities lookup failed: ${(e as Error).message}`);
+    }
+    // Fallback (contas sem entidade verificada herdável): string DSA (gestor → dsa_recommendations).
     let accountDsaRec: string | null = null;
     try {
       const rRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/dsa_recommendations?access_token=${access_token}`);
@@ -1336,12 +1325,16 @@ Deno.serve(async (req) => {
     }
     const userBenef = (typeof body.dsa_beneficiary === "string" && body.dsa_beneficiary.trim()) ? body.dsa_beneficiary.trim() : "";
     const dsaBeneficiary = userBenef || accountDsaRec || "";
-    console.log(`[publish] DSA beneficiary resolvido: "${dsaBeneficiary}" (user="${userBenef}", rec="${accountDsaRec}")`);
+    console.log(`[publish] DSA resolvido: universal_beneficiary="${universalBeneficiary}" universal_payer="${universalPayer}" | fallback_string="${dsaBeneficiary}"`);
     const applyDsa = (p: Record<string, any>) => {
-      // Só aplica beneficiário VERIFICADO (gestor ou dsa_recommendations). Sem valor confiável,
-      // não manda nada — o requisito de "anunciante verificado" (3858634) se resolve no Meta
-      // Business Manager, não por string aqui. Mandar nome de página só piora (rejeição).
-      if (dsaBeneficiary) {
+      if (universalBeneficiary) {
+        // anunciante verificado por ID — exatamente o que as campanhas que rodam nesta conta usam
+        p.regional_regulation_identities = {
+          universal_beneficiary: universalBeneficiary,
+          universal_payer: universalPayer || universalBeneficiary,
+        };
+      } else if (dsaBeneficiary) {
+        // fallback texto livre (transparência DSA UE / contas sem entidade verificada herdável)
         p.dsa_beneficiary = dsaBeneficiary;
         p.dsa_payor = dsaBeneficiary;
       }
@@ -1724,7 +1717,12 @@ Deno.serve(async (req) => {
       if (ltGenders.length === 1) lpTargeting.genders = ltGenders;
       else delete lpTargeting.genders;
       if (ltAdvantage) {
-        lpTargeting.targeting_automation = { advantage_audience: 1 };
+        // Advantage+ ON: idade/gênero são SUGESTÃO (Meta expande além). individual_setting age:0/gender:0
+        // marca como NÃO-fixo → permite age_min > 25 como sugestão (senão erro 100/1870188).
+        lpTargeting.targeting_automation = {
+          advantage_audience: 1,
+          individual_setting: { age: 0, gender: 0 },
+        };
       } else {
         lpTargeting.targeting_automation = {
           advantage_audience: 0,
