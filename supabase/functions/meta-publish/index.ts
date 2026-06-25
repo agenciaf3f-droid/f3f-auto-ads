@@ -297,8 +297,9 @@ function validateFase3PromotedObject(promotedObject: Record<string, any>) {
 
 function validateFase3Targeting(t: Record<string, any>) {
   const errors: string[] = [];
-  if (t.age_min !== 18) errors.push(`age_min deve ser 18, encontrado: ${t.age_min}`);
-  if (t.age_max !== 65) errors.push(`age_max deve ser 65, encontrado: ${t.age_max}`);
+  if (typeof t.age_min !== "number" || t.age_min < 13 || t.age_min > 65) errors.push(`age_min inválido (13-65): ${t.age_min}`);
+  if (typeof t.age_max !== "number" || t.age_max < 13 || t.age_max > 65) errors.push(`age_max inválido (13-65): ${t.age_max}`);
+  if (typeof t.age_min === "number" && typeof t.age_max === "number" && t.age_min > t.age_max) errors.push(`age_min (${t.age_min}) > age_max (${t.age_max})`);
   if (!t.geo_locations?.countries) errors.push("geo_locations.countries ausente");
   if (!t.geo_locations?.location_types) errors.push("geo_locations.location_types ausente");
   if (!t.targeting_automation) errors.push("targeting_automation ausente");
@@ -1600,9 +1601,9 @@ Deno.serve(async (req) => {
       // ══════════════════════════════════════════════════════════════
       const fase3Targeting: Record<string, any> = {};
 
-      // age
-      fase3Targeting.age_min = 18;
-      fase3Targeting.age_max = 65;
+      // age — default 18-65, mas RESPEITA a idade segmentada no público (saved audience) capturada abaixo
+      let fase3AgeMin = 18;
+      let fase3AgeMax = 65;
 
       // custom_audiences vs saved_audiences — tratar tipo corretamente
       const audienceType = body.audience_type || "custom";
@@ -1610,14 +1611,24 @@ Deno.serve(async (req) => {
         if (audienceType === "saved" && targeting_spec) {
           // Saved audience: mesclar targeting_spec (interests, behaviors, etc.)
           const savedTargeting = { ...targeting_spec };
+          // RESPEITA a idade segmentada no público: age_range (Advantage+) tem prioridade; senão age_min/age_max.
+          if (Array.isArray(savedTargeting.age_range) && savedTargeting.age_range.length === 2) {
+            fase3AgeMin = Number(savedTargeting.age_range[0]) || fase3AgeMin;
+            fase3AgeMax = Number(savedTargeting.age_range[1]) || fase3AgeMax;
+          } else {
+            if (typeof savedTargeting.age_min === "number") fase3AgeMin = savedTargeting.age_min;
+            if (typeof savedTargeting.age_max === "number") fase3AgeMax = savedTargeting.age_max;
+          }
           delete savedTargeting.age_min;
           delete savedTargeting.age_max;
+          // age_range só vale com Advantage+ ligado; FASE 3 força advantage_audience:0 → remover (senão Meta erro 100/1487079). Idade já capturada acima.
+          delete savedTargeting.age_range;
           delete savedTargeting.geo_locations;
           delete savedTargeting.targeting_automation;
           delete savedTargeting.targeting_optimization;
           delete savedTargeting.brand_safety_content_filter_levels;
           Object.assign(fase3Targeting, savedTargeting);
-          console.log(`[FASE3-adset] audience type=saved, merged targeting_spec fields`);
+          console.log(`[FASE3-adset] audience type=saved, age=${fase3AgeMin}-${fase3AgeMax}, merged targeting_spec fields`);
         } else {
           // Custom audience: enviar como custom_audiences
           fase3Targeting.custom_audiences = [{ id: audience_id, name: audienceName || "" }];
@@ -1626,6 +1637,10 @@ Deno.serve(async (req) => {
       } else if (targeting?.custom_audiences) {
         fase3Targeting.custom_audiences = targeting.custom_audiences;
       }
+
+      // aplica idade — default 18-65 ou a segmentação do público
+      fase3Targeting.age_min = fase3AgeMin;
+      fase3Targeting.age_max = fase3AgeMax;
 
       // geo_locations
       if (targeting?.geo_locations) {

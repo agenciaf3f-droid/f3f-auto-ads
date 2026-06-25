@@ -422,7 +422,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           setIdentityIgUsername(c.igUsername ?? null);
           setIdentityWhatsappId(c.whatsappId ?? null);
           setIdentityWhatsappPhone(c.whatsappPhone ?? null);
-          if (c.dsaBeneficiary) setSuggestedBeneficiary(c.dsaBeneficiary);
+          if (c.dsaBeneficiary) { setSuggestedBeneficiary(c.dsaBeneficiary); setDsaBeneficiary(prev => prev || c.dsaBeneficiary); }
           setIdentityLoaded(true);
           setIdentityLoading(false);
           resolvedPageId = c.pageId ?? null;
@@ -441,7 +441,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     if (!identityFromCache) {
     try {
       const { ig_accounts: igAccounts, diagnostic, dsa_beneficiary } = await igFetchPromise!;
-      if (dsa_beneficiary) { setSuggestedBeneficiary(dsa_beneficiary); addLog(`🏷️ [pipeline] Beneficiário da conta (sugestão): ${dsa_beneficiary}`); }
+      if (dsa_beneficiary) { setSuggestedBeneficiary(dsa_beneficiary); setDsaBeneficiary(prev => prev || dsa_beneficiary); addLog(`🏷️ [pipeline] Beneficiário da conta (auto-preenchido): ${dsa_beneficiary}`); }
       addLog(`📄 [pipeline] contas IG autorizadas: ${igAccounts.length}`);
       for (const d of diagnostic) {
         addLog(`   🔎 ${d.endpoint} → ${d.status}${d.count !== undefined ? ` (${d.count})` : ""}${d.detail ? ` | ${d.detail}` : ""}`);
@@ -1234,7 +1234,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         lt_genders: isFase3Lp ? (ltGender === "male" ? [1] : ltGender === "female" ? [2] : []) : undefined,
         schedule,
         utm_template: utmTemplate.trim() || UTM_DEFAULT,
-        dsa_beneficiary: dsaBeneficiary.trim() || undefined,
+        // auto-preenchido com o beneficiário da conta serve só pra UI; só envia se o gestor EDITOU (difere da sugestão).
+        // Untouched → undefined → backend não manda DSA em BR e usa a recomendação da conta quando atinge a Europa.
+        dsa_beneficiary: (dsaBeneficiary.trim() && dsaBeneficiary.trim() !== suggestedBeneficiary.trim()) ? dsaBeneficiary.trim() : undefined,
       };
       setValidatedPayload(payload);
       addLog("✅ [validate] Payload completo construído e armazenado para publicação");
@@ -2155,7 +2157,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               />
               <p className="text-[10px] text-muted-foreground">
                 {suggestedBeneficiary
-                  ? `Puxado da conta: ${suggestedBeneficiary}. Deixe vazio — campanhas BR não precisam (preencher com beneficiário não-verificado faz a Meta rejeitar). Só preencha se a campanha atingir a Europa e a Meta exigir.`
+                  ? `Preenchido automaticamente com o beneficiário da conta. Em campanha BR não é enviado à Meta (não exige); vai só quando o targeting atingir a Europa. Edite para forçar outro.`
                   : "Quem aparece como anunciante na Biblioteca de Anúncios. Deixe vazio para campanhas BR; só preencha se a campanha atingir a Europa."}
               </p>
             </div>
