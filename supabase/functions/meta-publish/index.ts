@@ -1331,19 +1331,30 @@ Deno.serve(async (req) => {
     // só são exigidos quando o targeting atinge país da EU/EEA. Pra BR-only (caso ~99%)
     // o MCP NÃO envia esses campos. Aplicamos a mesma regra: gate por país EU/EEA.
     const EU_EEA = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE","IS","LI","NO"]);
-    // Beneficiário/pagador (transparência). Prioridade: valor do gestor (UI) → nome da página.
-    const dsaBeneficiary = (typeof body.dsa_beneficiary === "string" && body.dsa_beneficiary.trim())
-      ? body.dsa_beneficiary.trim()
-      : pageName;
+    // Beneficiário/pagador (transparência). Buscamos o beneficiário recomendado/salvo
+    // da conta (dsa_recommendations) — é o que a Meta aceita. NUNCA usar o pageId numérico
+    // (causa "anunciante ausente"). Prioridade: valor do gestor (UI) → recomendação da conta
+    // → nome da página (só se não for o ID numérico).
+    let accountDsaRec: string | null = null;
+    try {
+      const rRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/dsa_recommendations?access_token=${access_token}`);
+      const rData = await rRes.json();
+      const recs = rData?.data?.[0]?.recommendations;
+      if (Array.isArray(recs) && recs.length && String(recs[0]).trim()) accountDsaRec = String(recs[0]).trim();
+    } catch (e) {
+      console.log(`[publish] dsa_recommendations failed: ${(e as Error).message}`);
+    }
+    const userBenef = (typeof body.dsa_beneficiary === "string" && body.dsa_beneficiary.trim()) ? body.dsa_beneficiary.trim() : "";
+    const pageNameValid = pageName && pageName !== pageId ? pageName : ""; // evita ID numérico
+    const dsaBeneficiary = userBenef || accountDsaRec || pageNameValid || "";
+    console.log(`[publish] DSA beneficiary resolvido: "${dsaBeneficiary}" (user="${userBenef}", rec="${accountDsaRec}", page="${pageNameValid}")`);
     const applyDsa = (p: Record<string, any>) => {
       const c = p?.targeting?.geo_locations?.countries;
       const hasEu = Array.isArray(c) && c.some((cc: string) => EU_EEA.has(String(cc).toUpperCase()));
       // Advantage+ expande o público (pode atingir EU) → Meta exige beneficiário/pagador
-      // (erro "anunciante ausente" / compliance_section, subcode 3858634). Também enviamos
-      // se o targeting tem país EU ou se o gestor definiu beneficiário explicitamente.
+      // (erro "anunciante ausente" / compliance_section, subcode 3858634).
       const adv = p?.targeting?.targeting_automation?.advantage_audience === 1;
-      const explicit = typeof body.dsa_beneficiary === "string" && !!body.dsa_beneficiary.trim();
-      if (hasEu || adv || explicit) {
+      if ((hasEu || adv || !!userBenef) && dsaBeneficiary) {
         p.dsa_beneficiary = dsaBeneficiary;
         p.dsa_payor = dsaBeneficiary;
       }

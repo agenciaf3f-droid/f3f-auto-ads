@@ -407,7 +407,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     // ===== Identidade: tenta cache por conta (a varredura de páginas é lenta) =====
     let resolvedPageId: string | null = null;
     const IDENTITY_TTL = 60 * 60 * 1000; // 1h
-    const identityCacheKey = `identity_cache_${selectedAccount}`;
+    const identityCacheKey = `identity_cache_v2_${selectedAccount}`;
     let identityFromCache = false;
     try {
       const raw = sessionStorage.getItem(identityCacheKey);
