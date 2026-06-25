@@ -394,6 +394,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     setWhatsappNumbers([]);
     setSelectedWhatsappId("");
     setWhatsappError(null);
+    setDsaBeneficiary("");
     setSelectedTemplateId("");
     // Reset audiences
     setAudiences([]);
@@ -419,6 +420,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           setIdentityIgUsername(c.igUsername ?? null);
           setIdentityWhatsappId(c.whatsappId ?? null);
           setIdentityWhatsappPhone(c.whatsappPhone ?? null);
+          if (c.dsaBeneficiary) setDsaBeneficiary(c.dsaBeneficiary);
           setIdentityLoaded(true);
           setIdentityLoading(false);
           resolvedPageId = c.pageId ?? null;
@@ -436,7 +438,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     // ===== STEP 3: LOAD IDENTITY (só se não veio do cache) =====
     if (!identityFromCache) {
     try {
-      const { ig_accounts: igAccounts, diagnostic } = await igFetchPromise!;
+      const { ig_accounts: igAccounts, diagnostic, dsa_beneficiary } = await igFetchPromise!;
+      if (dsa_beneficiary) { setDsaBeneficiary(dsa_beneficiary); addLog(`🏷️ [pipeline] Beneficiário da conta: ${dsa_beneficiary}`); }
       addLog(`📄 [pipeline] contas IG autorizadas: ${igAccounts.length}`);
       for (const d of diagnostic) {
         addLog(`   🔎 ${d.endpoint} → ${d.status}${d.count !== undefined ? ` (${d.count})` : ""}${d.detail ? ` | ${d.detail}` : ""}`);
@@ -500,6 +503,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
             pageId: foundPageId, pageName: foundPageName,
             igActorId: foundIgActorId, igUsername: foundIgUsername,
             whatsappId: foundWhatsappId, whatsappPhone: foundWhatsappPhone,
+            dsaBeneficiary: dsa_beneficiary || null,
             _cachedAt: Date.now(),
           }));
         } catch { /* ignore */ }
@@ -1122,7 +1126,15 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         checks.push({ label: "Saudação", ok: !!greetingText.trim(), detail: greetingText.trim() ? `"${greetingText.substring(0, 30)}..."` : "ausente" });
         checks.push({ label: "Mensagem Pronta", ok: !!readyMessage.trim(), detail: readyMessage.trim() ? `"${readyMessage.substring(0, 30)}..."` : "ausente" });
       } else {
-        checks.push({ label: "Modelo de Conversa", ok: !!selectedTemplateId, detail: selectedTemplateId || "nenhum selecionado" });
+        // Modelo de conversa: importado (selectedImportedKey) OU salvo (selectedTemplateId)
+        // OU mensagem preenchida manualmente (greeting+ready).
+        const hasMsg = !!selectedImportedKey || !!selectedTemplateId || (!!greetingText.trim() && !!readyMessage.trim());
+        const detail = selectedImportedKey
+          ? `importado: ${selectedImportedKey}`
+          : selectedTemplateId
+            ? `salvo: ${selectedTemplateId}`
+            : (greetingText.trim() ? "mensagem manual" : "nenhum selecionado");
+        checks.push({ label: "Modelo de Conversa", ok: hasMsg, detail });
       }
     }
 

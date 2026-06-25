@@ -55,12 +55,16 @@ Deno.serve(async (req) => {
         catch (e) { return { error: { message: (e as Error).message } }; }
       };
       const base = `https://graph.facebook.com/v25.0/${ad_account_id}`;
-      const [igData, ciaData, actorData, ppData] = await Promise.all([
+      const [igData, ciaData, actorData, ppData, adsetsData] = await Promise.all([
         J(`${base}/instagram_accounts?fields=id,username&limit=25&access_token=${access_token}`),
         J(`${base}/connected_instagram_accounts?fields=id,username&limit=25&access_token=${access_token}`),
         J(`${base}?fields=instagram_actor_id{username},business&access_token=${access_token}`),
         J(`${base}/promote_pages?fields=id,name,instagram_business_account{id,username},whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`),
+        // beneficiário/pagador (DSA) de adsets existentes — pra prefill no front
+        J(`${base}/adsets?fields=dsa_beneficiary,dsa_payor&limit=15&access_token=${access_token}`),
       ]);
+      const dsaBeneficiary: string | null =
+        (adsetsData?.data || []).map((a: any) => a?.dsa_beneficiary).find((v: any) => v && String(v).trim()) || null;
 
       let igAccounts: { id: string; username: string | null }[] = [];
       // 1a: instagram_accounts (direto)
@@ -215,7 +219,7 @@ Deno.serve(async (req) => {
       // Adiciona contador final de pages no diagnóstico
       diagnostic.push({ endpoint: "_total_pages_scanned", status: "info", count: allPages.length });
 
-      return new Response(JSON.stringify({ ig_accounts: results, pages_scanned: allPages.length, diagnostic }), {
+      return new Response(JSON.stringify({ ig_accounts: results, pages_scanned: allPages.length, dsa_beneficiary: dsaBeneficiary, diagnostic }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

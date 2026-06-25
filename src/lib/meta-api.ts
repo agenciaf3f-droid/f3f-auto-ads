@@ -47,7 +47,7 @@ export async function fetchIgAccountsForAdAccount(accessToken: string, adAccount
     body: { access_token: accessToken, action: "get_ig_accounts", ad_account_id: adAccountId },
   });
   if (error) throw new Error(error.message);
-  return { ig_accounts: data?.ig_accounts || [], diagnostic: data?.diagnostic || [] };
+  return { ig_accounts: data?.ig_accounts || [], diagnostic: data?.diagnostic || [], dsa_beneficiary: data?.dsa_beneficiary || null };
 }
 
 export async function fetchAudiences(accessToken: string, adAccountId: string) {
