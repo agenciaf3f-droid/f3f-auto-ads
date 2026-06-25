@@ -16,6 +16,27 @@ export function generateCampaignName({
   return `${prefix} - ${campaignName}`;
 }
 
+// L.T (low-ticket) tem formato próprio (TESTE e CRIATIVO fixos):
+// [PRODUTO] [L.T] [dd/mm] [ABO|CBO] [TESTE] [CRIATIVO] -
+export function generateLtCampaignName({
+  productName,
+  presetLabel,
+  structure,
+  date,
+}: {
+  productName: string;
+  presetLabel: string;
+  structure: string;      // ABO | CBO
+  date?: string;          // dd/mm
+}) {
+  let d = date;
+  if (!d) {
+    const now = new Date();
+    d = `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}`;
+  }
+  return `[${productName}] [${presetLabel}] [${d}] [${structure}] [TESTE] [CRIATIVO] -`;
+}
+
 export function generateAdsetName({
   publicName,
   adsetName,

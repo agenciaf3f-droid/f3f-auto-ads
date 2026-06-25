@@ -2268,11 +2268,21 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Nome do conjunto: [PUBLICO] {WHATS|PAGINA} - NomeCriativo
-    // WHATS se campanha vai pro WhatsApp; PAGINA se leva pra página/site/perfil.
+    // Nome do conjunto: [PUBLICO] {WHATS|PAGINA|SLUG} - NomeCriativo
+    // WHATS se WhatsApp; L.T (site) usa o SLUG da página (último segmento da URL,
+    // ex: marianaeiraspersona.com/ddx-12/ → DDX-12); senão PAGINA.
     // ABO: 1 criativo por conjunto → inclui nome do criativo.
     // CBO: 1 conjunto, N criativos → sem nome do criativo.
-    const chanTag = isWhatsAppPreset ? "WHATS" : "PAGINA";
+    const lpSlug = (() => {
+      if (!isWebsitePreset || !lp_url) return "";
+      try {
+        const raw = String(lp_url);
+        const u = raw.includes("://") ? raw : `https://${raw}`;
+        const path = new URL(u).pathname.replace(/\/+$/, "");
+        return (path.split("/").filter(Boolean).pop() || "").toUpperCase();
+      } catch { return ""; }
+    })();
+    const chanTag = isWhatsAppPreset ? "WHATS" : isWebsitePreset ? (lpSlug || "PAGINA") : "PAGINA";
     const audTag = (body.audience_name || adset_name || generated_name || "Público").trim();
     const makeAdsetName = (creativeName?: string) =>
       creativeName ? `[${audTag}] {${chanTag}} - ${creativeName}` : `[${audTag}] {${chanTag}}`;

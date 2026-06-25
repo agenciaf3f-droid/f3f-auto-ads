@@ -31,7 +31,7 @@ import {
   fetchImportedMetaTemplates, type ImportedMetaTemplate,
   fetchPixels, type AdPixel,
 } from "@/lib/meta-api";
-import { generateCampaignName, generateAdsetName, generateAdName_v2 } from "@/lib/naming";
+import { generateCampaignName, generateLtCampaignName, generateAdsetName, generateAdName_v2 } from "@/lib/naming";
 import SearchableSelect from "@/components/SearchableSelect";
 import IDDisplay from "@/components/IDDisplay";
 import LocationSelector, { type LocationItem } from "@/components/LocationSelector";
@@ -837,8 +837,10 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           ? `${fase2AudienceNamesList[0]} +${fase2AudienceNamesList.length - 1}`
           : "Multi")
     : (isFase3Lp && ltAdvantage ? "Advantage+" : selectedAudienceName);
-  const computedCampaignName = campaignStructure === "new" && campaignNameInput && (namingPublicName || isFase2) && budget
-    ? generateCampaignName({ presetLabel: selectedPreset.fase, publicName: namingPublicName || "Multi", budget: Number(budget), campaignName: campaignNameInput })
+  const computedCampaignName = campaignStructure === "new" && campaignNameInput && budget && (isFase3Lp || namingPublicName || isFase2)
+    ? (isFase3Lp
+        ? generateLtCampaignName({ productName: campaignNameInput, presetLabel: selectedPreset.label, structure: distributionStructure })
+        : generateCampaignName({ presetLabel: selectedPreset.fase, publicName: namingPublicName || "Multi", budget: Number(budget), campaignName: campaignNameInput }))
     : null;
   const computedAdsetName = adsetNameInput && (namingPublicName || isFase2)
     ? (isFase2
@@ -847,8 +849,21 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     : null;
   const generatedName = computedCampaignName || "";
 
-  // Preview do nome do conjunto (espelha o backend): [PUBLICO] {WHATS|PAGINA} - NomeCriativo
-  const previewChanTag = selectedPreset.destination_type === "WHATSAPP" ? "WHATS" : "PAGINA";
+  // Slug da página (L.T): último segmento da LP URL em MAIÚSCULO.
+  // ex: marianaeiraspersona.com/ddx-12/ → DDX-12
+  const slugifyLp = (url: string): string => {
+    try {
+      const u = url.includes("://") ? url : `https://${url}`;
+      const path = new URL(u).pathname.replace(/\/+$/, "");
+      return (path.split("/").filter(Boolean).pop() || "").toUpperCase();
+    } catch { return ""; }
+  };
+  const lpSlug = isFase3Lp ? slugifyLp(lpUrl) : "";
+
+  // Preview do nome do conjunto (espelha o backend): [PUBLICO] {WHATS|PAGINA|SLUG} - NomeCriativo
+  const previewChanTag = isFase3Lp
+    ? (lpSlug || "PAGINA")
+    : (selectedPreset.destination_type === "WHATSAPP" ? "WHATS" : "PAGINA");
   const previewAudTag = (selectedAudienceName || (isFase3Lp && ltAdvantage ? "Advantage+" : "Público")).trim();
   const previewAdsetName = (creativeName?: string) =>
     creativeName ? `[${previewAudTag}] {${previewChanTag}} - ${creativeName}` : `[${previewAudTag}] {${previewChanTag}}`;
@@ -1516,12 +1531,17 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
             <Label className="font-display font-semibold text-sm">Nomes</Label>
             {campaignStructure === "new" && (
               <div className="space-y-2">
-                <Label className="text-xs font-medium text-muted-foreground">Nome da Campanha</Label>
+                <Label className="text-xs font-medium text-muted-foreground">{isFase3Lp ? "Nome do produto" : "Nome da Campanha"}</Label>
                 <Input
-                  placeholder='Ex: "Campanha Tráfego - Joelho"'
+                  placeholder={isFase3Lp ? 'Ex: "LDX"' : 'Ex: "Campanha Tráfego - Joelho"'}
                   value={campaignNameInput}
                   onChange={(e) => setCampaignNameInput(e.target.value)}
                 />
+                {isFase3Lp && (
+                  <p className="text-[10px] text-muted-foreground">
+                    Nome final: <span className="font-mono">{computedCampaignName || "[PRODUTO] [L.T] [dd/mm] [ABO] [TESTE] [CRIATIVO] -"}</span>
+                  </p>
+                )}
               </div>
             )}
             <div className="space-y-2">
