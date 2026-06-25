@@ -103,15 +103,22 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Otimização: se 0 IG accounts, pular enumeração de páginas
+      // Varre páginas SEMPRE. Quando os endpoints diretos de IG dão 0, descobrimos
+      // o IG via page.instagram_business_account (IG conectado só via Página).
       const allPages: any[] = [];
-      if (igAccounts.length > 0) {
+      {
+        // discoverFromPages: não temos IG-alvo; varrer páginas e derivar IG delas.
+        const discoverFromPages = igAccounts.length === 0;
         const igIds = new Set(igAccounts.map((ig: any) => ig.id));
+        const matchedSoFar = (): number =>
+          allPages.filter((p: any) => p.instagram_business_account?.id && igIds.has(p.instagram_business_account.id)).length;
+        // Para com varredura quando já casou todos os IG-alvo (irrelevante no modo discover).
+        const enough = (): boolean => !discoverFromPages && matchedSoFar() >= igAccounts.length;
 
         // Step 2a: pages do BM dono da ad account (cobre o caso onde user não é admin direto da Page)
         try {
           const aaRes = await timedFetch(
-            `https://graph.facebook.com/v25.0/${ad_account_id}?fields=owner_business{owned_pages.limit(200){id,name,instagram_business_account{id},whatsapp_business_account{id,name}},client_pages.limit(200){id,name,instagram_business_account{id},whatsapp_business_account{id,name}}}&access_token=${access_token}`
+            `https://graph.facebook.com/v25.0/${ad_account_id}?fields=owner_business{owned_pages.limit(200){id,name,instagram_business_account{id,username},whatsapp_business_account{id,name}},client_pages.limit(200){id,name,instagram_business_account{id,username},whatsapp_business_account{id,name}}}&access_token=${access_token}`
           );
           const aaData = await aaRes.json();
           if (aaData.error) {
@@ -127,10 +134,10 @@ Deno.serve(async (req) => {
         }
 
         // Step 2b: /{ad_account_id}/promote_pages — pages que essa ad account pode anunciar
-        if (allPages.filter((p: any) => p.instagram_business_account?.id && igIds.has(p.instagram_business_account.id)).length < igAccounts.length) {
+        if (!enough()) {
           try {
             const ppRes = await timedFetch(
-              `https://graph.facebook.com/v25.0/${ad_account_id}/promote_pages?fields=id,name,instagram_business_account{id},whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`
+              `https://graph.facebook.com/v25.0/${ad_account_id}/promote_pages?fields=id,name,instagram_business_account{id,username},whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`
             );
             const ppData = await ppRes.json();
             if (ppData.error) {
@@ -146,12 +153,9 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Step 2b: pages que o user é admin direto (/me/accounts) — só se ainda não casou tudo
-        const matchedSoFar = (): number =>
-          allPages.filter((p: any) => p.instagram_business_account?.id && igIds.has(p.instagram_business_account.id)).length;
-
-        if (matchedSoFar() < igAccounts.length) {
-          let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id},whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`;
+        // Step 2c: pages que o user é admin direto (/me/accounts) — só se ainda não casou tudo
+        if (!enough()) {
+          let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id,username},whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`;
           while (pagesUrl) {
             const pagesRes = await timedFetch(pagesUrl);
             const pagesData = await pagesRes.json();
@@ -164,8 +168,21 @@ Deno.serve(async (req) => {
             }
             pagesUrl = pagesData.paging?.next || null;
             if (allPages.length >= 800) break;
-            if (matchedSoFar() >= igAccounts.length) break;
+            if (enough()) break;
           }
+        }
+
+        // Se não tínhamos IG-alvo, deriva IG accounts das páginas varridas.
+        if (discoverFromPages) {
+          const seen = new Set<string>();
+          for (const p of allPages) {
+            const iba = p.instagram_business_account;
+            if (iba?.id && !seen.has(iba.id)) {
+              seen.add(iba.id);
+              igAccounts.push({ id: iba.id, username: iba.username || null });
+            }
+          }
+          diagnostic.push({ endpoint: "_ig_from_pages", status: igAccounts.length ? "ok" : "empty", count: igAccounts.length });
         }
       }
 
