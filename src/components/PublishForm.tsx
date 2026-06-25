@@ -261,6 +261,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const [ltGender, setLtGender] = useState<"all" | "male" | "female">("all");
   // Transparência (DSA): beneficiário/pagador. Vazio = usa o nome da página.
   const [dsaBeneficiary, setDsaBeneficiary] = useState("");
+  const [suggestedBeneficiary, setSuggestedBeneficiary] = useState(""); // puxado da conta — só sugestão, NÃO enviado automático
 
   // Scheduling
   const [utmTemplate, setUtmTemplate] = useState(UTM_DEFAULT);
@@ -395,6 +396,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     setSelectedWhatsappId("");
     setWhatsappError(null);
     setDsaBeneficiary("");
+    setSuggestedBeneficiary("");
     setSelectedTemplateId("");
     // Reset audiences
     setAudiences([]);
@@ -420,7 +422,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           setIdentityIgUsername(c.igUsername ?? null);
           setIdentityWhatsappId(c.whatsappId ?? null);
           setIdentityWhatsappPhone(c.whatsappPhone ?? null);
-          if (c.dsaBeneficiary) setDsaBeneficiary(c.dsaBeneficiary);
+          if (c.dsaBeneficiary) setSuggestedBeneficiary(c.dsaBeneficiary);
           setIdentityLoaded(true);
           setIdentityLoading(false);
           resolvedPageId = c.pageId ?? null;
@@ -439,7 +441,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     if (!identityFromCache) {
     try {
       const { ig_accounts: igAccounts, diagnostic, dsa_beneficiary } = await igFetchPromise!;
-      if (dsa_beneficiary) { setDsaBeneficiary(dsa_beneficiary); addLog(`🏷️ [pipeline] Beneficiário da conta: ${dsa_beneficiary}`); }
+      if (dsa_beneficiary) { setSuggestedBeneficiary(dsa_beneficiary); addLog(`🏷️ [pipeline] Beneficiário da conta (sugestão): ${dsa_beneficiary}`); }
       addLog(`📄 [pipeline] contas IG autorizadas: ${igAccounts.length}`);
       for (const d of diagnostic) {
         addLog(`   🔎 ${d.endpoint} → ${d.status}${d.count !== undefined ? ` (${d.count})` : ""}${d.detail ? ` | ${d.detail}` : ""}`);
@@ -931,6 +933,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       greetingText,
       readyMessage,
       selectedTemplateId,
+      selectedImportedKey,
       addLog,
     });
     return { valid: result.valid, errors: result.errors };
@@ -2146,12 +2149,14 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               <Input
                 value={dsaBeneficiary}
                 onChange={(e) => setDsaBeneficiary(e.target.value)}
-                placeholder={identityPageName || "Ex: MARIANA EIRAS LTDA"}
+                placeholder={suggestedBeneficiary || identityPageName || "Ex: MARIANA EIRAS LTDA"}
                 disabled={loading}
                 className="text-sm"
               />
               <p className="text-[10px] text-muted-foreground">
-                Quem aparece como anunciante na Biblioteca de Anúncios. Obrigatório quando Advantage+ está ativo (público pode atingir a UE). Vazio = nome da página.
+                {suggestedBeneficiary
+                  ? `Puxado da conta: ${suggestedBeneficiary}. Deixe vazio — campanhas BR não precisam (preencher com beneficiário não-verificado faz a Meta rejeitar). Só preencha se a campanha atingir a Europa e a Meta exigir.`
+                  : "Quem aparece como anunciante na Biblioteca de Anúncios. Deixe vazio para campanhas BR; só preencha se a campanha atingir a Europa."}
               </p>
             </div>
           </Card>

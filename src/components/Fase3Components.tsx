@@ -252,9 +252,10 @@ export function validateFase3Fields(params: {
   greetingText: string;
   readyMessage: string;
   selectedTemplateId: string;
+  selectedImportedKey?: string;
   addLog: (msg: string) => void;
 }): Fase3ValidationResult {
-  const { selectedWhatsappId, useCustomMessage, greetingText, readyMessage, selectedTemplateId, addLog } = params;
+  const { selectedWhatsappId, useCustomMessage, greetingText, readyMessage, selectedTemplateId, selectedImportedKey = "", addLog } = params;
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -281,11 +282,11 @@ export function validateFase3Fields(params: {
     }
   } else {
     addLog(`🔍 [fase3-validate] Modo: Usar existente`);
-    if (!selectedTemplateId) {
+    if (!selectedTemplateId && !selectedImportedKey) {
       errors.push("Selecione um modelo de conversa");
       addLog("❌ [fase3-validate] Modelo selecionado: nenhum");
     } else {
-      addLog(`✅ [fase3-validate] Modelo selecionado: ${selectedTemplateId}`);
+      addLog(`✅ [fase3-validate] Modelo selecionado: ${selectedImportedKey || selectedTemplateId}`);
     }
   }
 

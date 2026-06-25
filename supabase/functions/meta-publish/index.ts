@@ -1351,10 +1351,12 @@ Deno.serve(async (req) => {
     const applyDsa = (p: Record<string, any>) => {
       const c = p?.targeting?.geo_locations?.countries;
       const hasEu = Array.isArray(c) && c.some((cc: string) => EU_EEA.has(String(cc).toUpperCase()));
-      // Advantage+ expande o público (pode atingir EU) → Meta exige beneficiário/pagador
-      // (erro "anunciante ausente" / compliance_section, subcode 3858634).
-      const adv = p?.targeting?.targeting_automation?.advantage_audience === 1;
-      if ((hasEu || adv || !!userBenef) && dsaBeneficiary) {
+      // GABARITO (act_835492491950992, 200 adsets, 192 com advantage_audience:1, ZERO com DSA):
+      // adset BR-only com Advantage+ NÃO leva dsa_beneficiary/dsa_payor e roda normal.
+      // Enviar uma string não-verificada é o que DISPARA "anunciante ausente"
+      // (compliance_section, subcode 3858634). Só envia DSA quando há país EU/EEA real
+      // no targeting, ou quando o gestor digitou o beneficiário manualmente na UI.
+      if ((hasEu || !!userBenef) && dsaBeneficiary) {
         p.dsa_beneficiary = dsaBeneficiary;
         p.dsa_payor = dsaBeneficiary;
       }
