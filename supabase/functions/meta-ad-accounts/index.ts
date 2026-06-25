@@ -48,58 +48,46 @@ Deno.serve(async (req) => {
       // Diagnóstico: armazena tentativas pra surfar motivo se 0 IG
       const diagnostic: { endpoint: string; status: string; detail?: string; count?: number }[] = [];
 
-      // Step 1a: Get IG accounts authorized for this ad account
-      const igRes = await timedFetch(
-        `https://graph.facebook.com/v25.0/${ad_account_id}/instagram_accounts?fields=id,username&limit=25&access_token=${access_token}`
-      );
-      const igData = await igRes.json();
-      let igAccounts: { id: string; username: string | null }[] = [];
+      // Dispara em PARALELO os 4 caminhos de descoberta (antes eram sequenciais ~3s):
+      // 3 endpoints diretos de IG + promote_pages (fonte principal: páginas c/ IG+WABA).
+      const J = async (url: string) => {
+        try { return await (await timedFetch(url)).json(); }
+        catch (e) { return { error: { message: (e as Error).message } }; }
+      };
+      const base = `https://graph.facebook.com/v25.0/${ad_account_id}`;
+      const [igData, ciaData, actorData, ppData] = await Promise.all([
+        J(`${base}/instagram_accounts?fields=id,username&limit=25&access_token=${access_token}`),
+        J(`${base}/connected_instagram_accounts?fields=id,username&limit=25&access_token=${access_token}`),
+        J(`${base}?fields=instagram_actor_id{username},business&access_token=${access_token}`),
+        J(`${base}/promote_pages?fields=id,name,instagram_business_account{id,username},whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`),
+      ]);
 
+      let igAccounts: { id: string; username: string | null }[] = [];
+      // 1a: instagram_accounts (direto)
       if (igData.error) {
         diagnostic.push({ endpoint: "/instagram_accounts", status: "error", detail: `code=${igData.error.code} subcode=${igData.error.error_subcode} | ${igData.error.message}` });
       } else {
-        igAccounts = (igData.data || []).map((ig: any) => ({
-          id: ig.id,
-          username: ig.username || null,
-        }));
+        igAccounts = (igData.data || []).map((ig: any) => ({ id: ig.id, username: ig.username || null }));
         diagnostic.push({ endpoint: "/instagram_accounts", status: "ok", count: igAccounts.length });
       }
-
-      // Step 1b: Fallback — /{ad_account_id}/connected_instagram_accounts
+      // 1b: connected_instagram_accounts
       if (igAccounts.length === 0) {
-        try {
-          const ciaRes = await timedFetch(
-            `https://graph.facebook.com/v25.0/${ad_account_id}/connected_instagram_accounts?fields=id,username&limit=25&access_token=${access_token}`
-          );
-          const ciaData = await ciaRes.json();
-          if (ciaData.error) {
-            diagnostic.push({ endpoint: "/connected_instagram_accounts", status: "error", detail: `code=${ciaData.error.code} | ${ciaData.error.message}` });
-          } else if (ciaData.data?.length) {
-            igAccounts = ciaData.data.map((ig: any) => ({ id: ig.id, username: ig.username || null }));
-            diagnostic.push({ endpoint: "/connected_instagram_accounts", status: "ok", count: igAccounts.length });
-          } else {
-            diagnostic.push({ endpoint: "/connected_instagram_accounts", status: "empty" });
-          }
-        } catch (e) {
-          diagnostic.push({ endpoint: "/connected_instagram_accounts", status: "exception", detail: (e as Error).message });
+        if (ciaData.error) {
+          diagnostic.push({ endpoint: "/connected_instagram_accounts", status: "error", detail: `code=${ciaData.error.code} | ${ciaData.error.message}` });
+        } else if (ciaData.data?.length) {
+          igAccounts = ciaData.data.map((ig: any) => ({ id: ig.id, username: ig.username || null }));
+          diagnostic.push({ endpoint: "/connected_instagram_accounts", status: "ok", count: igAccounts.length });
+        } else {
+          diagnostic.push({ endpoint: "/connected_instagram_accounts", status: "empty" });
         }
       }
-
-      // Step 1c: Fallback — buscar IG na própria ad account via /{ad_account_id}?fields=instagram_actor_id
+      // 1c: instagram_actor_id da própria ad account
       if (igAccounts.length === 0) {
-        try {
-          const aaRes = await timedFetch(
-            `https://graph.facebook.com/v25.0/${ad_account_id}?fields=instagram_actor_id{username},business&access_token=${access_token}`
-          );
-          const aaData = await aaRes.json();
-          if (aaData.instagram_actor_id) {
-            igAccounts = [{ id: aaData.instagram_actor_id.id || aaData.instagram_actor_id, username: aaData.instagram_actor_id?.username || null }];
-            diagnostic.push({ endpoint: "/act?instagram_actor_id", status: "ok", count: 1 });
-          } else {
-            diagnostic.push({ endpoint: "/act?instagram_actor_id", status: "empty", detail: aaData.business?.id ? `business=${aaData.business.id}` : "no_business" });
-          }
-        } catch (e) {
-          diagnostic.push({ endpoint: "/act?instagram_actor_id", status: "exception", detail: (e as Error).message });
+        if (actorData.instagram_actor_id) {
+          igAccounts = [{ id: actorData.instagram_actor_id.id || actorData.instagram_actor_id, username: actorData.instagram_actor_id?.username || null }];
+          diagnostic.push({ endpoint: "/act?instagram_actor_id", status: "ok", count: 1 });
+        } else {
+          diagnostic.push({ endpoint: "/act?instagram_actor_id", status: "empty", detail: actorData.business?.id ? `business=${actorData.business.id}` : "no_business" });
         }
       }
 
@@ -119,62 +107,57 @@ Deno.serve(async (req) => {
         // promote_pages) já trouxe uma página com IG, não precisa varrer /me/accounts global.
         const stop = (): boolean => enough() || (discoverFromPages && haveIgPage());
 
-        // Step 2a: pages do BM dono da ad account (cobre o caso onde user não é admin direto da Page)
-        try {
-          const aaRes = await timedFetch(
-            `https://graph.facebook.com/v25.0/${ad_account_id}?fields=owner_business{owned_pages.limit(200){id,name,instagram_business_account{id,username},whatsapp_business_account{id,name}},client_pages.limit(200){id,name,instagram_business_account{id,username},whatsapp_business_account{id,name}}}&access_token=${access_token}`
-          );
-          const aaData = await aaRes.json();
-          if (aaData.error) {
-            diagnostic.push({ endpoint: "/act?owner_business.pages", status: "error", detail: `code=${aaData.error.code} | ${aaData.error.message}` });
-          } else {
-            const ownedBM: any[] = aaData?.owner_business?.owned_pages?.data || [];
-            const clientBM: any[] = aaData?.owner_business?.client_pages?.data || [];
-            allPages.push(...ownedBM, ...clientBM);
-            diagnostic.push({ endpoint: "/act?owner_business.pages", status: "ok", count: ownedBM.length + clientBM.length });
-          }
-        } catch (e) {
-          diagnostic.push({ endpoint: "/act?owner_business.pages", status: "exception", detail: (e as Error).message });
+        // Step 2a: promote_pages — FONTE PRINCIPAL (já buscada em paralelo acima).
+        if (ppData.error) {
+          diagnostic.push({ endpoint: "/act/promote_pages", status: "error", detail: `code=${ppData.error.code} | ${ppData.error.message}` });
+        } else {
+          allPages.push(...(ppData.data || []));
+          diagnostic.push({ endpoint: "/act/promote_pages", status: "ok", count: (ppData.data || []).length });
         }
 
-        // Step 2b: /{ad_account_id}/promote_pages — pages que essa ad account pode anunciar
+        // Step 2b: owner_business pages — fallback (mais pesado: nested 200+200).
         if (!stop()) {
           try {
-            const ppRes = await timedFetch(
-              `https://graph.facebook.com/v25.0/${ad_account_id}/promote_pages?fields=id,name,instagram_business_account{id,username},whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`
+            const aaRes = await timedFetch(
+              `https://graph.facebook.com/v25.0/${ad_account_id}?fields=owner_business{owned_pages.limit(100){id,name,instagram_business_account{id,username},whatsapp_business_account{id,name}},client_pages.limit(100){id,name,instagram_business_account{id,username},whatsapp_business_account{id,name}}}&access_token=${access_token}`
             );
-            const ppData = await ppRes.json();
-            if (ppData.error) {
-              diagnostic.push({ endpoint: "/act/promote_pages", status: "error", detail: `code=${ppData.error.code} | ${ppData.error.message}` });
+            const aaData = await aaRes.json();
+            if (aaData.error) {
+              diagnostic.push({ endpoint: "/act?owner_business.pages", status: "error", detail: `code=${aaData.error.code} | ${aaData.error.message}` });
             } else {
+              const ownedBM: any[] = aaData?.owner_business?.owned_pages?.data || [];
+              const clientBM: any[] = aaData?.owner_business?.client_pages?.data || [];
               const existingIds = new Set(allPages.map((p: any) => p.id));
-              const promote = (ppData.data || []).filter((p: any) => !existingIds.has(p.id));
-              allPages.push(...promote);
-              diagnostic.push({ endpoint: "/act/promote_pages", status: "ok", count: promote.length });
+              const add = [...ownedBM, ...clientBM].filter((p: any) => !existingIds.has(p.id));
+              allPages.push(...add);
+              diagnostic.push({ endpoint: "/act?owner_business.pages", status: "ok", count: add.length });
             }
           } catch (e) {
-            diagnostic.push({ endpoint: "/act/promote_pages", status: "exception", detail: (e as Error).message });
+            diagnostic.push({ endpoint: "/act?owner_business.pages", status: "exception", detail: (e as Error).message });
           }
         }
 
-        // Step 2c: pages que o user é admin direto (/me/accounts) — só se as fontes
-        // escopadas na ad account não resolveram (evita varrer todas as páginas do admin).
+        // Step 2c: /me/accounts — ÚLTIMO recurso, MUITO limitado. O token admin
+        // compartilhado tem páginas demais: limit alto dá 500 "reduce data" e ~3s/página.
+        // limit=25 + no máximo 4 páginas (100 páginas) pra não travar.
         if (!stop()) {
-          let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id,username},whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`;
-          while (pagesUrl) {
+          let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id,username},whatsapp_business_account{id,name}&limit=25&access_token=${access_token}`;
+          let guard = 0;
+          while (pagesUrl && guard < 4) {
             const pagesRes = await timedFetch(pagesUrl);
             const pagesData = await pagesRes.json();
             if (pagesData.data) {
-              // dedup por id
               const existingIds = new Set(allPages.map((p: any) => p.id));
               for (const p of pagesData.data) {
                 if (!existingIds.has(p.id)) allPages.push(p);
               }
             }
             pagesUrl = pagesData.paging?.next || null;
-            if (allPages.length >= 800) break;
+            guard++;
             if (stop()) break;
+            if (allPages.length >= 800) break;
           }
+          diagnostic.push({ endpoint: "/me/accounts", status: "info", count: guard });
         }
 
         // Se não tínhamos IG-alvo, deriva IG accounts das páginas varridas.

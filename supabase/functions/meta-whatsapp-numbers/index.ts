@@ -196,19 +196,10 @@ Deno.serve(async (req) => {
         }
       };
 
-      // 3a: pages do BM dono da ad account (owned + client)
+      const haveWabaPage = () => candidatePages.some((p) => p.waba?.id);
+
       if (ad_account_id) {
-        try {
-          const aaRes = await timedFetch(
-            `https://graph.facebook.com/v25.0/${ad_account_id}?fields=owner_business{owned_pages.limit(200){id,name,whatsapp_business_account{id,name}},client_pages.limit(200){id,name,whatsapp_business_account{id,name}}}&access_token=${access_token}`
-          );
-          const aaData = await aaRes.json();
-          addPages(aaData?.owner_business?.owned_pages?.data);
-          addPages(aaData?.owner_business?.client_pages?.data);
-        } catch (e) {
-          console.log(`[whatsapp] 3a owner_business error: ${e.message}`);
-        }
-        // 3b: promote_pages — pages que essa ad account pode anunciar
+        // 3a: promote_pages — FONTE PRINCIPAL (account-scoped, rápida, traz WABA).
         try {
           const ppRes = await timedFetch(
             `https://graph.facebook.com/v25.0/${ad_account_id}/promote_pages?fields=id,name,whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`
@@ -216,18 +207,30 @@ Deno.serve(async (req) => {
           const ppData = await ppRes.json();
           addPages(ppData?.data);
         } catch (e) {
-          console.log(`[whatsapp] 3b promote_pages error: ${e.message}`);
+          console.log(`[whatsapp] 3a promote_pages error: ${e.message}`);
+        }
+        // 3b: owner_business pages — fallback (mais pesado), só se ainda sem WABA.
+        if (!haveWabaPage()) {
+          try {
+            const aaRes = await timedFetch(
+              `https://graph.facebook.com/v25.0/${ad_account_id}?fields=owner_business{owned_pages.limit(100){id,name,whatsapp_business_account{id,name}},client_pages.limit(100){id,name,whatsapp_business_account{id,name}}}&access_token=${access_token}`
+            );
+            const aaData = await aaRes.json();
+            addPages(aaData?.owner_business?.owned_pages?.data);
+            addPages(aaData?.owner_business?.client_pages?.data);
+          } catch (e) {
+            console.log(`[whatsapp] 3b owner_business error: ${e.message}`);
+          }
         }
       }
 
-      // 3c: /me/accounts (paginado) — só se as fontes escopadas na ad account não
-      // acharam nenhuma página com WABA (evita varrer todas as páginas do admin).
-      const haveWabaPage = () => candidatePages.some((p) => p.waba?.id);
+      // 3c: /me/accounts — ÚLTIMO recurso, limitado (token admin tem páginas demais:
+      // limit alto dá 500 e ~3s/página). limit=25 + máx 4 páginas.
       if (!haveWabaPage()) {
         try {
-          let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`;
+          let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,whatsapp_business_account{id,name}&limit=25&access_token=${access_token}`;
           let guard = 0;
-          while (pagesUrl && guard < 10) {
+          while (pagesUrl && guard < 4) {
             const r = await timedFetch(pagesUrl);
             const d = await r.json();
             addPages(d?.data);
