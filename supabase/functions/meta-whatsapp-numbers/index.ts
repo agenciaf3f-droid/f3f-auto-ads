@@ -220,19 +220,24 @@ Deno.serve(async (req) => {
         }
       }
 
-      // 3c: /me/accounts (paginado)
-      try {
-        let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`;
-        let guard = 0;
-        while (pagesUrl && guard < 10) {
-          const r = await timedFetch(pagesUrl);
-          const d = await r.json();
-          addPages(d?.data);
-          pagesUrl = d?.paging?.next || null;
-          guard++;
+      // 3c: /me/accounts (paginado) — só se as fontes escopadas na ad account não
+      // acharam nenhuma página com WABA (evita varrer todas as páginas do admin).
+      const haveWabaPage = () => candidatePages.some((p) => p.waba?.id);
+      if (!haveWabaPage()) {
+        try {
+          let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`;
+          let guard = 0;
+          while (pagesUrl && guard < 10) {
+            const r = await timedFetch(pagesUrl);
+            const d = await r.json();
+            addPages(d?.data);
+            if (haveWabaPage()) break;
+            pagesUrl = d?.paging?.next || null;
+            guard++;
+          }
+        } catch (e) {
+          console.log(`[whatsapp] 3c me/accounts error: ${e.message}`);
         }
-      } catch (e) {
-        console.log(`[whatsapp] 3c me/accounts error: ${e.message}`);
       }
 
       const pagesWithWaba = candidatePages.filter((p) => p.waba?.id);

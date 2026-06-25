@@ -114,6 +114,10 @@ Deno.serve(async (req) => {
           allPages.filter((p: any) => p.instagram_business_account?.id && igIds.has(p.instagram_business_account.id)).length;
         // Para com varredura quando já casou todos os IG-alvo (irrelevante no modo discover).
         const enough = (): boolean => !discoverFromPages && matchedSoFar() >= igAccounts.length;
+        const haveIgPage = (): boolean => allPages.some((p: any) => p.instagram_business_account?.id);
+        // No modo discover: assim que uma fonte escopada na ad account (owner_business /
+        // promote_pages) já trouxe uma página com IG, não precisa varrer /me/accounts global.
+        const stop = (): boolean => enough() || (discoverFromPages && haveIgPage());
 
         // Step 2a: pages do BM dono da ad account (cobre o caso onde user não é admin direto da Page)
         try {
@@ -134,7 +138,7 @@ Deno.serve(async (req) => {
         }
 
         // Step 2b: /{ad_account_id}/promote_pages — pages que essa ad account pode anunciar
-        if (!enough()) {
+        if (!stop()) {
           try {
             const ppRes = await timedFetch(
               `https://graph.facebook.com/v25.0/${ad_account_id}/promote_pages?fields=id,name,instagram_business_account{id,username},whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`
@@ -153,8 +157,9 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Step 2c: pages que o user é admin direto (/me/accounts) — só se ainda não casou tudo
-        if (!enough()) {
+        // Step 2c: pages que o user é admin direto (/me/accounts) — só se as fontes
+        // escopadas na ad account não resolveram (evita varrer todas as páginas do admin).
+        if (!stop()) {
           let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id,username},whatsapp_business_account{id,name}&limit=100&access_token=${access_token}`;
           while (pagesUrl) {
             const pagesRes = await timedFetch(pagesUrl);
@@ -168,7 +173,7 @@ Deno.serve(async (req) => {
             }
             pagesUrl = pagesData.paging?.next || null;
             if (allPages.length >= 800) break;
-            if (enough()) break;
+            if (stop()) break;
           }
         }
 
