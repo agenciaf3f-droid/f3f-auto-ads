@@ -836,7 +836,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         : fase2AudienceNamesList.length > 1
           ? `${fase2AudienceNamesList[0]} +${fase2AudienceNamesList.length - 1}`
           : "Multi")
-    : selectedAudienceName;
+    : (isFase3Lp && ltAdvantage ? "Advantage+" : selectedAudienceName);
   const computedCampaignName = campaignStructure === "new" && campaignNameInput && (namingPublicName || isFase2) && budget
     ? generateCampaignName({ presetLabel: selectedPreset.fase, publicName: namingPublicName || "Multi", budget: Number(budget), campaignName: campaignNameInput })
     : null;
@@ -849,7 +849,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
   // Preview do nome do conjunto (espelha o backend): [PUBLICO] {WHATS|PAGINA} - NomeCriativo
   const previewChanTag = selectedPreset.destination_type === "WHATSAPP" ? "WHATS" : "PAGINA";
-  const previewAudTag = (selectedAudienceName || "Público").trim();
+  const previewAudTag = (selectedAudienceName || (isFase3Lp && ltAdvantage ? "Advantage+" : "Público")).trim();
   const previewAdsetName = (creativeName?: string) =>
     creativeName ? `[${previewAudTag}] {${previewChanTag}} - ${creativeName}` : `[${previewAudTag}] {${previewChanTag}}`;
 
@@ -925,8 +925,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     addLog("⏱️ [validate] Início da validação completa");
     setValidatedPayload(null); // Always reset on new validation
 
-    // FASE 2 usa multi-audience (fase2Audiences) em vez de selectedAudience
-    const audienceOk = isFase2 ? fase2Audiences.length >= 2 : !!selectedAudience;
+    // FASE 2 usa multi-audience (fase2Audiences) em vez de selectedAudience.
+    // L.T + Advantage+ não usa público manual (Meta acha sozinho) → dispensa.
+    const audienceOk = isFase2
+      ? fase2Audiences.length >= 2
+      : (isFase3Lp && ltAdvantage) ? true : !!selectedAudience;
     if (!selectedAccount || !audienceOk || !budget) {
       const missing = [
         !selectedAccount && "conta de anúncios",
@@ -1045,6 +1048,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     checks.push({ label: "Conta de Anúncios", ok: !!selectedAccount, detail: selectedAccount || "ausente" });
     if (isFase2) {
       checks.push({ label: "Públicos (FASE 2)", ok: fase2Audiences.length >= 2 && fase2Audiences.length <= 10, detail: `${fase2Audiences.length} público(s) selecionado(s)` });
+    } else if (isFase3Lp && ltAdvantage) {
+      checks.push({ label: "Público", ok: true, detail: "Advantage+ (Meta define automaticamente)" });
     } else {
       checks.push({ label: "Público", ok: !!selectedAudience, detail: `${selectedAudience} (${selectedAud?.type || "unknown"})` });
     }
@@ -1102,7 +1107,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         ad_account_id: selectedAccount,
         audience_id: selectedAudience,
         audience_type: selectedAud?.type || "custom",
-        audience_name: selectedAudienceName,
+        audience_name: selectedAudienceName || (isFase3Lp && ltAdvantage ? "Advantage+" : ""),
         targeting_spec: selectedAud?.targeting_spec || null,
         creatives: finalCreatives.map(c => ({ type: c.type, link: c.link, name: c.name })),
         creative_link: finalCreatives[0].link,
@@ -1642,7 +1647,15 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
             })}
           </Card>
 
-          {/* Audience — single (FASE 1/3) ou multi (FASE 2) */}
+          {/* Audience — single (FASE 1/3) ou multi (FASE 2).
+              L.T + Advantage+ esconde a seleção: o Meta acha o público sozinho. */}
+          {isFase3Lp && ltAdvantage ? (
+            <Card className="glass-card p-6">
+              <p className="text-xs text-muted-foreground">
+                <strong>Público Advantage+ ativo.</strong> O Meta define o público automaticamente — sem seleção manual. Desative "Público Advantage" no card FASE 3 — Landing Page para escolher um público específico.
+              </p>
+            </Card>
+          ) : (
           <Card className="glass-card p-6 space-y-4">
             <Label className="font-display font-semibold text-sm">
               {isFase2
@@ -1749,6 +1762,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               <p className="text-sm text-muted-foreground">Selecione uma conta primeiro</p>
             )}
           </Card>
+          )}
 
 
           {/* Budget */}

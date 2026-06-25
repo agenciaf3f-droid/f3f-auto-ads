@@ -1689,6 +1689,12 @@ Deno.serve(async (req) => {
           individual_setting: { age: 0, gender: 0 },
         };
       }
+      // Advantage+ acha o público sozinho — sem seleção manual na UI. Remove
+      // custom_audiences vazias (audience_id="" vira [{id:""}], que o Meta rejeita).
+      if (Array.isArray(lpTargeting.custom_audiences)) {
+        lpTargeting.custom_audiences = lpTargeting.custom_audiences.filter((a: any) => a?.id);
+        if (lpTargeting.custom_audiences.length === 0) delete lpTargeting.custom_audiences;
+      }
 
       const lpEvent = String(custom_event_type || "LEAD");
       // Low-ticket (PURCHASE): attribution richer [CT7d, VT1d, EVV1d] — gabarito MCP/DDX
