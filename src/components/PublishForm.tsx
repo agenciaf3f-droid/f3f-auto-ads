@@ -389,7 +389,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     // Reset FASE 3 resources
     setWhatsappNumbers([]);
     setSelectedWhatsappId("");
-    setManualWhatsapp("");
+    setWhatsappError(null);
     setSelectedTemplateId("");
     // Reset audiences
     setAudiences([]);
@@ -399,15 +399,40 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     setPublishResult(null);
     setMinBudget(null);
 
-    // ===== STEP 2+3 EM PARALELO: dispara fetch IG ANTES de await loadAudiences pra rodar junto =====
-    addLog(`📡 [pipeline] Buscando contas IG autorizadas para ${selectedAccount}...`);
-    const igFetchPromise = fetchIgAccountsForAdAccount(accessToken, selectedAccount);
+    // ===== Identidade: tenta cache por conta (a varredura de páginas é lenta) =====
+    let resolvedPageId: string | null = null;
+    const IDENTITY_TTL = 60 * 60 * 1000; // 1h
+    const identityCacheKey = `identity_cache_${selectedAccount}`;
+    let identityFromCache = false;
+    try {
+      const raw = sessionStorage.getItem(identityCacheKey);
+      if (raw) {
+        const c = JSON.parse(raw);
+        if (c && c.igActorId && Date.now() - (c._cachedAt || 0) < IDENTITY_TTL) {
+          setIdentityPageId(c.pageId ?? null);
+          setIdentityPageName(c.pageName ?? null);
+          setIdentityIgActorId(c.igActorId ?? null);
+          setIdentityIgUsername(c.igUsername ?? null);
+          setIdentityWhatsappId(c.whatsappId ?? null);
+          setIdentityWhatsappPhone(c.whatsappPhone ?? null);
+          setIdentityLoaded(true);
+          setIdentityLoading(false);
+          resolvedPageId = c.pageId ?? null;
+          identityFromCache = true;
+          addLog(`⚡ [pipeline] Identidade do cache (conta ${selectedAccount}) — page=${c.pageId}, ig=@${c.igUsername || "?"}`);
+        }
+      }
+    } catch { /* ignore */ }
+
+    // ===== STEP 2+3: dispara fetch IG (só se não veio do cache) junto com loadAudiences =====
+    const igFetchPromise = identityFromCache ? null : fetchIgAccountsForAdAccount(accessToken, selectedAccount);
+    if (!identityFromCache) addLog(`📡 [pipeline] Buscando contas IG autorizadas para ${selectedAccount}...`);
     await loadAudiences();
 
-    // ===== STEP 3: LOAD IDENTITY (from ad account's authorized IG accounts) =====
-    let resolvedPageId: string | null = null;
+    // ===== STEP 3: LOAD IDENTITY (só se não veio do cache) =====
+    if (!identityFromCache) {
     try {
-      const { ig_accounts: igAccounts, diagnostic } = await igFetchPromise;
+      const { ig_accounts: igAccounts, diagnostic } = await igFetchPromise!;
       addLog(`📄 [pipeline] contas IG autorizadas: ${igAccounts.length}`);
       for (const d of diagnostic) {
         addLog(`   🔎 ${d.endpoint} → ${d.status}${d.count !== undefined ? ` (${d.count})` : ""}${d.detail ? ` | ${d.detail}` : ""}`);
@@ -464,6 +489,18 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       setIdentityLoaded(true);
       resolvedPageId = foundPageId;
 
+      // Cacheia identidade resolvida por conta (só quando achou IG) p/ próxima vez ser instantâneo.
+      if (foundIgActorId) {
+        try {
+          sessionStorage.setItem(identityCacheKey, JSON.stringify({
+            pageId: foundPageId, pageName: foundPageName,
+            igActorId: foundIgActorId, igUsername: foundIgUsername,
+            whatsappId: foundWhatsappId, whatsappPhone: foundWhatsappPhone,
+            _cachedAt: Date.now(),
+          }));
+        } catch { /* ignore */ }
+      }
+
       if (!foundIgActorId) {
         const diagSummary = diagnostic.map((d: any) => `${d.endpoint}=${d.status}${d.count !== undefined ? `(${d.count})` : ""}${d.detail ? `:${d.detail}` : ""}`).join(" • ");
         setIdentityError(`Nenhuma conta Instagram autorizada encontrada. Tentativas: ${diagSummary || "n/a"}`);
@@ -477,6 +514,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     } finally {
       setIdentityLoading(false);
     }
+    } // fim do if (!identityFromCache)
 
     // ===== STEPS 4-6 EM PARALELO: WhatsApp, Templates, Pixels =====
     // Antes era sequencial com 1.5s de sleep no meio — agora roda tudo junto.
