@@ -244,30 +244,35 @@ async function runFase3SanityChecks(params: {
     ),
   ]);
 
-  // Erro transitório (rate limit #4, #2, etc.) NÃO deve abortar o publish — é só pré-checagem.
-  // Pula o sanity e deixa a criação do adset validar de verdade (ela tem retry 3x com backoff).
+  // Rate limit / transitório (#4 app, #17 user, #2, etc.): se a pré-checagem já bate nisso,
+  // TODAS as chamadas seguintes também batem — prosseguir só estoura o timeout da edge. Falha
+  // RÁPIDO com mensagem clara pro gestor aguardar (não prossegue pra não dar non-2xx opaco).
   const isTransient = (err: any) =>
     !!err && (err.is_transient === true || [1, 2, 4, 17, 32, 341, 613].includes(Number(err.code)));
+  const rateLimitMsg = (e: any) =>
+    `Limite de requisições da Meta atingido (${e.message}). Aguarde ~15 min e publique de novo — não é erro de configuração.`;
 
   checks.page = { elapsed_ms: pageCheck.elapsedMs, status: pageCheck.status, response: pageCheck.data };
-  if (pageCheck.data?.error && !isTransient(pageCheck.data.error)) {
+  if (pageCheck.data?.error) {
+    const e = pageCheck.data.error;
     return {
       ok: false,
-      error_message: `Sem acesso à Página ${params.pageId}: ${pageCheck.data.error.message}`,
+      rate_limited: isTransient(e),
+      error_message: isTransient(e) ? rateLimitMsg(e) : `Sem acesso à Página ${params.pageId}: ${e.message}`,
       checks,
     };
   }
-  if (pageCheck.data?.error) checks.page.skipped = `transitório — sanity pulado (${pageCheck.data.error.message})`;
 
   checks.whatsapp_phone = { elapsed_ms: phoneCheck.elapsedMs, status: phoneCheck.status, response: phoneCheck.data };
-  if (phoneCheck.data?.error && !isTransient(phoneCheck.data.error)) {
+  if (phoneCheck.data?.error) {
+    const e = phoneCheck.data.error;
     return {
       ok: false,
-      error_message: `WhatsApp Phone ID inválido/inacessível (${params.whatsappPhoneId}): ${phoneCheck.data.error.message}`,
+      rate_limited: isTransient(e),
+      error_message: isTransient(e) ? rateLimitMsg(e) : `WhatsApp Phone ID inválido/inacessível (${params.whatsappPhoneId}): ${e.message}`,
       checks,
     };
   }
-  if (phoneCheck.data?.error) checks.whatsapp_phone.skipped = `transitório — sanity pulado (${phoneCheck.data.error.message})`;
 
   return { ok: true, checks };
 }
@@ -655,11 +660,13 @@ async function resolveVideoThumbnailField(
   adAccountId: string,
 ): Promise<Record<string, string>> {
   let thumbUri = "";
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (let attempt = 0; attempt < 15; attempt++) {
     await new Promise((r) => setTimeout(r, 3000));
     try {
       const r = await fetch(`https://graph.facebook.com/v25.0/${videoId}?fields=status,picture,thumbnails{uri,is_preferred}&access_token=${accessToken}`);
       const d = await r.json();
+      // rate limit / transitório → não adianta martelar (piora o limite e gasta tempo)
+      if (d?.error && (d.error.is_transient || [4, 17, 32, 613].includes(Number(d.error.code)))) break;
       const thumbs = d?.thumbnails?.data;
       if (Array.isArray(thumbs) && thumbs.length) {
         const pref = thumbs.find((t: any) => t.is_preferred) || thumbs[0];
