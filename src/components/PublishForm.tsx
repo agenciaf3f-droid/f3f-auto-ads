@@ -2369,11 +2369,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           {/* Actions */}
           <div className="border-t border-border pt-6 mt-2 flex gap-3">
             <Button variant="secondary" size="lg" onClick={handleValidate} disabled={loading || validatingCreative || selectedPreset.not_implemented} className="flex-1 gap-2">
-              {(loading || validatingCreative) ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              {(loading || validatingCreative) ? <Loader2 className="w-4 h-4 animate-spin will-change-transform" /> : <CheckCircle2 className="w-4 h-4" />}
               Validar
             </Button>
             <Button variant="default" size="lg" onClick={handlePublish} disabled={loading || !validatedPayload || !validationResult?.valid || (!!minBudget && Number(budget) < minBudget) || selectedPreset.not_implemented} className="flex-1 gap-2 glow-primary bg-gradient-to-r from-primary via-primary to-accent/30">
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              {loading ? <Loader2 className="w-4 h-4 animate-spin will-change-transform" /> : <Send className="w-4 h-4" />}
               {loading ? "Publicando..." : "Publicar"}
             </Button>
           </div>
