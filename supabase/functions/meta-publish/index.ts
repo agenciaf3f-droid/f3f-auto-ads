@@ -519,6 +519,42 @@ async function uploadDriveCreative(
     candidateUrls.push(driveLink);
   }
 
+  // Fast-path SEM buffer na edge: com a API key do Drive, a URL devolve bytes crus
+  // (sem o HTML interstitial de vírus/quota). Mandamos file_url e a Meta baixa o
+  // vídeo direto — evita carregar vídeos grandes na memória da edge (OOM → worker
+  // morto → "Failed to send a request"). Só vale pra vídeo; imagem/erro cai no fallback.
+  if (fileId && driveApiKey) {
+    const apiUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${driveApiKey}`;
+    try {
+      const fd = new FormData();
+      fd.append("access_token", accessToken);
+      fd.append("file_url", apiUrl);
+      const up = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/advideos`, { method: "POST", body: fd });
+      const upd = await up.json();
+      if (!upd.error && upd.id) {
+        const videoId = upd.id;
+        let sawError = false;
+        for (let i = 0; i < 10; i++) {
+          await new Promise((r) => setTimeout(r, 2500));
+          try {
+            const stRes = await fetch(`https://graph.facebook.com/v25.0/${videoId}?fields=status&access_token=${accessToken}`);
+            const stData = await stRes.json();
+            const vs = stData?.status?.video_status || stData?.status;
+            console.log(`[drive-upload] file_url video ${videoId} poll ${i + 1}: ${JSON.stringify(stData?.status)}`);
+            if (vs === "ready") return { video_id: videoId };
+            if (vs === "error") { sawError = true; break; }
+          } catch (e) { console.log(`[drive-upload] file_url poll error: ${(e as Error).message}`); }
+        }
+        if (!sawError) return { video_id: videoId }; // ainda processando → assume ok (ad creation reporta se não)
+      } else if (upd.error) {
+        console.log(`[drive-upload] file_url /advideos error (fallback buffered): ${JSON.stringify(upd.error)}`);
+      }
+    } catch (e) {
+      console.log(`[drive-upload] file_url path exception (fallback buffered): ${(e as Error).message}`);
+    }
+    // file_url não resolveu → segue pro download buffered abaixo
+  }
+
   const DOWNLOAD_HEADERS: HeadersInit = {
     "User-Agent": "Mozilla/5.0 (compatible; f3f-auto-ads/1.0)",
     "Accept": "*/*",
