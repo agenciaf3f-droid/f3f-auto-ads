@@ -1191,6 +1191,7 @@ Deno.serve(async (req) => {
       targeting_spec, budget,
       campaign_name, adset_name, ad_name,
       existing_campaign_id,
+      existing_adset_id,
       generated_name,
       preset,
       distribution_structure,
@@ -2342,36 +2343,45 @@ Deno.serve(async (req) => {
         return (path.split("/").filter(Boolean).pop() || "").toUpperCase();
       } catch { return ""; }
     })();
-    const chanTag = isWhatsAppPreset ? "WHATS" : isWebsitePreset ? (lpSlug || "PAGINA") : "PAGINA";
+    const chanTag = isWhatsAppPreset ? "WHATS" : isWebsitePreset ? (lpSlug || "PAGINA") : isIgProfilePreset ? "IG" : "PAGINA";
     const audTag = (body.audience_name || adset_name || generated_name || "Público").trim();
     const makeAdsetName = (creativeName?: string) =>
       creativeName ? `[${audTag}] {${chanTag}} - ${creativeName}` : `[${audTag}] {${chanTag}}`;
 
     if (structure === "CBO") {
-      const adsetPayloadName = makeAdsetName();
-      const adsetBuild = buildAdsetPayload(adsetPayloadName);
-      if (adsetBuild.error) {
-        logs.push({ step: "adset", status: "error", ts: ts(), detail: adsetBuild.error });
-        return respond({ ok: false, step: "adset", campaign_id: campaignId, error_message: adsetBuild.error });
-      }
-      const adsetResult = await createAdset(adsetBuild.payload!, "adset");
+      let adsetId: string;
+      if (existing_adset_id) {
+        // Orquestração por criativo: reusa o adset CBO criado na 1ª chamada
+        // (mesma campanha, 1 adset, N criativos espalhados em chamadas separadas).
+        adsetId = existing_adset_id;
+        adsetIds.push(adsetId);
+        logs.push({ step: "adset", status: "success", ts: ts(), detail: `existing adset: ${adsetId}` });
+      } else {
+        const adsetPayloadName = makeAdsetName();
+        const adsetBuild = buildAdsetPayload(adsetPayloadName);
+        if (adsetBuild.error) {
+          logs.push({ step: "adset", status: "error", ts: ts(), detail: adsetBuild.error });
+          return respond({ ok: false, step: "adset", campaign_id: campaignId, error_message: adsetBuild.error });
+        }
+        const adsetResult = await createAdset(adsetBuild.payload!, "adset");
 
-      if (adsetResult.warning) {
-        return respond({
-          ok: false,
-          step: "idempotency",
-          campaign_id: campaignId,
-          warning: true,
-          error_message: adsetResult.warning,
-        });
-      }
+        if (adsetResult.warning) {
+          return respond({
+            ok: false,
+            step: "idempotency",
+            campaign_id: campaignId,
+            warning: true,
+            error_message: adsetResult.warning,
+          });
+        }
 
-      if (adsetResult.error) {
-        return respond({ ok: false, step: "adset", campaign_id: campaignId, ...formatMetaError(adsetResult.error) });
+        if (adsetResult.error) {
+          return respond({ ok: false, step: "adset", campaign_id: campaignId, ...formatMetaError(adsetResult.error) });
+        }
+        adsetId = adsetResult.id!;
+        adsetIds.push(adsetId);
+        adsetsCreated = 1;
       }
-      const adsetId = adsetResult.id!;
-      adsetIds.push(adsetId);
-      adsetsCreated = 1;
 
       for (let i = 0; i < resolvedCreatives.length; i++) {
         await createCreativeAndAd(resolvedCreatives[i], i + 1, adsetId);

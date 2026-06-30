@@ -911,7 +911,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   // Preview do nome do conjunto (espelha o backend): [PUBLICO] {WHATS|PAGINA|SLUG} - NomeCriativo
   const previewChanTag = isFase3Lp
     ? (lpSlug || "PAGINA")
-    : (selectedPreset.destination_type === "WHATSAPP" ? "WHATS" : "PAGINA");
+    : (selectedPreset.destination_type === "WHATSAPP" ? "WHATS"
+      : selectedPreset.destination_type === "INSTAGRAM_PROFILE" ? "IG" : "PAGINA");
   const previewAudTag = (selectedAudienceName || (isFase3Lp && ltAdvantage ? "Advantage+" : "Público")).trim();
   const previewAdsetName = (creativeName?: string) =>
     creativeName ? `[${previewAudTag}] {${previewChanTag}} - ${creativeName}` : `[${previewAudTag}] {${previewChanTag}}`;
@@ -1308,6 +1309,81 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     }
 
     try {
+      const vp = validatedPayload as Record<string, unknown>;
+      const allCreatives = (Array.isArray(vp.creatives) ? vp.creatives : []) as Array<{ type: string; link: string; name: string }>;
+
+      // === ORQUESTRAÇÃO: N>1 criativos → 1 chamada por criativo ===
+      // Edge function tem teto de 150s + memória limitada; resolver N vídeos numa
+      // chamada estoura (OOM/timeout). Quebramos em chamadas pequenas reusando a
+      // campanha da 1ª (CBO reusa o adset; ABO cria adset novo por chamada — backend decide).
+      if (allCreatives.length > 1) {
+        const total = allCreatives.length;
+        const callFor = (idx: number, extra: Record<string, unknown>) => {
+          const c = allCreatives[idx];
+          return publishAd({ ...vp, creatives: [c], creative_link: c.link, creative_type: c.type, creative_name: c.name, ad_name: c.name, ...extra });
+        };
+
+        addLog(`🚀 [publish] Orquestrando ${total} criativos (1 por chamada — evita timeout/OOM da edge)`);
+
+        // 1ª chamada cria a campanha (+ 1º adset/criativo/ad)
+        addLog(`📦 [publish] 1/${total} — "${allCreatives[0].name}"`);
+        let r1;
+        try {
+          r1 = await callFor(0, {});
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "erro";
+          addLog(`❌ 1/${total} falhou (campanha não criada): ${msg}`);
+          setPublishResult({ ok: false, step: "request", error_message: msg });
+          toast.error("Falha ao criar a campanha (1º criativo).");
+          return;
+        }
+        if (!r1?.ok) {
+          if (r1?.logs) for (const l of r1.logs) addLog(`  [${l.step}] ${l.status}${l.detail ? ` — ${l.detail}` : ""}`);
+          addLog(`❌ 1/${total} falhou (campanha não criada): ${r1?.error_message || r1?.error || "erro"}`);
+          setPublishResult(r1);
+          toast.error("Falha ao criar a campanha (1º criativo).");
+          return;
+        }
+        const campaignId = r1.campaign_id;
+        const firstAdsetId = r1.adset_id;
+        const okNames: string[] = [allCreatives[0].name];
+        const failNames: string[] = [];
+        addLog(`✅ 1/${total} ok — campanha ${campaignId}`);
+
+        // Chamadas 2..N — reusa campanha; CBO reusa adset, ABO ignora (cria novo)
+        for (let i = 1; i < total; i++) {
+          addLog(`📦 [publish] ${i + 1}/${total} — "${allCreatives[i].name}"`);
+          try {
+            const ri = await callFor(i, { existing_campaign_id: campaignId, existing_adset_id: firstAdsetId });
+            if (ri?.ok) {
+              okNames.push(allCreatives[i].name);
+              addLog(`✅ ${i + 1}/${total} ok`);
+            } else {
+              failNames.push(allCreatives[i].name);
+              if (ri?.logs) for (const l of ri.logs) addLog(`  [${l.step}] ${l.status}${l.detail ? ` — ${l.detail}` : ""}`);
+              addLog(`❌ ${i + 1}/${total} falhou: ${ri?.error_message || ri?.error || "erro"}`);
+            }
+          } catch (e) {
+            failNames.push(allCreatives[i].name);
+            addLog(`❌ ${i + 1}/${total} falhou (transporte): ${e instanceof Error ? e.message : "erro"}`);
+          }
+        }
+
+        const allOk = failNames.length === 0;
+        if (allOk) {
+          setPublishResult({ ok: true, campaign_id: campaignId });
+          setLogs([]);
+          toast.success(`${total} criativos publicados com sucesso!`);
+          setValidatedPayload(null);
+        } else {
+          addLog(`⚠️ Parcial: ${okNames.length}/${total} publicados. Falharam: ${failNames.join(", ")}`);
+          setPublishResult({ ok: false, step: "partial", campaign_id: campaignId, error_message: `${failNames.length}/${total} criativos falharam: ${failNames.join(", ")}` });
+          toast.warning(`${okNames.length}/${total} publicados. ${failNames.length} falharam.`);
+        }
+        return;
+      }
+
+      // === Caminho de 1 criativo (inalterado) ===
       // Use the EXACT payload built during validation — no reconstruction
       const result = await publishAd(validatedPayload);
       setPublishResult(result);
