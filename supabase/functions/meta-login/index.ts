@@ -2,7 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 Deno.serve(async (req) => {
   const appId = "910343951738258";
-  const appUrl = Deno.env.get("APP_URL") ?? "https://f3f-auto-ads-eight.vercel.app";
+  const appUrl = Deno.env.get("APP_URL") ?? "https://console.agenciaf3f.com.br";
   const redirectUri = `${appUrl}/auth/meta/callback`;
   // whatsapp_business_management: necessário pra ler WABA + phone_numbers (FASE 3 CTW).
   // App Meta já tem essa permissão habilitada (confirmado no painel).

@@ -10,7 +10,7 @@ type EmailConfig =
 function getEmailConfig(): EmailConfig {
   const apiKey = Deno.env.get("RESEND_API_KEY");
   const from = Deno.env.get("RESEND_FROM_EMAIL");
-  const appUrl = Deno.env.get("APP_URL") ?? "https://f3f-auto-ads.vercel.app";
+  const appUrl = Deno.env.get("APP_URL") ?? "https://console.agenciaf3f.com.br";
   if (!apiKey) return { ok: false, reason: "RESEND_API_KEY ausente" };
   if (!from) return { ok: false, reason: "RESEND_FROM_EMAIL ausente" };
   return { ok: true, client: new Resend(apiKey), from, appUrl };
