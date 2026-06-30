@@ -598,7 +598,7 @@ async function uploadDriveCreative(
   // Sem fallback file_url: Meta downloada HTML interstitial achando ser vídeo,
   // cria creative WITH_ISSUES (#1487713/#2490446). Falha fast é melhor.
   if (!fileRes || !fileBlob) {
-    return { error: `Drive bloqueou download (interstitial de virus/quota). Soluções: 1) baixar arquivo localmente e re-upload no Drive (limpa cache que dispara interstitial); 2) usar link do Instagram em vez de Drive; 3) reduzir arquivo pra menos de 100MB.` };
+    return { error: `Arquivo do Drive não pôde ser baixado. Causa mais comum: não está público — no Drive, Compartilhar → Acesso geral → "Qualquer pessoa com o link" (Leitor). Se já estiver público: pode ser cota de download temporária do Drive (re-upload o arquivo) ou use o link do Instagram.` };
   }
 
   // Detecção: content-type, content-disposition (filename) ou magic bytes.

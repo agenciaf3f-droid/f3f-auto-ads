@@ -205,12 +205,50 @@ Deno.serve(async (req) => {
 
     if (isDriveLink) {
       const tDrive = Date.now();
-      let downloadUrl = creative_link;
-      const fileIdMatch = creative_link.match(/\/d\/([a-zA-Z0-9_-]+)/);
-      if (fileIdMatch) {
-        downloadUrl = `https://drive.google.com/uc?export=download&id=${fileIdMatch[1]}`;
+      const fileIdMatch = creative_link.match(/\/d\/([a-zA-Z0-9_-]+)/) || creative_link.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+      const fileId = fileIdMatch?.[1];
+      const driveApiKey = Deno.env.get("GOOGLE_DRIVE_API_KEY");
+
+      // Espelha o caminho PRIMÁRIO do publish: baixa via API key do Drive
+      // (googleapis.com/.../alt=media&key=). A API key é anônima → só lê arquivo
+      // "qualquer pessoa com o link". Arquivo privado → 403 → publish falha igual.
+      // Testamos aqui (Range: só os primeiros bytes, não baixa o arquivo inteiro)
+      // pra FALHAR CEDO na validação em vez de quebrar no publish.
+      if (fileId && driveApiKey) {
+        try {
+          const apiUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${driveApiKey}`;
+          const res = await fetch(apiUrl, { headers: { Range: "bytes=0-15" }, signal: AbortSignal.timeout(15_000) });
+          const ct = res.headers.get("content-type") || "";
+          mark("drive_check", tDrive);
+          mark("TOTAL", t0);
+
+          if (res.status === 401 || res.status === 403 || res.status === 404) {
+            return new Response(JSON.stringify({
+              ok: false,
+              error: "Arquivo do Drive não está público. No Drive: clique no arquivo → Compartilhar → Acesso geral → \"Qualquer pessoa com o link\" (Leitor) → salve e valide de novo. A publicação baixa por link anônimo, então arquivo privado não funciona.",
+              timings,
+            }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          }
+          if (ct.includes("application/json") || (!res.ok && res.status !== 206)) {
+            return new Response(JSON.stringify({
+              ok: false, error: `Drive não devolveu o arquivo (status ${res.status}). Confira o link e o compartilhamento.`, timings,
+            }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          }
+          return new Response(JSON.stringify({
+            ok: true, creative_resolved: true, drive_accessible: true,
+            media_type: ct.includes("video") ? "video" : ct.includes("image") ? "image" : "unknown", timings,
+          }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        } catch (e) {
+          mark("drive_check", tDrive);
+          return new Response(JSON.stringify({
+            ok: false, error: `Falha ao verificar arquivo do Drive: ${(e as Error).message}`, timings,
+          }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
       }
 
+      // Sem GOOGLE_DRIVE_API_KEY: fallback antigo (HEAD no uc?export=download).
+      let downloadUrl = creative_link;
+      if (fileId) downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
       try {
         const headRes = await fetch(downloadUrl, { method: "HEAD", redirect: "follow" });
         mark("drive_check", tDrive);
