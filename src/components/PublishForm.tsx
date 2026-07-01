@@ -909,28 +909,6 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     setCreatives(prev => prev.map(c => c.id === id ? { ...c, ...updates, validation: updates.link !== undefined || updates.type !== undefined ? null : c.validation } : c));
   };
 
-  const handleValidateCreative = async (creativeId: string) => {
-    const cr = creatives.find(c => c.id === creativeId);
-    if (!cr?.link || !accessToken) return;
-    setValidatingCreative(true);
-    addLog(`🔍 Validando criativo "${cr.name || cr.link}" (${cr.type})...`);
-    try {
-      const result = await validateCreative({
-        access_token: accessToken, ad_account_id: selectedAccount, creative_link: cr.link, creative_type: cr.type,
-        ig_account_id: identityIgActorId || undefined,
-      });
-      updateCreative(creativeId, { validation: result });
-      if (result.ok) addLog(`✅ Criativo validado (source: ${result.source || "api"})`);
-      else addLog(`❌ Criativo inválido: ${result.error}`);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Erro";
-      addLog(`❌ Erro ao validar criativo: ${msg}`);
-      updateCreative(creativeId, { validation: { ok: false, error: msg } });
-    } finally {
-      setValidatingCreative(false);
-    }
-  };
-
   const selectedAud = audiences.find((a) => a.id === selectedAudience);
   const selectedAudienceName = selectedAud?.name || "";
   const selectedPreset = PRESETS.find(p => p.id === preset)!;
@@ -1885,7 +1863,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                   </Button>
                 </div>
 
-                {/* Link + validate */}
+                {/* Link */}
                 <div className="flex gap-2">
                   <Input
                     placeholder={cr.type === "instagram" ? "https://instagram.com/..." : "https://drive.google.com/..."}
@@ -1893,15 +1871,6 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                     onChange={(e) => updateCreative(cr.id, { link: e.target.value })}
                     className="flex-1 text-sm"
                   />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleValidateCreative(cr.id)}
-                    disabled={!cr.link || validatingCreative}
-                    className="shrink-0"
-                  >
-                    {validatingCreative ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                  </Button>
                 </div>
 
                 {/* Validation feedback */}
