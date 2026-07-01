@@ -13,7 +13,7 @@ export function generateCampaignName({
 }) {
   const d = date || new Date().toISOString().slice(0, 10);
   const prefix = `[${presetLabel}] [GERENCIADOR] [${d}] [${publicName}] [R$${budget}]`;
-  return `${prefix} - ${campaignName}`;
+  return campaignName.trim() ? `${prefix} - ${campaignName}` : prefix;
 }
 
 // L.T (low-ticket) tem formato próprio (TESTE e CRIATIVO fixos):

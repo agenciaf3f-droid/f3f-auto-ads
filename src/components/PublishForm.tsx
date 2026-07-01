@@ -945,7 +945,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           ? `${fase2AudienceNamesList[0]} +${fase2AudienceNamesList.length - 1}`
           : "Multi")
     : (isFase3Lp && ltAdvantage ? "Advantage+" : selectedAudienceName);
-  const computedCampaignName = campaignStructure === "new" && campaignNameInput && budget && (isFase3Lp || namingPublicName || isFase2)
+  const computedCampaignName = campaignStructure === "new" && budget && (isFase3Lp ? campaignNameInput : (namingPublicName || isFase2))
     ? (isFase3Lp
         ? generateLtCampaignName({ productName: campaignNameInput, presetLabel: selectedPreset.label, structure: distributionStructure })
         : generateCampaignName({ presetLabel: selectedPreset.fase, publicName: namingPublicName || "Multi", budget: Number(budget), campaignName: campaignNameInput }))
