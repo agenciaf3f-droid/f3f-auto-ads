@@ -43,7 +43,7 @@ interface Audience { id: string; name: string; type: "custom" | "saved"; targeti
 interface Campaign { id: string; name: string; status: string; objective: string; effective_status?: string; daily_budget?: string; lifetime_budget?: string; bid_strategy?: string }
 interface WhatsAppNumber { id: string; display: string; phone: string; page_id: string; page_name: string }
 interface MessageTemplate { id: string; name: string; greeting: string; ready_message: string }
-interface PublishResult { ok?: boolean; campaign_id?: string; adset_id?: string; ad_id?: string; creative_id?: string; error?: string; step?: string; error_message?: string; error_code?: number | null; error_subcode?: number | null; error_user_msg?: string; error_user_title?: string; raw_error?: any; logs?: { step: string; status: string; ts: string; detail?: string }[]; adsets_created?: number; ads_created?: number; warning?: boolean }
+interface PublishResult { ok?: boolean; campaign_id?: string; adset_id?: string; ad_id?: string; creative_id?: string; error?: string; step?: string; error_message?: string; error_code?: number | null; error_subcode?: number | null; error_user_msg?: string; error_user_title?: string; raw_error?: any; logs?: { step: string; status: string; ts: string; detail?: string }[]; adsets_created?: number; ads_created?: number; warning?: boolean; creative_errors?: { name: string; error: string }[] }
 interface ErrorDetails { message?: string; error_user_title?: string; error_user_msg?: string; code?: number | null; error_subcode?: number | null; error_data?: any }
 interface ValidationResult { valid: boolean; checks?: { label: string; ok: boolean; detail: string }[]; error?: string; error_details?: ErrorDetails; min_budget?: number | null }
 
@@ -264,6 +264,12 @@ export default function PublishForm() {
   const [minBudget, setMinBudget] = useState<number | null>(null);
   const [publishResult, setPublishResult] = useState<PublishResult | null>(null);
   const logRef = useRef<LogPanelHandle>(null);
+  const publishErrorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (publishResult && !publishResult.ok) {
+      publishErrorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [publishResult]);
   const [validatingCreative, setValidatingCreative] = useState(false);
 
   // Multi-creative
@@ -1456,6 +1462,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
         // Chamadas restantes — reusa campanha; CBO reusa adset, ABO ignora (cria novo)
         const failNames: string[] = [];
+        const creativeErrors: { name: string; error: string }[] = [];
         const stillPending: number[] = [];
         for (const i of pending) {
           addLog(`📦 [publish] ${i + 1}/${total} — "${allCreatives[i].name}"`);
@@ -1467,15 +1474,19 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               adsCreated += ri.ads_created ?? 0;
               addLog(`✅ ${i + 1}/${total} ok`);
             } else {
+              const errMsg = ri?.error_user_msg || ri?.error_message || ri?.error || "erro desconhecido";
               failNames.push(allCreatives[i].name);
+              creativeErrors.push({ name: allCreatives[i].name, error: errMsg });
               stillPending.push(i);
               if (ri?.logs) for (const l of ri.logs) addLog(`  [${l.step}] ${l.status}${l.detail ? ` — ${l.detail}` : ""}`);
-              addLog(`❌ ${i + 1}/${total} falhou: ${ri?.error_message || ri?.error || "erro"}`);
+              addLog(`❌ ${i + 1}/${total} falhou: ${errMsg}`);
             }
           } catch (e) {
+            const errMsg = e instanceof Error ? e.message : "erro de transporte";
             failNames.push(allCreatives[i].name);
+            creativeErrors.push({ name: allCreatives[i].name, error: errMsg });
             stillPending.push(i);
-            addLog(`❌ ${i + 1}/${total} falhou (transporte): ${e instanceof Error ? e.message : "erro"}`);
+            addLog(`❌ ${i + 1}/${total} falhou (transporte): ${errMsg}`);
           }
         }
 
@@ -1489,8 +1500,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         } else {
           multiPublishProgressRef.current = { payload: vp, campaignId, adsetId: firstAdsetId, adsetsCreated, adsCreated, okNames, pending: stillPending };
           addLog(`⚠️ Parcial: ${okNames.length}/${total} publicados. Falharam: ${failNames.join(", ")}`);
-          setPublishResult({ ok: false, step: "partial", campaign_id: campaignId, adset_id: firstAdsetId, adsets_created: adsetsCreated, ads_created: adsCreated, error_message: `${failNames.length}/${total} criativos falharam: ${failNames.join(", ")}` });
-          toast.warning(`${okNames.length}/${total} publicados. ${failNames.length} falharam. Clique em Publicar de novo pra tentar os que faltam.`);
+          setPublishResult({ ok: false, step: "partial", campaign_id: campaignId, adset_id: firstAdsetId, adsets_created: adsetsCreated, ads_created: adsCreated, error_message: `${failNames.length}/${total} criativos falharam`, creative_errors: creativeErrors });
+          toast.error(`${failNames.length}/${total} criativos falharam — veja o motivo de cada um abaixo do botão Publicar.`, { duration: 8000 });
         }
         return;
       }
@@ -2496,7 +2507,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           )}
 
           {publishResult && !publishResult.ok && (
-            <Card className="glass-card p-4 border-destructive/30 space-y-3">
+            <Card ref={publishErrorRef} className="glass-card p-4 border-destructive/30 space-y-3">
               <p className="text-sm font-display font-semibold text-destructive">
                 ❌ Falha na etapa: <span className="font-mono">{publishResult.step || "desconhecido"}</span>
               </p>
@@ -2505,6 +2516,17 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 {publishResult.error_user_title && <p className="text-xs text-destructive">{publishResult.error_user_title}</p>}
                 {publishResult.error_user_msg && <p className="text-xs text-muted-foreground">{publishResult.error_user_msg}</p>}
               </div>
+              {publishResult.creative_errors && publishResult.creative_errors.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">Motivo por criativo:</p>
+                  {publishResult.creative_errors.map((ce, i) => (
+                    <div key={i} className="bg-destructive/10 border border-destructive/30 rounded-md p-2 flex items-start gap-2">
+                      <AlertTriangle className="w-3.5 h-3.5 text-destructive shrink-0 mt-0.5" />
+                      <p className="text-[10px] text-destructive flex-1"><span className="font-semibold">{ce.name}:</span> {ce.error}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
               {(publishResult.campaign_id || publishResult.adset_id) && (
                 <div className="space-y-1">
                   {publishResult.campaign_id && <IDDisplay id={publishResult.campaign_id} label="Campaign" />}
