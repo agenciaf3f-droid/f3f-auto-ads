@@ -711,8 +711,8 @@ async function resolveVideoThumbnailField(
   adAccountId: string,
 ): Promise<Record<string, string>> {
   let thumbUri = "";
-  for (let attempt = 0; attempt < 15; attempt++) {
-    await new Promise((r) => setTimeout(r, 3000));
+  for (let attempt = 0; attempt < 30; attempt++) {
+    await new Promise((r) => setTimeout(r, 4000));
     try {
       const r = await fetch(`https://graph.facebook.com/v25.0/${videoId}?fields=status,picture,thumbnails{uri,is_preferred}&access_token=${accessToken}`);
       const d = await r.json();
@@ -836,7 +836,6 @@ async function buildFase1Creative(
     if (result.image_hash) {
       const linkData: Record<string, any> = {
         image_hash: result.image_hash,
-        message: creativeName,
         link: igProfileLink,
         call_to_action: { type: "VIEW_INSTAGRAM_PROFILE", value: { link: igProfileLink } },
       };
@@ -853,7 +852,6 @@ async function buildFase1Creative(
       const videoData: Record<string, any> = {
         video_id: result.video_id,
         ...thumbnailField,
-        message: creativeName,
         call_to_action: { type: "VIEW_INSTAGRAM_PROFILE", value: { link: igProfileLink } },
       };
       const storySpec: Record<string, any> = { page_id: pageId, video_data: videoData };
@@ -992,7 +990,6 @@ async function buildFase2Creative(
     const videoData: Record<string, any> = {
       video_id: result.video_id,
       ...thumbnailField,
-      message: creativeName,
     };
     const storySpec: Record<string, any> = { page_id: pageId, video_data: videoData };
     if (igActorId) storySpec.instagram_user_id = igActorId;
@@ -1055,7 +1052,6 @@ async function buildFase3LpCreative(
     if (result.image_hash) {
       const linkData: Record<string, any> = {
         image_hash: result.image_hash,
-        message: creativeName,
         link: lpUrl,
         call_to_action: callToAction,
       };
@@ -1073,7 +1069,6 @@ async function buildFase3LpCreative(
       const videoData: Record<string, any> = {
         video_id: result.video_id,
         ...thumbnailField,
-        message: creativeName,
         call_to_action: callToAction,
       };
       const storySpec: Record<string, any> = { page_id: pageId, video_data: videoData };
@@ -1148,11 +1143,11 @@ async function buildFase3Creative(
     if (result.image_hash) {
       const linkData: Record<string, any> = {
         image_hash: result.image_hash,
-        message: readyMessage || creativeName,
         link: waLink,
         call_to_action: callToAction,
         page_welcome_message: welcomeMessageJson,
       };
+      if (readyMessage) linkData.message = readyMessage;
       const storySpec: Record<string, any> = { page_id: pageId, link_data: linkData };
       if (igActorId) storySpec.instagram_user_id = igActorId;
       console.log(`[FASE3-creative] OK (drive/image): hash=${result.image_hash}`);
@@ -1166,10 +1161,10 @@ async function buildFase3Creative(
       const videoData: Record<string, any> = {
         video_id: result.video_id,
         ...thumbnailField,
-        message: readyMessage || creativeName,
         call_to_action: callToAction,
         page_welcome_message: welcomeMessageJson,
       };
+      if (readyMessage) videoData.message = readyMessage;
       const storySpec: Record<string, any> = { page_id: pageId, video_data: videoData };
       if (igActorId) storySpec.instagram_user_id = igActorId;
       console.log(`[FASE3-creative] OK (drive/video): video_id=${result.video_id}`);
