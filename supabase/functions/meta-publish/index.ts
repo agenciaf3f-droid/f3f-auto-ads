@@ -1469,9 +1469,10 @@ Deno.serve(async (req) => {
       const campaignPayload: Record<string, any> = {
         name: finalCampaignName,
         objective: resolvedCampaignObjective,
-        // ACTIVE: campanha entra no ar e GASTA na publicação (decisão do usuário p/
-        // liberar aos colaboradores). Adsets+ads já são ACTIVE. Antes era PAUSED.
-        status: "ACTIVE",
+        // PAUSED: rollout pra outros gestores exige checkpoint manual antes do
+        // gasto começar. Adsets+ads seguem ACTIVE — assim que o gestor conferir
+        // e ativar a campanha na Meta, tudo abaixo já está pronto pra rodar.
+        status: "PAUSED",
         special_ad_categories: [],
         buying_type: "AUCTION",
         smart_promotion_type: "GUIDED_CREATION",
