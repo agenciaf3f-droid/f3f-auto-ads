@@ -206,7 +206,7 @@ const LogPanel = forwardRef<LogPanelHandle>((_props, ref) => {
       <div className="max-h-40 overflow-y-auto space-y-1">
         {logs.length === 0 ? (
           <p className="text-xs text-muted-foreground">Nenhum log ainda...</p>
-        ) : logs.map((log, i) => (
+        ) : logs.slice(-150).map((log, i) => (
           <p key={i} className="text-xs font-mono text-muted-foreground">{log}</p>
         ))}
       </div>
