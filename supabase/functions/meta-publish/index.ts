@@ -1918,6 +1918,9 @@ Deno.serve(async (req) => {
     const adsetIds: string[] = [];
     const adIds: string[] = [];
     const failures: { index: number; name: string; step: string; reason: string }[] = [];
+    // Primeiro erro de adset (objeto Meta completo) — surfaced no topo da resposta
+    // pra o card de erro do frontend mostrar o motivo real, não só "verifique os logs".
+    let firstAdsetError: any = null;
     const adsetRetryBackoffMs = [2000, 6000, 15000];
     const maxAdsetAttempts = 3;
     const adsetDedupeWindowMinutes = 10;
@@ -2224,6 +2227,21 @@ Deno.serve(async (req) => {
         },
       });
 
+      // 1815715 = destino não aceito pelo objetivo da campanha. Acontece tipicamente
+      // ao publicar FASE 1 (destino INSTAGRAM_PROFILE) numa campanha EXISTENTE que
+      // não foi criada pra visita de perfil — restrição da Meta, não resolvível por
+      // payload. Orienta o usuário em vez de deixar o erro genérico.
+      if (finalError && Number(finalError.error_subcode) === 1815715) {
+        finalError = {
+          ...finalError,
+          error_user_title: "Campanha incompatível com este tipo de anúncio",
+          error_user_msg: existing_campaign_id
+            ? `A campanha existente selecionada não aceita o destino "${adsetPayload.destination_type || "?"}" deste anúncio (${presetLabel}). ` +
+              "Publique em 'Nova campanha' ou escolha uma campanha já criada para este mesmo preset. (erro Meta 1815715)"
+            : `O objetivo da campanha não aceita o destino "${adsetPayload.destination_type || "?"}" deste anúncio (${presetLabel}). (erro Meta 1815715)`,
+        };
+      }
+
       // 3858634 = compliance_section / "anunciante ausente": exige VERIFICAÇÃO DO ANUNCIANTE
       // no Meta Business Manager (não resolvível por API / por string no payload).
       if (finalError && Number(finalError.error_subcode) === 3858634) {
@@ -2458,7 +2476,8 @@ Deno.serve(async (req) => {
         }
 
         if (adsetResult.error) {
-          failures.push({ index: idx, name: cr.name, step: "adset", reason: adsetResult.error.message });
+          if (!firstAdsetError) firstAdsetError = adsetResult.error;
+          failures.push({ index: idx, name: cr.name, step: "adset", reason: adsetResult.error.error_user_msg || adsetResult.error.message });
           continue;
         }
         const adsetId = adsetResult.id!;
@@ -2478,7 +2497,11 @@ Deno.serve(async (req) => {
     if (adsCreated === 0) {
       return respond({
         ok: false, step: "publish", campaign_id: campaignId,
-        error_message: `Nenhum anúncio criado. ${adsetsCreated} adset(s), ${creativesCreated} creative(s). Verifique os logs.`,
+        error_message: `Nenhum anúncio criado (${failures.length} falha(s)). ${adsetsCreated} adset(s), ${creativesCreated} creative(s).`,
+        error_user_title: firstAdsetError?.error_user_title || undefined,
+        error_user_msg: firstAdsetError?.error_user_msg || undefined,
+        error_code: firstAdsetError?.code ?? undefined,
+        error_subcode: firstAdsetError?.error_subcode ?? undefined,
         adsets_created: adsetsCreated, ads_created: 0, failures,
       });
     }
