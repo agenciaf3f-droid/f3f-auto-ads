@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, forwardRef, useImperativeHandle } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   WhatsAppNumberSelector,
@@ -175,6 +175,46 @@ const UTM_DEFAULT = "utm_source=FB&utm_campaign={{campaign.name}}|{{campaign.id}
 let creativeCounter = 0;
 function nextCreativeId() { return `cr_${++creativeCounter}_${Date.now()}`; }
 
+// Logs vivem aqui (estado próprio) para que addLog NÃO re-renderize o form gigante.
+// Durante validate/publish o storm de logs antes derrubava o frame rate (spinner
+// "travava"); agora só este painel pequeno re-renderiza.
+export interface LogPanelHandle {
+  add: (msg: string) => void;
+  clear: () => void;
+}
+
+const LogPanel = forwardRef<LogPanelHandle>((_props, ref) => {
+  const [logs, setLogs] = useState<string[]>([]);
+  useImperativeHandle(ref, () => ({
+    add: (msg) => setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]),
+    clear: () => setLogs([]),
+  }), []);
+
+  const copy = () => {
+    navigator.clipboard.writeText(logs.join("\n"));
+    toast.success("Relatório copiado!");
+  };
+
+  return (
+    <Card className="glass-card p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <Label className="font-display font-semibold text-xs text-muted-foreground">LOGS</Label>
+        <Button variant="ghost" size="sm" onClick={copy} className="h-7 text-xs gap-1">
+          <Copy className="w-3 h-3" /> Copiar
+        </Button>
+      </div>
+      <div className="max-h-40 overflow-y-auto space-y-1">
+        {logs.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Nenhum log ainda...</p>
+        ) : logs.map((log, i) => (
+          <p key={i} className="text-xs font-mono text-muted-foreground">{log}</p>
+        ))}
+      </div>
+    </Card>
+  );
+});
+LogPanel.displayName = "LogPanel";
+
 export default function PublishForm() {
   const isMountedRef = useRef(true);
   useEffect(() => {
@@ -182,6 +222,23 @@ export default function PublishForm() {
       isMountedRef.current = false;
     };
   }, []);
+
+  // Logs emitidos antes do LogPanel montar (ex: checkMetaStatus no boot, enquanto
+  // metaLoading=true) ficam aqui até o ref conectar — senão são perdidos (addLog
+  // vira no-op com logRef.current === null).
+  const pendingLogsRef = useRef<string[]>([]);
+  // Progresso de publish multi-criativo: permite retomar da campanha já criada
+  // em vez de recomeçar do criativo #1 quando o usuário clica Publicar de novo
+  // após uma falha parcial (recomeçar colide com o lock de idempotência do adset).
+  const multiPublishProgressRef = useRef<{
+    payload: Record<string, unknown>;
+    campaignId: string;
+    adsetId?: string;
+    adsetsCreated: number;
+    adsCreated: number;
+    okNames: string[];
+    pending: number[];
+  } | null>(null);
 
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [metaName, setMetaName] = useState("");
@@ -206,7 +263,7 @@ export default function PublishForm() {
   const [validatedPayload, setValidatedPayload] = useState<Record<string, unknown> | null>(null);
   const [minBudget, setMinBudget] = useState<number | null>(null);
   const [publishResult, setPublishResult] = useState<PublishResult | null>(null);
-  const [logs, setLogs] = useState<string[]>([]);
+  const logRef = useRef<LogPanelHandle>(null);
   const [validatingCreative, setValidatingCreative] = useState(false);
 
   // Multi-creative
@@ -283,7 +340,10 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const [identityLoading, setIdentityLoading] = useState(false);
   const [identityError, setIdentityError] = useState<string | null>(null);
 
-  const addLog = (msg: string) => setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
+  const addLog = useCallback((msg: string) => {
+    if (logRef.current) logRef.current.add(msg);
+    else pendingLogsRef.current.push(msg);
+  }, []);
 
   useEffect(() => { checkMetaStatus(); loadMessageTemplates(); }, []);
   const checkMetaStatus = async () => {
@@ -1325,60 +1385,112 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
         addLog(`🚀 [publish] Orquestrando ${total} criativos (1 por chamada — evita timeout/OOM da edge)`);
 
-        // 1ª chamada cria a campanha (+ 1º adset/criativo/ad)
-        addLog(`📦 [publish] 1/${total} — "${allCreatives[0].name}"`);
-        let r1;
-        try {
-          r1 = await callFor(0, {});
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : "erro";
-          addLog(`❌ 1/${total} falhou (campanha não criada): ${msg}`);
-          setPublishResult({ ok: false, step: "request", error_message: msg });
-          toast.error("Falha ao criar a campanha (1º criativo).");
-          return;
-        }
-        if (!r1?.ok) {
-          if (r1?.logs) for (const l of r1.logs) addLog(`  [${l.step}] ${l.status}${l.detail ? ` — ${l.detail}` : ""}`);
-          addLog(`❌ 1/${total} falhou (campanha não criada): ${r1?.error_message || r1?.error || "erro"}`);
-          setPublishResult(r1);
-          toast.error("Falha ao criar a campanha (1º criativo).");
-          return;
-        }
-        const campaignId = r1.campaign_id;
-        const firstAdsetId = r1.adset_id;
-        const okNames: string[] = [allCreatives[0].name];
-        const failNames: string[] = [];
-        addLog(`✅ 1/${total} ok — campanha ${campaignId}`);
+        // Retomada: se este é o mesmo payload validado de uma tentativa anterior
+        // que publicou parcialmente, continua da campanha já criada em vez de
+        // recomeçar do criativo #1 — recomeçar colidiria com o lock de
+        // idempotência do adset e abortaria o retry inteiro, deixando campanha órfã.
+        const resume = multiPublishProgressRef.current?.payload === vp ? multiPublishProgressRef.current : null;
 
-        // Chamadas 2..N — reusa campanha; CBO reusa adset, ABO ignora (cria novo)
-        for (let i = 1; i < total; i++) {
+        let campaignId: string;
+        let firstAdsetId: string | undefined;
+        let adsetsCreated: number;
+        let adsCreated: number;
+        const okNames: string[] = [];
+        let pending: number[];
+
+        if (resume) {
+          campaignId = resume.campaignId;
+          firstAdsetId = resume.adsetId;
+          adsetsCreated = resume.adsetsCreated;
+          adsCreated = resume.adsCreated;
+          okNames.push(...resume.okNames);
+          pending = resume.pending;
+          addLog(`↻ [publish] Retomando campanha ${campaignId} — ${pending.length}/${total} criativo(s) pendente(s)`);
+        } else {
+          // 1ª chamada cria a campanha (+ 1º adset/criativo/ad)
+          addLog(`📦 [publish] 1/${total} — "${allCreatives[0].name}"`);
+          let r1;
+          try {
+            r1 = await callFor(0, {});
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : "erro";
+            addLog(`❌ 1/${total} falhou (campanha não criada): ${msg}`);
+            setPublishResult({ ok: false, step: "request", error_message: msg });
+            toast.error("Falha ao criar a campanha (1º criativo).");
+            return;
+          }
+          const isWarning1 = Boolean(r1?.warning || r1?.step === "idempotency");
+          if (!r1?.ok) {
+            const msg1 = r1?.error_message || r1?.error || "erro";
+            if (r1?.logs) for (const l of r1.logs) addLog(`  [${l.step}] ${l.status}${l.detail ? ` — ${l.detail}` : ""}`);
+            addLog(`${isWarning1 ? "⚠️" : "❌"} 1/${total} ${isWarning1 ? "bloqueado" : "falhou"}: ${msg1}`);
+            setPublishResult(r1);
+            if (!r1?.campaign_id) {
+              // Nada foi criado (falhou antes/na criação da campanha) — seguro recomeçar do zero.
+              if (isWarning1) toast.warning(msg1);
+              else toast.error("Falha ao criar a campanha (1º criativo).");
+              return;
+            }
+            // Campanha já existe mas o 1º criativo não foi confirmado (adset/creative/ad
+            // falhou) — guarda progresso pra o retry reusar a campanha em vez de duplicá-la.
+            multiPublishProgressRef.current = {
+              payload: vp,
+              campaignId: r1.campaign_id,
+              adsetId: r1.adset_id,
+              adsetsCreated: r1.adsets_created ?? 0,
+              adsCreated: r1.ads_created ?? 0,
+              okNames: [],
+              pending: Array.from({ length: total }, (_, i) => i),
+            };
+            toast.warning(isWarning1 ? msg1 : `${msg1} Campanha já criada — clique em Publicar de novo pra retomar sem duplicar.`);
+            return;
+          }
+          campaignId = r1.campaign_id;
+          firstAdsetId = r1.adset_id;
+          adsetsCreated = r1.adsets_created ?? 1;
+          adsCreated = r1.ads_created ?? 1;
+          okNames.push(allCreatives[0].name);
+          pending = Array.from({ length: total - 1 }, (_, i) => i + 1);
+          addLog(`✅ 1/${total} ok — campanha ${campaignId}`);
+        }
+
+        // Chamadas restantes — reusa campanha; CBO reusa adset, ABO ignora (cria novo)
+        const failNames: string[] = [];
+        const stillPending: number[] = [];
+        for (const i of pending) {
           addLog(`📦 [publish] ${i + 1}/${total} — "${allCreatives[i].name}"`);
           try {
             const ri = await callFor(i, { existing_campaign_id: campaignId, existing_adset_id: firstAdsetId });
             if (ri?.ok) {
               okNames.push(allCreatives[i].name);
+              adsetsCreated += ri.adsets_created ?? 0;
+              adsCreated += ri.ads_created ?? 0;
               addLog(`✅ ${i + 1}/${total} ok`);
             } else {
               failNames.push(allCreatives[i].name);
+              stillPending.push(i);
               if (ri?.logs) for (const l of ri.logs) addLog(`  [${l.step}] ${l.status}${l.detail ? ` — ${l.detail}` : ""}`);
               addLog(`❌ ${i + 1}/${total} falhou: ${ri?.error_message || ri?.error || "erro"}`);
             }
           } catch (e) {
             failNames.push(allCreatives[i].name);
+            stillPending.push(i);
             addLog(`❌ ${i + 1}/${total} falhou (transporte): ${e instanceof Error ? e.message : "erro"}`);
           }
         }
 
-        const allOk = failNames.length === 0;
+        const allOk = stillPending.length === 0;
         if (allOk) {
-          setPublishResult({ ok: true, campaign_id: campaignId });
-          setLogs([]);
+          setPublishResult({ ok: true, campaign_id: campaignId, adset_id: firstAdsetId, adsets_created: adsetsCreated, ads_created: adsCreated });
+          multiPublishProgressRef.current = null;
+          logRef.current?.clear();
           toast.success(`${total} criativos publicados com sucesso!`);
           setValidatedPayload(null);
         } else {
+          multiPublishProgressRef.current = { payload: vp, campaignId, adsetId: firstAdsetId, adsetsCreated, adsCreated, okNames, pending: stillPending };
           addLog(`⚠️ Parcial: ${okNames.length}/${total} publicados. Falharam: ${failNames.join(", ")}`);
-          setPublishResult({ ok: false, step: "partial", campaign_id: campaignId, error_message: `${failNames.length}/${total} criativos falharam: ${failNames.join(", ")}` });
-          toast.warning(`${okNames.length}/${total} publicados. ${failNames.length} falharam.`);
+          setPublishResult({ ok: false, step: "partial", campaign_id: campaignId, adset_id: firstAdsetId, adsets_created: adsetsCreated, ads_created: adsCreated, error_message: `${failNames.length}/${total} criativos falharam: ${failNames.join(", ")}` });
+          toast.warning(`${okNames.length}/${total} publicados. ${failNames.length} falharam. Clique em Publicar de novo pra tentar os que faltam.`);
         }
         return;
       }
@@ -1389,7 +1501,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       setPublishResult(result);
       if (result.ok) {
         // Publicação sem erro → limpa o log por completo (confirmação aparece no card abaixo).
-        setLogs([]);
+        logRef.current?.clear();
         toast.success("Anúncio(s) publicado(s) com sucesso!");
         // Clear validated payload after successful publish
         setValidatedPayload(null);
@@ -1426,12 +1538,6 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       setLoading(false);
     }
   };
-
-  const copyReport = () => {
-    navigator.clipboard.writeText(logs.join("\n"));
-    toast.success("Relatório copiado!");
-  };
-
 
   if (metaLoading) {
     return (
@@ -2409,21 +2515,13 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           )}
 
           {/* Logs */}
-          <Card className="glass-card p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <Label className="font-display font-semibold text-xs text-muted-foreground">LOGS</Label>
-              <Button variant="ghost" size="sm" onClick={copyReport} className="h-7 text-xs gap-1">
-                <Copy className="w-3 h-3" /> Copiar
-              </Button>
-            </div>
-            <div className="max-h-40 overflow-y-auto space-y-1">
-              {logs.length === 0 ? (
-                <p className="text-xs text-muted-foreground">Nenhum log ainda...</p>
-              ) : logs.map((log, i) => (
-                <p key={i} className="text-xs font-mono text-muted-foreground">{log}</p>
-              ))}
-            </div>
-          </Card>
+          <LogPanel ref={(inst) => {
+            logRef.current = inst;
+            if (inst && pendingLogsRef.current.length) {
+              for (const msg of pendingLogsRef.current) inst.add(msg);
+              pendingLogsRef.current = [];
+            }
+          }} />
         </>
       )}
     </div>

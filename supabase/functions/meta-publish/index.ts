@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { extractDriveFileId, buildDriveApiUrl } from "../_shared/drive.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -504,15 +505,13 @@ async function uploadDriveCreative(
   adAccountId: string,
   driveLink: string
 ): Promise<{ image_hash?: string; video_id?: string; error?: string }> {
-  const fileIdMatch = driveLink.match(/\/d\/([a-zA-Z0-9_-]+)/) || driveLink.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-  const fileId = fileIdMatch?.[1];
+  const fileId = extractDriveFileId(driveLink);
   // Candidatos em ordem: Drive API key (bypassa interstitial) → uc?confirm=t → usercontent.
   const driveApiKey = Deno.env.get("GOOGLE_DRIVE_API_KEY");
+  const apiUrl = fileId && driveApiKey ? buildDriveApiUrl(fileId, driveApiKey) : null;
   const candidateUrls: string[] = [];
   if (fileId) {
-    if (driveApiKey) {
-      candidateUrls.push(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${driveApiKey}`);
-    }
+    if (apiUrl) candidateUrls.push(apiUrl);
     candidateUrls.push(`https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`);
     candidateUrls.push(`https://drive.usercontent.google.com/download?id=${fileId}&export=download&authuser=0&confirm=t`);
   } else {
@@ -522,37 +521,53 @@ async function uploadDriveCreative(
   // Fast-path SEM buffer na edge: com a API key do Drive, a URL devolve bytes crus
   // (sem o HTML interstitial de vírus/quota). Mandamos file_url e a Meta baixa o
   // vídeo direto — evita carregar vídeos grandes na memória da edge (OOM → worker
-  // morto → "Failed to send a request"). Só vale pra vídeo; imagem/erro cai no fallback.
-  if (fileId && driveApiKey) {
-    const apiUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${driveApiKey}`;
+  // morto → "Failed to send a request"). Só vale pra vídeo — um probe (Range dos
+  // 16 primeiros bytes) decide antes, senão imagem perde ~25s de poll de vídeo à toa.
+  if (apiUrl) {
+    let looksLikeVideo = true; // probe inconclusivo (erro/timeout) → tenta o fast-path mesmo assim
     try {
-      const fd = new FormData();
-      fd.append("access_token", accessToken);
-      fd.append("file_url", apiUrl);
-      const up = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/advideos`, { method: "POST", body: fd });
-      const upd = await up.json();
-      if (!upd.error && upd.id) {
-        const videoId = upd.id;
-        let sawError = false;
-        for (let i = 0; i < 10; i++) {
-          await new Promise((r) => setTimeout(r, 2500));
-          try {
-            const stRes = await fetch(`https://graph.facebook.com/v25.0/${videoId}?fields=status&access_token=${accessToken}`);
-            const stData = await stRes.json();
-            const vs = stData?.status?.video_status || stData?.status;
-            console.log(`[drive-upload] file_url video ${videoId} poll ${i + 1}: ${JSON.stringify(stData?.status)}`);
-            if (vs === "ready") return { video_id: videoId };
-            if (vs === "error") { sawError = true; break; }
-          } catch (e) { console.log(`[drive-upload] file_url poll error: ${(e as Error).message}`); }
-        }
-        if (!sawError) return { video_id: videoId }; // ainda processando → assume ok (ad creation reporta se não)
-      } else if (upd.error) {
-        console.log(`[drive-upload] file_url /advideos error (fallback buffered): ${JSON.stringify(upd.error)}`);
-      }
+      const probe = await fetch(apiUrl, { headers: { Range: "bytes=0-15" }, signal: AbortSignal.timeout(15_000) });
+      const probeCt = probe.headers.get("content-type") || "";
+      if (probeCt.includes("image")) looksLikeVideo = false;
     } catch (e) {
-      console.log(`[drive-upload] file_url path exception (fallback buffered): ${(e as Error).message}`);
+      console.log(`[drive-upload] probe failed (assumindo vídeo): ${(e as Error).message}`);
     }
-    // file_url não resolveu → segue pro download buffered abaixo
+
+    if (looksLikeVideo) {
+      try {
+        const fd = new FormData();
+        fd.append("access_token", accessToken);
+        fd.append("file_url", apiUrl);
+        const up = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/advideos`, { method: "POST", body: fd });
+        const upd = await up.json();
+        if (!upd.error && upd.id) {
+          const videoId = upd.id;
+          let sawError = false;
+          for (let i = 0; i < 10; i++) {
+            await new Promise((r) => setTimeout(r, 2500));
+            try {
+              const stRes = await fetch(`https://graph.facebook.com/v25.0/${videoId}?fields=status&access_token=${accessToken}`);
+              const stData = await stRes.json();
+              const vs = stData?.status?.video_status || stData?.status;
+              console.log(`[drive-upload] file_url video ${videoId} poll ${i + 1}: ${JSON.stringify(stData?.status)}`);
+              if (vs === "ready") return { video_id: videoId };
+              if (vs === "error") { sawError = true; break; }
+            } catch (e) { console.log(`[drive-upload] file_url poll error: ${(e as Error).message}`); }
+          }
+          if (!sawError) return { video_id: videoId }; // ainda processando → assume ok (ad creation reporta se não)
+          // Meta processou e deu erro no vídeo criado via file_url — apaga antes
+          // de cair no fallback buffered, senão fica órfão na biblioteca da conta.
+          try {
+            await fetch(`https://graph.facebook.com/v25.0/${videoId}?access_token=${accessToken}`, { method: "DELETE" });
+          } catch (e) { console.log(`[drive-upload] falha ao limpar vídeo ${videoId}: ${(e as Error).message}`); }
+        } else if (upd.error) {
+          console.log(`[drive-upload] file_url /advideos error (fallback buffered): ${JSON.stringify(upd.error)}`);
+        }
+      } catch (e) {
+        console.log(`[drive-upload] file_url path exception (fallback buffered): ${(e as Error).message}`);
+      }
+    }
+    // file_url não resolveu ou não é vídeo → segue pro download buffered abaixo
   }
 
   const DOWNLOAD_HEADERS: HeadersInit = {
@@ -598,7 +613,7 @@ async function uploadDriveCreative(
   // Sem fallback file_url: Meta downloada HTML interstitial achando ser vídeo,
   // cria creative WITH_ISSUES (#1487713/#2490446). Falha fast é melhor.
   if (!fileRes || !fileBlob) {
-    return { error: `Arquivo do Drive não pôde ser baixado. Causa mais comum: não está público — no Drive, Compartilhar → Acesso geral → "Qualquer pessoa com o link" (Leitor). Se já estiver público: pode ser cota de download temporária do Drive (re-upload o arquivo) ou use o link do Instagram.` };
+    return { error: `Arquivo do Drive não pôde ser baixado. Causa mais comum: não está público — no Drive, Compartilhar → Acesso geral → "Qualquer pessoa com o link" (Leitor). Se já estiver público: pode ser cota de download temporária do Drive (re-upload o arquivo), arquivo maior que 100MB (reduza o tamanho) ou use o link do Instagram.` };
   }
 
   // Detecção: content-type, content-disposition (filename) ou magic bytes.

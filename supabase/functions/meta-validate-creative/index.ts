@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { extractDriveFileId, buildDriveApiUrl } from "../_shared/drive.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -205,8 +206,7 @@ Deno.serve(async (req) => {
 
     if (isDriveLink) {
       const tDrive = Date.now();
-      const fileIdMatch = creative_link.match(/\/d\/([a-zA-Z0-9_-]+)/) || creative_link.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-      const fileId = fileIdMatch?.[1];
+      const fileId = extractDriveFileId(creative_link);
       const driveApiKey = Deno.env.get("GOOGLE_DRIVE_API_KEY");
 
       // Espelha o caminho PRIMÁRIO do publish: baixa via API key do Drive
@@ -216,13 +216,28 @@ Deno.serve(async (req) => {
       // pra FALHAR CEDO na validação em vez de quebrar no publish.
       if (fileId && driveApiKey) {
         try {
-          const apiUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${driveApiKey}`;
+          const apiUrl = buildDriveApiUrl(fileId, driveApiKey);
           const res = await fetch(apiUrl, { headers: { Range: "bytes=0-15" }, signal: AbortSignal.timeout(15_000) });
           const ct = res.headers.get("content-type") || "";
           mark("drive_check", tDrive);
           mark("TOTAL", t0);
 
           if (res.status === 401 || res.status === 403 || res.status === 404) {
+            // 401/403/404 acontece tanto por arquivo privado quanto por
+            // GOOGLE_DRIVE_API_KEY inválida/restrita (referrer, IP, key revogada).
+            // Sem diferenciar, o gestor fica revendo permissão de um arquivo que
+            // já está público. O corpo do erro do Google cita a chave nesse caso.
+            let bodyText = "";
+            try { bodyText = await res.text(); } catch { /* corpo pode já ter sido consumido/vazio */ }
+            const looksLikeKeyProblem = /api key|apikey|referer|ip address|key (is )?(invalid|expired|revoked|not valid)/i.test(bodyText);
+            if (looksLikeKeyProblem) {
+              console.log(`[validate-creative] drive check ${res.status} parece problema na GOOGLE_DRIVE_API_KEY: ${bodyText.slice(0, 300)}`);
+              return new Response(JSON.stringify({
+                ok: false,
+                error: `Não foi possível verificar o arquivo do Drive (erro ${res.status} na chave de API do Google, não no compartilhamento do arquivo). Verifique a configuração de GOOGLE_DRIVE_API_KEY.`,
+                timings,
+              }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            }
             return new Response(JSON.stringify({
               ok: false,
               error: "Arquivo do Drive não está público. No Drive: clique no arquivo → Compartilhar → Acesso geral → \"Qualquer pessoa com o link\" (Leitor) → salve e valide de novo. A publicação baixa por link anônimo, então arquivo privado não funciona.",
