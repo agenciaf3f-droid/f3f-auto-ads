@@ -1558,8 +1558,16 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       const result = await publishAd(validatedPayload);
       setPublishResult(result);
       if (result.ok) {
-        // Publicação sem erro → limpa o log por completo (confirmação aparece no card abaixo).
+        // Publicação sem erro → limpa o log verboso (confirmação aparece no card abaixo),
+        // MAS re-exibe warnings/erros internos (ex: fase2_balde, sanity checks) — senão
+        // degradação graciosa (passo falhou mas publish seguiu) fica invisível pro gestor.
         logRef.current?.clear();
+        const softIssues = (result.logs || []).filter((l: any) => l.status === "warning" || l.status === "error");
+        for (const l of softIssues) addLog(`⚠️ [${l.step}] ${l.detail || l.status}`);
+        // Balde (FASE 2) — mostra o resultado mesmo em sucesso (confirmação de negócio,
+        // não só warning): gestor precisa saber se o vídeo entrou no público acumulado.
+        const baldeOutcome = (result.logs || []).filter((l: any) => l.step === "fase2_balde" && l.status !== "start").pop();
+        if (baldeOutcome && baldeOutcome.status === "success") addLog(`🪣 [balde] ${baldeOutcome.detail}`);
         toast.success("Anúncio(s) publicado(s) com sucesso!");
         // Clear validated payload after successful publish
         setValidatedPayload(null);
