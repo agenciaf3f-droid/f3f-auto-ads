@@ -1767,17 +1767,26 @@ Deno.serve(async (req) => {
       const ltGenders: number[] = Array.isArray(body.lt_genders)
         ? body.lt_genders.map(Number).filter((g: number) => g === 1 || g === 2)
         : [];
-      lpTargeting.age_min = ltAgeMin;
-      lpTargeting.age_max = ltAgeMax;
       if (ltGenders.length === 1) lpTargeting.genders = ltGenders;
       else delete lpTargeting.genders;
       if (ltAdvantage) {
-        // Advantage+ ON: SÓ advantage_audience:1. A Meta trata age_min/age_max/genders como
-        // SUGESTÃO automaticamente (permite age_min > 25 e expande gênero além).
-        // NÃO reenviar individual_setting aqui: ele fixa a idade como CONTROLE e a Meta
-        // rejeita age_min > 25 (erro 100/1870188). Ver gabarito ads_create_ad_set (MCP).
-        lpTargeting.targeting_automation = { advantage_audience: 1 };
+        // Advantage+ ON: a idade desejada vira SUGESTÃO via age_range. age_min/age_max são
+        // CONTROLES rígidos e a Meta EXIGE min ≤ 25 com A+A ligado (senão erro 100/1870188).
+        // Logo: controles largos (18–65) + age_range = faixa desejada do gestor +
+        // individual_setting{age:1,gender:1} (marca idade/gênero como setados/sugeridos).
+        // Gabarito: adset 120249704262340478 (conta 835492491950992), Advantage+ ativo/ok.
+        lpTargeting.age_min = 18;
+        lpTargeting.age_max = 65;
+        lpTargeting.age_range = [ltAgeMin, ltAgeMax];
+        lpTargeting.targeting_automation = {
+          advantage_audience: 1,
+          individual_setting: { age: 1, gender: 1 },
+        };
       } else {
+        // Advantage+ OFF: idade/gênero são limites RÍGIDOS. Sem age_range (só vale com A+A).
+        lpTargeting.age_min = ltAgeMin;
+        lpTargeting.age_max = ltAgeMax;
+        delete lpTargeting.age_range;
         lpTargeting.targeting_automation = {
           advantage_audience: 0,
           individual_setting: { age: 0, gender: 0 },
