@@ -8,5 +8,10 @@ export function extractDriveFileId(driveLink: string): string | undefined {
 }
 
 export function buildDriveApiUrl(fileId: string, apiKey: string): string {
-  return `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${apiKey}`;
+  // acknowledgeAbuse=true: parâmetro oficial da Drive API v3 pra baixar mesmo quando o
+  // Google mostra "não consigo escanear esse arquivo por vírus" (sempre acontece em
+  // arquivos grandes, ~200MB+ — não é malware, é só tamanho). Sem isso a chave de API
+  // (sem sessão de navegador pra clicar "Download mesmo assim") trava sem alternativa —
+  // via=key não tem o fluxo confirm=t/uuid que o link anônimo do navegador tem.
+  return `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&acknowledgeAbuse=true&key=${apiKey}`;
 }
