@@ -91,6 +91,7 @@ export default function OtimizacoesPage() {
 
   async function handleManter(violation: OptimizationViolation) {
     await recordAction(violation, "dismissed");
+    toast({ title: "Campanha mantida", description: violation.campaignName });
   }
 
   async function handleDesligar(violation: OptimizationViolation) {
@@ -149,8 +150,9 @@ export default function OtimizacoesPage() {
             </CardHeader>
             <CardContent>
               <p className="text-sm mb-4">
-                <strong>{v.metric}</strong> em <strong>{v.actual.toFixed(2)}</strong>, limite é{" "}
-                {v.operator} {v.limit}.
+                O KPI <strong>{v.metric}</strong> está em <strong>{v.actual.toFixed(2)}</strong> —{" "}
+                {v.operator === ">" ? "acima" : "abaixo"} do limite de <strong>{v.limit}</strong>{" "}
+                definido para este cliente. Essa campanha está performando fora do esperado.
               </p>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => handleManter(v)}>
