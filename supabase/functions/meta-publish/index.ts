@@ -273,12 +273,15 @@ async function runFase3SanityChecks(params: {
   checks.whatsapp_phone = { elapsed_ms: phoneCheck.elapsedMs, status: phoneCheck.status, response: phoneCheck.data };
   if (phoneCheck.data?.error) {
     const e = phoneCheck.data.error;
-    return {
-      ok: false,
-      rate_limited: isTransient(e),
-      error_message: isTransient(e) ? rateLimitMsg(e) : `WhatsApp Phone ID inválido/inacessível (${params.whatsappPhoneId}): ${e.message}`,
-      checks,
-    };
+    // Rate limit → falha rápido (o publish todo vai bater no limite).
+    if (isTransient(e)) {
+      return { ok: false, rate_limited: true, error_message: rateLimitMsg(e), checks };
+    }
+    // Erro NÃO-transiente no probe do phone-id: NÃO bloqueia. O binding real usa
+    // whatsapp_phone_number (o número), não este id; a Meta valida de verdade na criação
+    // do ad. O phone-id (identity.whatsapp_phone_id/whatsapp_number_id) pode vir vazio ou
+    // ser um WABA-id e falhar aqui mesmo com acesso ok — bloquear = falso "sem acesso".
+    checks.whatsapp_phone_warning = `Probe do WhatsApp Phone ID (${params.whatsappPhoneId}) falhou (não-bloqueante): ${e.message}`;
   }
 
   return { ok: true, checks };
@@ -1303,7 +1306,7 @@ Deno.serve(async (req) => {
       console.log(`[publish]   page_id: ${identity?.page_id || "auto-resolve"}`);
       console.log(`[publish]   greeting: "${greeting_text || ""}"`);
       console.log(`[publish]   ready_message: "${ready_message || ""}"`);
-      console.log(`[publish]   promoted_object: { page_id, whats_app_business_phone_number_id, whatsapp_phone_number } (EXACTLY 3 fields)`);
+      console.log(`[publish]   promoted_object: { page_id, whatsapp_phone_number, smart_pse_enabled:false } (+ pixel_id/custom_event_type no VENDAS ZAP)`);
     } else if (isIgProfilePreset) {
       console.log(`[publish] ── FASE 1 FIXED CONFIG ──`);
       console.log(`[publish]   objective: OUTCOME_TRAFFIC`);
@@ -2028,7 +2031,7 @@ Deno.serve(async (req) => {
               code: "LOCAL_VALIDATION",
               error_subcode: "PROMOTED_OBJECT_INVALID",
               error_user_title: "promoted_object inválido",
-              error_user_msg: "promoted_object deve conter page_id, whats_app_business_phone_number_id e whatsapp_phone_number",
+              error_user_msg: "promoted_object deve conter page_id e whatsapp_phone_number",
             },
           };
         }

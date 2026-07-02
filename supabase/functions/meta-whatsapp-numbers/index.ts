@@ -77,8 +77,10 @@ Deno.serve(async (req) => {
     const notes: string[] = [];
     let wabaCount = 0; // WABAs descobertas (independente de ter número)
     let scopeIssue = false;
+    // Só sinais REAIS de scope/permissão. Âncora (?!\d) evita que #10 case dentro de #100
+    // (#100 = campo inexistente, NÃO é permissão — era a causa do falso "reconecte scope").
     const looksScope = (msg?: string | null) =>
-      !!msg && /whatsapp_business_management|permission|missing|#200|#10|OAuthException/i.test(msg);
+      !!msg && /whatsapp_business_management|permission|missing|#200(?!\d)|#10(?!\d)|OAuthException/i.test(msg);
     const recordWabaError = (err: string | null) => {
       if (err) { notes.push(err); if (looksScope(err)) scopeIssue = true; }
     };
@@ -100,8 +102,15 @@ Deno.serve(async (req) => {
           addUnique(nums);
           console.log(`[whatsapp] Strategy 1 found ${nums.length} numbers`);
         } else if (data.error) {
-          recordWabaError(`Página: ${data.error.message}`);
-          console.log(`[whatsapp] Strategy 1 page error: ${data.error.message}`);
+          // #100 "nonexisting field (whatsapp_business_account)" = página SEM WABA conectada.
+          // Não é erro de permissão nem falha — é ausência de WhatsApp. Tratar como tal.
+          const emsg = String(data.error.message || "");
+          if (Number(data.error.code) === 100 && /whatsapp_business_account/i.test(emsg)) {
+            notes.push("A página vinculada não tem WhatsApp Business conectado.");
+          } else {
+            recordWabaError(`Página: ${emsg}`);
+          }
+          console.log(`[whatsapp] Strategy 1 page error: ${emsg}`);
         } else {
           notes.push("A página vinculada não tem WhatsApp Business conectado.");
           console.log(`[whatsapp] Strategy 1: no whatsapp_business_account on page.`);
