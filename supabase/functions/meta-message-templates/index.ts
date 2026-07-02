@@ -5,9 +5,13 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Lista templates "Modelo de mensagem" extraídos de creatives WHATSAPP existentes
-// na conta de anúncios. Meta não expõe esses templates via API direta — a única forma
-// é varrer creatives publicados que contêm o JSON `page_welcome_message` embutido.
+// Lista TODOS os "Modelo de mensagem" (page_welcome_message) criados na conta de anúncios.
+// Meta não expõe esses templates via API direta — eles ficam embutidos no JSON
+// `page_welcome_message` de cada CRIATIVO. Varremos a biblioteca de criativos da conta
+// (/adcreatives, paginado), que traz TODOS os criativos independente do status/idade do
+// anúncio — antes varríamos por adset (cap 60 conjuntos × 5 ads), o que pegava só os
+// primeiros/recentes ("só os ativos"). Criativos não-WhatsApp não têm page_welcome_message
+// e são naturalmente ignorados.
 
 type TemplateRow = {
   key: string;
@@ -23,105 +27,96 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { access_token, ad_account_id, max_adsets = 60 } = await req.json();
+    const { access_token, ad_account_id, max_creatives = 2000 } = await req.json();
     if (!access_token || !ad_account_id) {
       return new Response(JSON.stringify({ error: "access_token e ad_account_id são obrigatórios" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Paginar TODOS os adsets WHATSAPP da conta (incluindo ARCHIVED) até max_adsets.
-    // Filtering explícito porque o default da Meta exclui ARCHIVED — perdíamos templates
-    // antigos que ficavam só em campanhas arquivadas.
-    const filtering = encodeURIComponent(JSON.stringify([{
-      field: "effective_status", operator: "IN",
-      value: ["ACTIVE", "PAUSED", "DELETED", "ARCHIVED", "CAMPAIGN_PAUSED", "ADSET_PAUSED", "IN_PROCESS", "WITH_ISSUES"]
-    }]));
-    const ctwAdsets: any[] = [];
-    let nextUrl: string | null = `https://graph.facebook.com/v25.0/${ad_account_id}/adsets?fields=id,destination_type&limit=300&filtering=${filtering}&access_token=${access_token}`;
-    while (nextUrl && ctwAdsets.length < max_adsets) {
+    const seen = new Map<string, TemplateRow>();
+    let scannedCreatives = 0;
+    let parseErrors = 0;
+    let errorSample: string | null = null;
+    let listError: string | null = null;
+
+    // page_welcome_message pode vir no topo do criativo OU dentro do object_story_spec
+    // (video_data/link_data) — mesmos campos que a versão antiga lia por ad.
+    const fields = "id,name,page_welcome_message,object_story_spec{video_data{page_welcome_message},link_data{page_welcome_message}}";
+    let nextUrl: string | null =
+      `https://graph.facebook.com/v25.0/${ad_account_id}/adcreatives?fields=${encodeURIComponent(fields)}&limit=200&access_token=${access_token}`;
+
+    while (nextUrl && scannedCreatives < max_creatives) {
       const r = await fetch(nextUrl);
       const data = await r.json();
       if (data.error) {
-        // Rate limit / erro na listagem de adsets: degradar gracioso (200 + lista vazia).
-        // Templates são opcionais (usuário pode digitar mensagem). Evita "non-2xx" no UI.
-        const isRate = data.error.code === 17 || data.error.code === 4 || data.error.code === 32 || /request limit/i.test(data.error.message || "");
-        return new Response(JSON.stringify({
-          templates: [],
-          scanned_adsets: ctwAdsets.length,
-          error_summary: isRate
-            ? "Limite de requisições do Meta atingido. Aguarde alguns minutos e clique em Buscar de novo (ou digite a mensagem manualmente)."
-            : `Erro ao listar conjuntos: ${data.error.message}`,
-        }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        const isRate = [4, 17, 32].includes(Number(data.error.code)) || /request limit/i.test(data.error.message || "");
+        // Nada varrido ainda → surfa erro claro (200 + lista vazia; templates são opcionais).
+        if (scannedCreatives === 0) {
+          return new Response(JSON.stringify({
+            templates: [],
+            scanned_creatives: 0,
+            scanned_adsets: 0, // compat com log do frontend
+            errors_during_scan: 1,
+            error_sample: `${data.error.code || "?"}: ${data.error.message || ""}`,
+            error_summary: isRate
+              ? "Limite de requisições do Meta atingido. Aguarde alguns minutos e clique em Buscar de novo (ou digite a mensagem manualmente)."
+              : `Erro ao listar criativos: ${data.error.message}`,
+          }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        // Já temos alguns → degrada gracioso com o que juntou.
+        listError = `${data.error.code || "?"}: ${data.error.message || ""}`;
+        break;
       }
-      for (const a of (data.data || [])) {
-        if (a.destination_type === "WHATSAPP") ctwAdsets.push(a);
-        if (ctwAdsets.length >= max_adsets) break;
+
+      for (const cr of (data.data || [])) {
+        scannedCreatives++;
+        const pwm = cr.page_welcome_message
+          || cr.object_story_spec?.video_data?.page_welcome_message
+          || cr.object_story_spec?.link_data?.page_welcome_message;
+        if (!pwm) continue;
+        try {
+          const parsed = JSON.parse(pwm);
+          const tplId = String(parsed.template_id || "inline");
+          const text = parsed.text_format?.message?.text || parsed.image_format?.message?.text || "";
+          const autofill = parsed.text_format?.message?.autofill_message?.content || "";
+          const qrTitle = parsed.image_format?.message?.quick_replies?.[0]?.title || null;
+          // Dedupe por CONTEÚDO (welcome_text + autofill + quick_reply): Meta reusa
+          // template_id pra variações; queremos cada variação distinta.
+          const key = `${text}::${autofill}::${qrTitle || ""}`;
+          if (!seen.has(key) && (text || autofill || tplId !== "inline")) {
+            seen.set(key, {
+              key,
+              template_id: tplId,
+              welcome_text: text,
+              autofill,
+              quick_reply: qrTitle,
+              sample_ad_name: (cr.name || "").substring(0, 80),
+              raw_json: pwm,
+            });
+          }
+        } catch {
+          parseErrors++;
+          if (!errorSample) errorSample = "page_welcome_message inválido (JSON)";
+        }
+        if (scannedCreatives >= max_creatives) break;
       }
       nextUrl = data?.paging?.next || null;
     }
 
-    const seen = new Map<string, TemplateRow>();
-    let errorsDuringScan = 0;
-    let errorSample: string | null = null;
-
-    // Busca em paralelo em chunks
-    const chunkSize = 20;
-    for (let i = 0; i < ctwAdsets.length; i += chunkSize) {
-      const chunk = ctwAdsets.slice(i, i + chunkSize);
-      await Promise.all(chunk.map(async (aset: any) => {
-        // Inclui ARCHIVED também nos ads (default exclui)
-        const adsRes = await fetch(
-          `https://graph.facebook.com/v25.0/${aset.id}/ads?fields=creative{name,object_story_spec{video_data{page_welcome_message},link_data{page_welcome_message}},page_welcome_message}&limit=5&filtering=${filtering}&access_token=${access_token}`,
-        );
-        const adsData = await adsRes.json();
-        if (adsData?.error) {
-          errorsDuringScan++;
-          if (!errorSample) errorSample = `${adsData.error.code || "?"}: ${adsData.error.message || "erro desconhecido"}`;
-          return;
-        }
-        for (const ad of (adsData?.data || [])) {
-          const pwm = ad.creative?.page_welcome_message
-            || ad.creative?.object_story_spec?.video_data?.page_welcome_message
-            || ad.creative?.object_story_spec?.link_data?.page_welcome_message;
-          if (!pwm) continue;
-          try {
-            const parsed = JSON.parse(pwm);
-            const tplId = String(parsed.template_id || "inline");
-            const text = parsed.text_format?.message?.text || parsed.image_format?.message?.text || "";
-            const autofill = parsed.text_format?.message?.autofill_message?.content || "";
-            const qrTitle = parsed.image_format?.message?.quick_replies?.[0]?.title || null;
-            // Dedupe por CONTEÚDO (welcome_text + autofill + quick_reply).
-            // template_id sozinho subestima — Meta às vezes reusa mesmo template_id pra ads
-            // com textos diferentes (variantes A/B), e queremos cada variação.
-            const key = `${text}::${autofill}::${qrTitle || ""}`;
-            if (!seen.has(key) && (text || autofill || tplId !== "inline")) {
-              seen.set(key, {
-                key,
-                template_id: tplId,
-                welcome_text: text,
-                autofill,
-                quick_reply: qrTitle,
-                sample_ad_name: (ad.creative?.name || "").substring(0, 80),
-                raw_json: pwm,
-              });
-            }
-          } catch { /* ignore */ }
-        }
-      }));
-    }
-
     const templates = Array.from(seen.values());
-
-    // Se TODOS os fetches falharam → provável rate limit. Surfa erro claro pro frontend.
-    const error_summary = (templates.length === 0 && errorsDuringScan > 0 && ctwAdsets.length > 0 && errorsDuringScan >= ctwAdsets.length)
-      ? `Meta rate-limit ou erro em todas as ${ctwAdsets.length} chamadas. Sample: ${errorSample}`
-      : null;
+    const cappedWithMore = scannedCreatives >= max_creatives && !!nextUrl;
+    const error_summary = listError
+      ? `Parcial: erro ao paginar criativos após ${scannedCreatives} varridos. Sample: ${listError}`
+      : cappedWithMore
+        ? `Limite de ${max_creatives} criativos varridos atingido — pode haver mais modelos além disso.`
+        : null;
 
     return new Response(JSON.stringify({
       templates,
-      scanned_adsets: ctwAdsets.length,
-      errors_during_scan: errorsDuringScan,
+      scanned_creatives: scannedCreatives,
+      scanned_adsets: scannedCreatives, // compat com log do frontend (scanned=...)
+      errors_during_scan: parseErrors,
       error_sample: errorSample,
       error_summary,
     }), {
