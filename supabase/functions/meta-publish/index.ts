@@ -1772,12 +1772,11 @@ Deno.serve(async (req) => {
       if (ltGenders.length === 1) lpTargeting.genders = ltGenders;
       else delete lpTargeting.genders;
       if (ltAdvantage) {
-        // Advantage+ ON: idade/gênero são SUGESTÃO (Meta expande além). individual_setting age:0/gender:0
-        // marca como NÃO-fixo → permite age_min > 25 como sugestão (senão erro 100/1870188).
-        lpTargeting.targeting_automation = {
-          advantage_audience: 1,
-          individual_setting: { age: 0, gender: 0 },
-        };
+        // Advantage+ ON: SÓ advantage_audience:1. A Meta trata age_min/age_max/genders como
+        // SUGESTÃO automaticamente (permite age_min > 25 e expande gênero além).
+        // NÃO reenviar individual_setting aqui: ele fixa a idade como CONTROLE e a Meta
+        // rejeita age_min > 25 (erro 100/1870188). Ver gabarito ads_create_ad_set (MCP).
+        lpTargeting.targeting_automation = { advantage_audience: 1 };
       } else {
         lpTargeting.targeting_automation = {
           advantage_audience: 0,
