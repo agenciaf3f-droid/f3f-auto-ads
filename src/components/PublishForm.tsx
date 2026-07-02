@@ -592,7 +592,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     }
     } // fim do if (!identityFromCache)
 
-    // ===== STEPS 4-6 EM PARALELO: WhatsApp, Templates, Pixels =====
+    // ===== STEPS 4-6 EM PARALELO: (WhatsApp+Templates só FASE 3) + Pixels =====
     // Antes era sequencial com 1.5s de sleep no meio — agora roda tudo junto.
     setSelectedImportedKey("");
     setImportedRawJson("");
@@ -600,29 +600,14 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
     const tasks: Promise<unknown>[] = [];
 
-    if (resolvedPageId) {
+    // WhatsApp + modelos de mensagem só existem em FASE 3/ZAP (requires_whatsapp).
+    // L.T e demais presets sem WhatsApp NÃO puxam isso — evita o warning de permissão
+    // WhatsApp e o scan de templates à toa. Troca de preset é coberta pelo useEffect
+    // acima, que também gateia por requires_whatsapp.
+    const presetNeedsWhatsapp = PRESETS.find(p => p.id === preset)?.requires_whatsapp ?? false;
+    if (resolvedPageId && presetNeedsWhatsapp) {
       tasks.push(loadFase3Resources(resolvedPageId));
     }
-
-    setLoadingImported(true);
-    tasks.push((async () => {
-      try {
-        addLog(`📡 [imported] Buscando modelos de mensagem da conta...`);
-        const result = await fetchImportedMetaTemplates(accessToken, selectedAccount);
-        setImportedTemplates(result.templates);
-        addLog(`✅ [imported] ${result.templates.length} modelo(s) extraído(s) (scanned=${result.scanned_adsets}, erros=${result.errors_during_scan})`);
-        if (result.error_summary) {
-          addLog(`⚠️ [imported] ${result.error_summary}`);
-          toast.error("Meta rate-limited. Tente o botão Buscar novamente em alguns segundos.");
-        } else if (result.errors_during_scan > 0 && result.error_sample) {
-          addLog(`ℹ️ [imported] sample de erro: ${result.error_sample}`);
-        }
-      } catch (err: unknown) {
-        addLog(`⚠️ [imported] erro: ${err instanceof Error ? err.message : "desconhecido"}`);
-      } finally {
-        setLoadingImported(false);
-      }
-    })());
 
     setLoadingPixels(true);
     tasks.push((async () => {
@@ -644,8 +629,30 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
   const loadFase3Resources = async (pageId: string) => {
     addLog(`📡 [pipeline] Carregando recursos FASE 3 (page=${pageId})...`);
-    // Passa o pageId resolvido explicitamente (state pode estar stale)
-    await loadWhatsappNumbers(pageId);
+    setLoadingImported(true);
+    // WhatsApp numbers + modelos de mensagem — ambos SÓ FASE 3/ZAP — em paralelo.
+    // pageId resolvido é passado explícito (state pode estar stale).
+    await Promise.all([
+      loadWhatsappNumbers(pageId),
+      (async () => {
+        try {
+          addLog(`📡 [imported] Buscando modelos de mensagem da conta...`);
+          const result = await fetchImportedMetaTemplates(accessToken, selectedAccount);
+          setImportedTemplates(result.templates);
+          addLog(`✅ [imported] ${result.templates.length} modelo(s) extraído(s) (scanned=${result.scanned_adsets}, erros=${result.errors_during_scan})`);
+          if (result.error_summary) {
+            addLog(`⚠️ [imported] ${result.error_summary}`);
+            toast.error("Meta rate-limited. Tente o botão Buscar novamente em alguns segundos.");
+          } else if (result.errors_during_scan > 0 && result.error_sample) {
+            addLog(`ℹ️ [imported] sample de erro: ${result.error_sample}`);
+          }
+        } catch (err: unknown) {
+          addLog(`⚠️ [imported] erro: ${err instanceof Error ? err.message : "desconhecido"}`);
+        } finally {
+          setLoadingImported(false);
+        }
+      })(),
+    ]);
     addLog(`✅ [pipeline] Recursos FASE 3 carregados`);
   };
 
