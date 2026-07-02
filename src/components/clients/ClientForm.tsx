@@ -150,10 +150,10 @@ export default function ClientForm({
                     const badge = statusLabel(acc.account_status);
                     return (
                       <label key={acc.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent-soft transition-colors cursor-pointer">
-                        <Checkbox checked={selected.has(acc.id)} onCheckedChange={() => toggle(acc.id)} />
-                        <span className="text-sm flex-1 truncate">{acc.name}</span>
-                        {acc.currency && <Badge variant="outline" className="text-[10px]">{acc.currency}</Badge>}
-                        {badge && <Badge variant="destructive" className="text-[10px]">{badge}</Badge>}
+                        <Checkbox className="shrink-0" checked={selected.has(acc.id)} onCheckedChange={() => toggle(acc.id)} />
+                        <span className="text-sm flex-1 min-w-0 truncate">{acc.name}</span>
+                        {acc.currency && <Badge variant="outline" className="text-[10px] shrink-0">{acc.currency}</Badge>}
+                        {badge && <Badge variant="destructive" className="text-[10px] shrink-0">{badge}</Badge>}
                       </label>
                     );
                   })}
