@@ -5,7 +5,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { fetchAdAccounts } from "@/lib/meta-api";
@@ -158,7 +157,7 @@ export default function ClientForm({
                   placeholder="Buscar por nome ou ID…"
                   className="h-8"
                 />
-                <ScrollArea className="h-48 rounded-md border p-2">
+                <div className="h-48 overflow-y-auto rounded-md border p-2">
                   {filteredAccounts.length === 0 ? (
                     <p className="text-sm text-muted-foreground px-2 py-1.5">Nenhuma conta corresponde à busca.</p>
                   ) : (
@@ -176,7 +175,7 @@ export default function ClientForm({
                       })}
                     </div>
                   )}
-                </ScrollArea>
+                </div>
               </div>
             )}
           </div>
