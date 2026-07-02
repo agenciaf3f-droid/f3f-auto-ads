@@ -1751,7 +1751,7 @@ Deno.serve(async (req) => {
         return { error: "FASE 3 LP requer pixel_id e lp_url. Selecione pixel e cole URL do site." };
       }
 
-      const lpTargeting: Record<string, any> = { ...targeting };
+      let lpTargeting: Record<string, any> = { ...targeting };
       if (lpTargeting.geo_locations && !lpTargeting.geo_locations.location_types) {
         lpTargeting.geo_locations.location_types = ["home", "recent"];
       } else if (!lpTargeting.geo_locations) {
@@ -1767,23 +1767,29 @@ Deno.serve(async (req) => {
       const ltGenders: number[] = Array.isArray(body.lt_genders)
         ? body.lt_genders.map(Number).filter((g: number) => g === 1 || g === 2)
         : [];
-      if (ltGenders.length === 1) lpTargeting.genders = ltGenders;
-      else delete lpTargeting.genders;
       if (ltAdvantage) {
-        // Advantage+ ON: a idade desejada vira SUGESTÃO via age_range. age_min/age_max são
-        // CONTROLES rígidos e a Meta EXIGE min ≤ 25 com A+A ligado (senão erro 100/1870188).
-        // Logo: controles largos (18–65) + age_range = faixa desejada do gestor +
-        // individual_setting{age:1,gender:1} (marca idade/gênero como setados/sugeridos).
-        // Gabarito: adset 120249704262340478 (conta 835492491950992), Advantage+ ativo/ok.
-        lpTargeting.age_min = 18;
-        lpTargeting.age_max = 65;
-        lpTargeting.age_range = [ltAgeMin, ltAgeMax];
-        lpTargeting.targeting_automation = {
-          advantage_audience: 1,
-          individual_setting: { age: 1, gender: 1 },
+        // Advantage+ ON = PÚBLICO PURO ADVANTAGE+. Prova empírica (probe de create nesta
+        // conta, adset ACTIVE): o shape mínimo — geo + idade (age_range = SUGESTÃO, controles
+        // largos 18-65) + gênero + targeting_automation.advantage_audience:1 — sai como
+        // advantage_audience:1 DE VERDADE. QUALQUER campo que DEFINA público (custom_audiences
+        // incluído, flexible_spec, interests, behaviors, targeting_optimization) faz a Meta
+        // cair em "expansion_all" (advantage_audience:0 = definido+expande, NÃO Advantage+).
+        // Por isso RECONSTRUÍMOS o targeting só com os campos permitidos, preservando geo e
+        // exclusões. age_min>25 como controle é rejeitado (1870188) → controle 18-65 + age_range.
+        const rebuilt: Record<string, any> = {
+          geo_locations: lpTargeting.geo_locations,
+          age_min: 18,
+          age_max: 65,
+          age_range: [ltAgeMin, ltAgeMax],
+          targeting_automation: { advantage_audience: 1 },
         };
+        if (ltGenders.length === 1) rebuilt.genders = ltGenders;
+        if (lpTargeting.excluded_geo_locations) rebuilt.excluded_geo_locations = lpTargeting.excluded_geo_locations;
+        if (lpTargeting.excluded_custom_audiences) rebuilt.excluded_custom_audiences = lpTargeting.excluded_custom_audiences;
+        lpTargeting = rebuilt;
       } else {
-        // Advantage+ OFF: idade/gênero são limites RÍGIDOS. Sem age_range (só vale com A+A).
+        // Advantage+ OFF: público RÍGIDO. idade/gênero como limites rígidos, mantém o público
+        // selecionado (custom_audiences), sem age_range (só vale com A+A).
         lpTargeting.age_min = ltAgeMin;
         lpTargeting.age_max = ltAgeMax;
         delete lpTargeting.age_range;
@@ -1791,17 +1797,12 @@ Deno.serve(async (req) => {
           advantage_audience: 0,
           individual_setting: { age: 0, gender: 0 },
         };
-      }
-      // Advantage+ acha o público sozinho. Enviar custom_audiences INCLUÍDO faz a Meta
-      // tratar o público como DEFINIDO e SAIR do Advantage+ (bug do "virou definição").
-      // Com Advantage+ ON: remover custom_audiences incluído por completo (exclusões,
-      // se houver, seguem válidas). Com OFF (público rígido): manter o público selecionado
-      // e só limpar entradas vazias (audience_id="" vira [{id:""}], que o Meta rejeita).
-      if (ltAdvantage) {
-        delete lpTargeting.custom_audiences;
-      } else if (Array.isArray(lpTargeting.custom_audiences)) {
-        lpTargeting.custom_audiences = lpTargeting.custom_audiences.filter((a: any) => a?.id);
-        if (lpTargeting.custom_audiences.length === 0) delete lpTargeting.custom_audiences;
+        if (ltGenders.length === 1) lpTargeting.genders = ltGenders;
+        else delete lpTargeting.genders;
+        if (Array.isArray(lpTargeting.custom_audiences)) {
+          lpTargeting.custom_audiences = lpTargeting.custom_audiences.filter((a: any) => a?.id);
+          if (lpTargeting.custom_audiences.length === 0) delete lpTargeting.custom_audiences;
+        }
       }
 
       const lpEvent = String(custom_event_type || "LEAD");
