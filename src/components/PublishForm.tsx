@@ -714,7 +714,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const goToMetaLogin = () => {
     // sessionStorage pode lançar (modo privado/bloqueado) — NUNCA pode impedir a navegação.
     try { sessionStorage.removeItem("meta_status_cache"); } catch { /* ignore */ }
-    const url = getMetaLoginUrl();
+    const state = crypto.randomUUID();
+    try { sessionStorage.setItem("meta_oauth_state", state); } catch { /* ignore */ }
+    const url = getMetaLoginUrl(state);
     if (!url) { toast.error("URL de login Meta indisponível. Recarregue a página."); return; }
     // assign() é mais robusto que href= em alguns navegadores/extensões.
     window.location.assign(url);

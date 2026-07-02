@@ -12,8 +12,19 @@ export default function MetaCallback() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
+    const state = params.get("state");
+
     if (!code) {
       setError("Código de autorização não encontrado.");
+      return;
+    }
+
+    // Validação de state (CSRF): compara com o valor gerado pelo cliente antes do redirect.
+    // Single-use — remove independente do resultado.
+    const expectedState = sessionStorage.getItem("meta_oauth_state");
+    sessionStorage.removeItem("meta_oauth_state");
+    if (!expectedState || state !== expectedState) {
+      setError("Falha de segurança na autenticação — tente novamente.");
       return;
     }
 
@@ -29,11 +40,15 @@ export default function MetaCallback() {
           savedToDb: data.saved_to_db,
           expiresIn: data.expires_in,
         });
-        if (data.access_token) {
-          navigate("/");
-        } else {
+        if (!data.access_token) {
           setError("Token não retornado pelo servidor.");
+          return;
         }
+        if (data.saved_to_db === false) {
+          setError("Conectado ao Meta, mas não foi possível salvar a conexão. Tente novamente ou faça login de novo.");
+          return;
+        }
+        navigate("/");
       })
       .catch((err) => setError(err.message));
   }, [navigate]);
