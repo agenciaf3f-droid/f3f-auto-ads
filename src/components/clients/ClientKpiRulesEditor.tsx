@@ -86,17 +86,29 @@ function BucketRules({
   rules: ClientKpiRule[];
   onChanged: () => void;
 }) {
-  const usedMetrics = new Set(rules.map((r) => r.metric_key));
-  const available = METRIC_REGISTRY.filter((m) => !usedMetrics.has(m.key));
-
   const [metric, setMetric] = useState("");
   const [comparator, setComparator] = useState<">" | "<">(">");
   const [threshold, setThreshold] = useState("");
+  const [productName, setProductName] = useState("");
   const [saving, setSaving] = useState(false);
+  const isLt = bucket === "L.T";
+
+  // Para L.T a "métrica usada" é por produto: cpc pode existir pra [DDX] e pra [OUTRO] na mesma
+  // conta. FASE 1/2/3 não têm produto, então o dedup é por métrica só.
+  const usedMetrics = new Set(
+    rules
+      .filter((r) => !isLt || (r.campaign_name_filter || "").trim().toLowerCase() === productName.trim().toLowerCase())
+      .map((r) => r.metric_key),
+  );
+  const available = METRIC_REGISTRY.filter((m) => !usedMetrics.has(m.key));
 
   const add = async () => {
     if (!metric || threshold.trim() === "" || Number.isNaN(Number(threshold))) {
       toast.error("Escolha a métrica e um valor numérico");
+      return;
+    }
+    if (isLt && productName.trim() === "") {
+      toast.error("Informe o nome do produto pra essa regra L.T reconhecer as campanhas certas");
       return;
     }
     setSaving(true);
@@ -107,8 +119,9 @@ function BucketRules({
         metric_key: metric,
         comparator,
         threshold_value: Number(threshold),
+        campaign_name_filter: isLt ? productName.trim() : null,
       });
-      setMetric(""); setThreshold(""); setComparator(">");
+      setMetric(""); setThreshold(""); setComparator(">"); setProductName("");
       onChanged();
     } catch (e) {
       toast.error((e as Error).message || "Erro ao salvar regra");
@@ -132,6 +145,9 @@ function BucketRules({
           <span className="flex-1">
             {metricLabel(r.metric_key)} <span className="text-muted-foreground">{r.comparator === ">" ? "acima de" : "abaixo de"}</span>{" "}
             <span className="font-medium">{r.threshold_value}</span> → <span className="text-destructive">{r.label_if_triggered}</span>
+            {r.preset_bucket === "L.T" && r.campaign_name_filter && (
+              <Badge variant="outline" className="ml-2 text-[10px]">produto: {r.campaign_name_filter}</Badge>
+            )}
           </span>
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => remove(r.id)}>
             <Trash2 className="h-3.5 w-3.5" />
@@ -141,6 +157,17 @@ function BucketRules({
 
       {available.length > 0 && (
         <div className="flex flex-wrap items-end gap-2 pt-1">
+          {isLt && (
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Nome do produto</label>
+              <Input
+                value={productName}
+                onChange={(e) => setProductName(e.target.value)}
+                placeholder="ex: DDX"
+                className="w-[140px]"
+              />
+            </div>
+          )}
           <Select value={metric} onValueChange={setMetric}>
             <SelectTrigger className="w-[220px]"><SelectValue placeholder="Métrica" /></SelectTrigger>
             <SelectContent>

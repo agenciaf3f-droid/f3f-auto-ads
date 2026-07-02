@@ -31,9 +31,11 @@ Deno.serve(async (req) => {
 
       if (data.error) {
         if (isTransientMeta(data.error)) {
-          return new Response(JSON.stringify({ error: "Limite de requisições da Meta atingido, aguarde ~15 min e tente novamente.", rate_limited: true }), {
-            status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
+          // Erro transiente/rate-limit só nessa campanha — pula ela e mantém os insights já
+          // coletados das outras nesta mesma requisição, em vez de descartar o lote inteiro.
+          console.error(`meta-campaign-insights: erro transiente da Meta pra campanha ${campaignId}, pulando`, data.error);
+          insights[campaignId] = { error: "Limite de requisições da Meta atingido, tente novamente mais tarde." };
+          continue;
         }
         insights[campaignId] = { error: data.error.message };
         continue;

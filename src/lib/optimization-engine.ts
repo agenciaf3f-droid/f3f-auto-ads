@@ -19,6 +19,14 @@ export type OptimizationViolation = {
   limit: number;
 };
 
+const DISMISSAL_WINDOW_MS = 3 * 24 * 60 * 60 * 1000; // 3 dias
+
+// Um "Manter" (dismissed) só silencia a violação por 3 dias a partir do created_at — depois
+// disso a campanha volta a ficar elegível pra reaparecer se ainda (ou de novo) estiver fora do KPI.
+export function isDismissalActive(createdAt: string, now: Date = new Date()): boolean {
+  return now.getTime() - new Date(createdAt).getTime() < DISMISSAL_WINDOW_MS;
+}
+
 export function compareKpis(
   campaigns: Campaign[],
   insights: InsightsMap,
@@ -49,6 +57,20 @@ export function compareKpis(
 
     for (const kpi of config.kpi) {
       if (kpi.presetBucket !== campaignBucket) continue;
+
+      // L.T não tem string fixa (o nome carrega o PRODUTO, que varia por cliente/conta — ver
+      // generateLtCampaignName em naming.ts, formato "[PRODUTO] [L.T] ..."). Por isso, além do
+      // bucket, exigimos que o nome contenha o produto salvo como TOKEN entre colchetes ([PRODUTO]).
+      // Casar por token (e não substring livre) evita que a regra de "DDX" vaze pra campanha
+      // "[DDXPRO]" ou pra outro produto na mesma conta. Regra sem filtro salvo (legado, criada
+      // antes desse campo existir) cai no comportamento antigo: bucket-only.
+      if (
+        kpi.presetBucket === "L.T" &&
+        kpi.campaignNameFilter &&
+        !campaign.name.toLowerCase().includes(`[${kpi.campaignNameFilter.toLowerCase()}]`)
+      ) {
+        continue;
+      }
 
       const evalResult = evaluateRule(
         { metric_key: kpi.metric, comparator: kpi.operator, threshold_value: kpi.value },

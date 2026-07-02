@@ -30,6 +30,7 @@ export interface ClientKpiRule {
   comparator: ">" | "<";
   threshold_value: number;
   label_if_triggered: string;
+  campaign_name_filter: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -88,7 +89,12 @@ export async function linkAdAccount(
     .insert({ user_id, client_id: clientId, ad_account_id: adAccountId, ad_account_name: adAccountName || null })
     .select()
     .single();
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (error.code === "23505") {
+      throw new Error("Essa conta de anúncio já está vinculada a outro cliente.");
+    }
+    throw new Error(error.message);
+  }
   return data as ClientAdAccount;
 }
 
@@ -122,6 +128,10 @@ export interface UpsertKpiRuleInput {
   comparator: ">" | "<";
   threshold_value: number;
   label_if_triggered?: string;
+  // Só usado (e exigido no FE) para preset_bucket "L.T": nome do produto/prefixo de campanha
+  // que o gestor digita uma vez e o sistema reusa pra casar campanhas reais com essa regra.
+  // FASE 1/2/3 não usam — bucket fixo já basta.
+  campaign_name_filter?: string | null;
 }
 
 export async function upsertKpiRule(rule: UpsertKpiRuleInput): Promise<void> {
@@ -137,8 +147,9 @@ export async function upsertKpiRule(rule: UpsertKpiRuleInput): Promise<void> {
         comparator: rule.comparator,
         threshold_value: rule.threshold_value,
         label_if_triggered: rule.label_if_triggered || "ruim",
+        campaign_name_filter: rule.campaign_name_filter || "",
       },
-      { onConflict: "client_ad_account_id,preset_bucket,metric_key" },
+      { onConflict: "client_ad_account_id,preset_bucket,metric_key,campaign_name_filter" },
     );
   if (error) throw new Error(error.message);
 }

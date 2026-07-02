@@ -34,7 +34,9 @@ export default function SettingsPage() {
 
   const handleConnect = () => {
     sessionStorage.removeItem("meta_status_cache");
-    window.location.href = getMetaLoginUrl();
+    const state = crypto.randomUUID();
+    sessionStorage.setItem("meta_oauth_state", state);
+    window.location.href = getMetaLoginUrl(state);
   };
 
   const handleDisconnect = async () => {

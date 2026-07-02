@@ -7,7 +7,7 @@ Deno.serve(async (req) => {
   // whatsapp_business_management: necessário pra ler WABA + phone_numbers (FASE 3 CTW).
   // App Meta já tem essa permissão habilitada (confirmado no painel).
   const scopes = "ads_management,ads_read,business_management,pages_show_list,pages_read_engagement,instagram_basic,whatsapp_business_management";
-  const state = crypto.randomUUID();
+  const state = new URL(req.url).searchParams.get("state") ?? crypto.randomUUID();
 
   // auth_type=rerequest força Facebook a re-prompt todas as permissões
   // mesmo se user já autorizou (necessário quando adicionamos novos scopes).
