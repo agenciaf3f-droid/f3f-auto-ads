@@ -1907,11 +1907,12 @@ Deno.serve(async (req) => {
 
     // === FASE 2 ADAPTADO AdSet builder ===
     // Igual ao buildFase2Adset (idade/gênero/exclusão/orçamento/DSA/agendamento idênticos),
-    // só muda: recebe os 2 audience_ids de inclusão e os combina no MESMO adset
-    // (custom_audiences com 2 entradas — Meta combina como OR), em vez de 1 adset por público.
+    // só muda: recebe TODOS os audience_ids de inclusão selecionados (2-10, mesma faixa do
+    // Completo) e os combina no MESMO adset (custom_audiences com N entradas — Meta combina
+    // como OR), em vez de 1 adset por público.
     const buildFase2AdsetCombined = (name: string, includedAudienceIds: string[], excludedAudienceId: string | null): { payload?: Record<string, any>; error?: string } => {
-      if (!Array.isArray(includedAudienceIds) || includedAudienceIds.length !== 2 || includedAudienceIds.some((id) => !id)) {
-        return { error: "FASE 2 ADAPTADO requer exatamente 2 audience_ids de inclusão combinados no mesmo conjunto." };
+      if (!Array.isArray(includedAudienceIds) || includedAudienceIds.length < 2 || includedAudienceIds.some((id) => !id)) {
+        return { error: "FASE 2 ADAPTADO requer no mínimo 2 audience_ids de inclusão combinados no mesmo conjunto." };
       }
       const f2AgeMin = Number(body.fase2_age_min) || 18;
       const f2AgeMax = Number(body.fase2_age_max) || 65;
@@ -2346,8 +2347,9 @@ Deno.serve(async (req) => {
       }
       // ADAPTADO: re-checagem no backend (defesa real — frontend não é confiável). Roda ANTES
       // de criar o criativo pra não deixar objeto órfão na Meta se o público estiver errado.
-      if (fase2CombinedAdset && fase2AudienceIds.length !== 2) {
-        return respond({ ok: false, step: "publish", error_message: "FASE 2 ADAPTADO exige exatamente 2 públicos combinados." });
+      // Mesma faixa 2-10 do Completo — a diferença é estrutural (1 conjunto combinado vs N).
+      if (fase2CombinedAdset && (fase2AudienceIds.length < 2 || fase2AudienceIds.length > 10)) {
+        return respond({ ok: false, step: "publish", error_message: "FASE 2 ADAPTADO exige de 2 a 10 públicos combinados." });
       }
       const cr = resolvedCreatives[0];
 
@@ -2510,10 +2512,13 @@ Deno.serve(async (req) => {
         }
       }
 
-      // 3. ADAPTADO: 1 único adset com os 2 públicos combinados. COMPLETO: loop existente
-      // (inalterado, byte-idêntico ao original — só movido pro else) — 1 adset por audience.
+      // 3. ADAPTADO: 1 único adset com TODOS os públicos combinados (2-10). COMPLETO: loop
+      // existente (inalterado, byte-idêntico ao original — só movido pro else) — 1 adset/audience.
       if (fase2CombinedAdset) {
-        const combinedName = `[${fase2AudienceNames[0] || fase2AudienceIds[0]} + ${fase2AudienceNames[1] || fase2AudienceIds[1]}] - ${cr.name}`;
+        const combinedAudNamesRaw = fase2AudienceIds.map((id, i) => fase2AudienceNames[i] || id).join(" + ");
+        // Meta limita nome de adset a 255 chars — trunca a lista de públicos se necessário.
+        const combinedAudNames = combinedAudNamesRaw.length > 150 ? `${combinedAudNamesRaw.slice(0, 147)}...` : combinedAudNamesRaw;
+        const combinedName = `[${combinedAudNames}] - ${cr.name}`;
         const adsetBuild = buildFase2AdsetCombined(combinedName, fase2AudienceIds, exclusionAudienceId);
         if (adsetBuild.error) {
           failures.push({ index: 1, name: "combined", step: "adset", reason: adsetBuild.error });

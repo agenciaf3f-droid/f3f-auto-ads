@@ -1030,7 +1030,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   // Structure descriptions
   const structureDescription = isFase2
     ? isFase2Adaptado
-      ? `1 Campanha → 1 Conjunto (2 públicos combinados) → 1 Anúncio (criativo compartilhado)`
+      ? `1 Campanha → 1 Conjunto (${fase2Audiences.length || "N"} públicos combinados) → 1 Anúncio (criativo compartilhado)`
       : `1 Campanha → ${fase2Audiences.length || "N"} Conjunto(s) → 1 Ad/conjunto (criativo compartilhado)`
     : distributionStructure === "CBO"
       ? `1 Campanha → 1 Conjunto → ${creatives.length} Anúncio(s)`
@@ -1077,12 +1077,10 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const fase2Validate = (): { valid: boolean; errors: string[] } => {
     if (!isFase2) return { valid: true, errors: [] };
     const errors: string[] = [];
-    if (isFase2Adaptado) {
-      if (fase2Audiences.length !== 2) errors.push("FASE 2 ADAPTADO requer exatamente 2 públicos selecionados.");
-    } else {
-      if (fase2Audiences.length < 2) errors.push("FASE 2 requer no mínimo 2 públicos selecionados.");
-      if (fase2Audiences.length > 10) errors.push("FASE 2 aceita no máximo 10 públicos.");
-    }
+    // Mesma faixa 2-10 pros dois presets — a diferença é estrutural (ADAPTADO combina todos
+    // num único conjunto; COMPLETO cria 1 conjunto por público), não na quantidade permitida.
+    if (fase2Audiences.length < 2) errors.push("FASE 2 requer no mínimo 2 públicos selecionados.");
+    if (fase2Audiences.length > 10) errors.push("FASE 2 aceita no máximo 10 públicos.");
     if (creatives.length !== 1) errors.push("FASE 2 exige exatamente 1 criativo (vídeo).");
     return { valid: errors.length === 0, errors };
   };
@@ -1228,7 +1226,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     checks.push({ label: "Access Token", ok: !!accessToken, detail: accessToken ? "presente" : "ausente" });
     checks.push({ label: "Conta de Anúncios", ok: !!selectedAccount, detail: selectedAccount || "ausente" });
     if (isFase2) {
-      const audOk = isFase2Adaptado ? fase2Audiences.length === 2 : (fase2Audiences.length >= 2 && fase2Audiences.length <= 10);
+      const audOk = fase2Audiences.length >= 2 && fase2Audiences.length <= 10;
       checks.push({ label: isFase2Adaptado ? "Públicos (ADAPTADO)" : "Públicos (FASE 2)", ok: audOk, detail: `${fase2Audiences.length} público(s) selecionado(s)` });
     } else if (isFase3Lp && ltAdvantage) {
       checks.push({ label: "Público", ok: true, detail: "Advantage+ (Meta define automaticamente)" });
@@ -2009,7 +2007,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
             <Label className="font-display font-semibold text-sm">
               {isFase2
                 ? isFase2Adaptado
-                  ? `Públicos (ADAPTADO: ${fase2Audiences.length}/2) ${audiences.length > 0 ? `— ${audiences.length} disponíveis` : ""}`
+                  ? `Públicos (ADAPTADO: ${fase2Audiences.length}/10) ${audiences.length > 0 ? `— ${audiences.length} disponíveis` : ""}`
                   : `Públicos (FASE 2: ${fase2Audiences.length}/10) ${audiences.length > 0 ? `— ${audiences.length} disponíveis` : ""}`
                 : `Público ${audiences.length > 0 ? `(${audiences.length})` : ""}`}
             </Label>
@@ -2017,7 +2015,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground">
                   {isFase2Adaptado
-                    ? "Selecione exatamente 2 públicos — serão combinados em 1 único conjunto (mesmo criativo)."
+                    ? "Selecione 2 a 10 públicos — todos serão combinados em 1 único conjunto (mesmo criativo)."
                     : "Selecione 2 a 10 públicos. Cada um vira um conjunto separado, todos com o mesmo criativo."}
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -2034,7 +2032,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 <div className="space-y-2">
                   <p className="text-xs text-muted-foreground">
                   {isFase2Adaptado
-                    ? "Selecione exatamente 2 públicos — serão combinados em 1 único conjunto (mesmo criativo)."
+                    ? "Selecione 2 a 10 públicos — todos serão combinados em 1 único conjunto (mesmo criativo)."
                     : "Selecione 2 a 10 públicos. Cada um vira um conjunto separado, todos com o mesmo criativo."}
                 </p>
                   <div className="relative">
@@ -2053,8 +2051,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                       if (list.length === 0) return <p className="text-xs text-muted-foreground col-span-full text-center py-2">Nenhum público encontrado</p>;
                       return list.map((aud) => {
                       const checked = fase2Audiences.includes(aud.id);
-                      const cap = isFase2Adaptado ? 2 : 10;
-                      const disabled = !checked && fase2Audiences.length >= cap;
+                      const disabled = !checked && fase2Audiences.length >= 10;
                       return (
                         <label key={aud.id} className={`flex items-center gap-2 px-2 py-1.5 rounded border transition-colors ${checked ? "bg-primary/20 border-primary/70 font-semibold shadow-sm ring-1 ring-primary/30" : "border-border"} ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-muted/50 focus-within:ring-2 focus-within:ring-primary/40"}`}>
                           <input
@@ -2074,7 +2071,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                     })()}
                   </div>
                   {fase2Audiences.length > 0 && fase2Audiences.length < 2 && (
-                    <p className="text-[10px] text-warning">{isFase2Adaptado ? "ADAPTADO requer exatamente 2 públicos." : "FASE 2 requer no mínimo 2 públicos."}</p>
+                    <p className="text-[10px] text-warning">FASE 2 requer no mínimo 2 públicos.</p>
                   )}
 
                   {/* Segmentação manual: idade + gênero (sem sugestão automática) */}
