@@ -38,3 +38,9 @@ verify_jwt = false
 
 [functions.meta-adset-diff]
 verify_jwt = false
+
+[functions.meta-campaign-insights]
+verify_jwt = false
+
+[functions.meta-campaign-pause]
+verify_jwt = false
