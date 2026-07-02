@@ -26,8 +26,13 @@
     --muted: 220 14% 95%;
     --muted-foreground: 220 10% 45%;
 
+    /* accent = laranja decorativo da marca (ícones/cards/gradientes). NÃO usar p/ hover — use accent-soft */
     --accent: 35 95% 50%;
     --accent-foreground: 0 0% 100%;
+
+    /* accent-soft = neutro roxo-claro p/ hover/foco de itens interativos (menu, select, botão ghost) */
+    --accent-soft: 271 30% 95%;
+    --accent-soft-foreground: 220 15% 20%;
 
     --destructive: 0 72% 50%;
     --destructive-foreground: 0 0% 100%;
@@ -78,6 +83,9 @@
 
     --accent: 35 95% 55%;
     --accent-foreground: 220 20% 7%;
+
+    --accent-soft: 271 22% 20%;
+    --accent-soft-foreground: 210 20% 90%;
 
     --destructive: 0 72% 55%;
     --destructive-foreground: 210 20% 95%;
