@@ -59,14 +59,15 @@ export function compareKpis(
       if (kpi.presetBucket !== campaignBucket) continue;
 
       // L.T não tem string fixa (o nome carrega o PRODUTO, que varia por cliente/conta — ver
-      // generateLtCampaignName em naming.ts). Por isso, além do bucket, exigimos que o nome da
-      // campanha contenha o filtro salvo na regra, senão uma regra L.T de um produto "vazaria"
-      // pra campanha L.T de outro produto na mesma conta. Regra sem filtro salvo (legado, criada
+      // generateLtCampaignName em naming.ts, formato "[PRODUTO] [L.T] ..."). Por isso, além do
+      // bucket, exigimos que o nome contenha o produto salvo como TOKEN entre colchetes ([PRODUTO]).
+      // Casar por token (e não substring livre) evita que a regra de "DDX" vaze pra campanha
+      // "[DDXPRO]" ou pra outro produto na mesma conta. Regra sem filtro salvo (legado, criada
       // antes desse campo existir) cai no comportamento antigo: bucket-only.
       if (
         kpi.presetBucket === "L.T" &&
         kpi.campaignNameFilter &&
-        !campaign.name.toLowerCase().includes(kpi.campaignNameFilter.toLowerCase())
+        !campaign.name.toLowerCase().includes(`[${kpi.campaignNameFilter.toLowerCase()}]`)
       ) {
         continue;
       }

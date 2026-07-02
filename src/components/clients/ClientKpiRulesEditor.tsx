@@ -86,15 +86,21 @@ function BucketRules({
   rules: ClientKpiRule[];
   onChanged: () => void;
 }) {
-  const usedMetrics = new Set(rules.map((r) => r.metric_key));
-  const available = METRIC_REGISTRY.filter((m) => !usedMetrics.has(m.key));
-
   const [metric, setMetric] = useState("");
   const [comparator, setComparator] = useState<">" | "<">(">");
   const [threshold, setThreshold] = useState("");
   const [productName, setProductName] = useState("");
   const [saving, setSaving] = useState(false);
   const isLt = bucket === "L.T";
+
+  // Para L.T a "métrica usada" é por produto: cpc pode existir pra [DDX] e pra [OUTRO] na mesma
+  // conta. FASE 1/2/3 não têm produto, então o dedup é por métrica só.
+  const usedMetrics = new Set(
+    rules
+      .filter((r) => !isLt || (r.campaign_name_filter || "").trim().toLowerCase() === productName.trim().toLowerCase())
+      .map((r) => r.metric_key),
+  );
+  const available = METRIC_REGISTRY.filter((m) => !usedMetrics.has(m.key));
 
   const add = async () => {
     if (!metric || threshold.trim() === "" || Number.isNaN(Number(threshold))) {

@@ -98,6 +98,17 @@ describe("compareKpis", () => {
     expect(violations).toHaveLength(0);
   });
 
+  it("does not apply an L.T rule to a campaign whose product token merely starts with the filter (prefix collision)", () => {
+    const ltConfig: ClientKpiConfig = {
+      ...config,
+      kpi: [{ metric: "cpc", operator: ">", value: 2, presetBucket: "L.T", campaignNameFilter: "DDX" }],
+    };
+    // "[DDXPRO]" contém "ddx" como substring, mas NÃO como token [ddx] — não deve casar.
+    const prefixCampaigns = [{ id: "c8", name: "[DDXPRO] [L.T] [02/07] [ABO] [TESTE] [CRIATIVO] -" }];
+    const violations = compareKpis(prefixCampaigns, { c8: { spend: "50", clicks: "10" } }, ltConfig);
+    expect(violations).toHaveLength(0);
+  });
+
   it("falls back to bucket-only matching for legacy L.T rules with no saved filter", () => {
     const legacyLtConfig: ClientKpiConfig = {
       ...config,

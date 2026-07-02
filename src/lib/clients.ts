@@ -147,9 +147,9 @@ export async function upsertKpiRule(rule: UpsertKpiRuleInput): Promise<void> {
         comparator: rule.comparator,
         threshold_value: rule.threshold_value,
         label_if_triggered: rule.label_if_triggered || "ruim",
-        campaign_name_filter: rule.campaign_name_filter || null,
+        campaign_name_filter: rule.campaign_name_filter || "",
       },
-      { onConflict: "client_ad_account_id,preset_bucket,metric_key" },
+      { onConflict: "client_ad_account_id,preset_bucket,metric_key,campaign_name_filter" },
     );
   if (error) throw new Error(error.message);
 }
