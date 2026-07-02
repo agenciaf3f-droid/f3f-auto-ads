@@ -2414,13 +2414,23 @@ Deno.serve(async (req) => {
                     logs.push({ step: "fase2_balde", status: "success", ts: ts(), detail: `Balde "${baldeName}" (${baldeId}) já continha este vídeo — nada a fazer.` });
                   } else {
                     const newRule = [...currentRule, { event_name: "video_view_50_percent", object_id: Number(vvVideoId) }];
-                    const updForm = new FormData();
-                    updForm.append("access_token", access_token);
-                    updForm.append("rule", JSON.stringify(newRule));
-                    const updRes = await fetch(`https://graph.facebook.com/v25.0/${baldeId}`, { method: "POST", body: updForm });
-                    const updData = await updRes.json();
+                    const doUpdate = () => {
+                      const updForm = new FormData();
+                      updForm.append("access_token", access_token);
+                      updForm.append("rule", JSON.stringify(newRule));
+                      return fetch(`https://graph.facebook.com/v25.0/${baldeId}`, { method: "POST", body: updForm }).then((r) => r.json());
+                    };
+                    let updData = await doUpdate();
+                    // Visto empiricamente: mesmo POST falha com "Invalid parameter" e funciona
+                    // segundos depois sem mudar nada (flakiness transiente da Meta, mesmo padrão
+                    // do Drive de arquivo grande). 1 retry rápido antes de desistir.
                     if (updData.error) {
-                      logs.push({ step: "fase2_balde", status: "warning", ts: ts(), detail: `⚠️ Falha ao atualizar Balde "${baldeName}" (${baldeId}): ${updData.error.message}` });
+                      await new Promise((r) => setTimeout(r, 1500));
+                      updData = await doUpdate();
+                    }
+                    if (updData.error) {
+                      const ue = updData.error;
+                      logs.push({ step: "fase2_balde", status: "warning", ts: ts(), detail: `⚠️ Falha ao atualizar Balde "${baldeName}" (${baldeId}) após retry: ${ue.message} | code=${ue.code} | subcode=${ue.error_subcode || "-"}` });
                     } else {
                       // Confirma lendo de volta — só declara sucesso se a Meta REALMENTE gravou N+1.
                       const verifyRes = await fetch(`https://graph.facebook.com/v25.0/${baldeId}?fields=rule&access_token=${access_token}`);
