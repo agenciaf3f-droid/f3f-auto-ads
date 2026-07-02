@@ -229,18 +229,24 @@ Deno.serve(async (req) => {
             // já está público. O corpo do erro do Google cita a chave nesse caso.
             let bodyText = "";
             try { bodyText = await res.text(); } catch { /* corpo pode já ter sido consumido/vazio */ }
-            const looksLikeKeyProblem = /api key|apikey|referer|ip address|key (is )?(invalid|expired|revoked|not valid)/i.test(bodyText);
+            // Termos reais de erro de chave/quota do Google (referrer bloqueado, quota,
+            // API desabilitada, etc.) — lista ampliada, mas SEMPRE anexamos o corpo bruto
+            // abaixo (googleDetail) pra não confiar só no regex: se o gestor jura que o
+            // arquivo já é público e a causa real for outra (quota, Shared Drive, etc.),
+            // o detalhe do Google aparece na mensagem em vez de sumir numa classificação errada.
+            const looksLikeKeyProblem = /api key|apikey|referer|ip address|key (is )?(invalid|expired|revoked|not valid)|quota|rate limit|accessnotconfigured|not been used in project|has not been used|disabled|blocked/i.test(bodyText);
+            const googleDetail = bodyText ? ` [detalhe Google: ${bodyText.replace(/\s+/g, " ").slice(0, 300)}]` : "";
             if (looksLikeKeyProblem) {
               console.log(`[validate-creative] drive check ${res.status} parece problema na GOOGLE_DRIVE_API_KEY: ${bodyText.slice(0, 300)}`);
               return new Response(JSON.stringify({
                 ok: false,
-                error: `Não foi possível verificar o arquivo do Drive (erro ${res.status} na chave de API do Google, não no compartilhamento do arquivo). Verifique a configuração de GOOGLE_DRIVE_API_KEY.`,
+                error: `Não foi possível verificar o arquivo do Drive (erro ${res.status} na chave de API do Google, não no compartilhamento do arquivo). Verifique a configuração de GOOGLE_DRIVE_API_KEY.${googleDetail}`,
                 timings,
               }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
             }
             return new Response(JSON.stringify({
               ok: false,
-              error: "Arquivo do Drive não está público. No Drive: clique no arquivo → Compartilhar → Acesso geral → \"Qualquer pessoa com o link\" (Leitor) → salve e valide de novo. A publicação baixa por link anônimo, então arquivo privado não funciona.",
+              error: `Arquivo do Drive não está público (ou outro erro ${res.status} no Google). No Drive: clique no arquivo → Compartilhar → Acesso geral → "Qualquer pessoa com o link" (Leitor) → salve e valide de novo. A publicação baixa por link anônimo, então arquivo privado não funciona. Se o arquivo JÁ está público, o motivo real está aqui:${googleDetail}`,
               timings,
             }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
           }
