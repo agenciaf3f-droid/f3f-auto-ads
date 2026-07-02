@@ -45,6 +45,7 @@ export default function ClientForm({
   const [name, setName] = useState("");
   const [notes, setNotes] = useState("");
   const [accounts, setAccounts] = useState<AdAccount[]>([]);
+  const [accountSearch, setAccountSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -53,6 +54,7 @@ export default function ClientForm({
     if (!open) return;
     setName(client?.name || "");
     setNotes(client?.notes || "");
+    setAccountSearch("");
     setSelected(new Set());
     if (isEdit && client) {
       listClientAdAccounts(client.id)
@@ -116,6 +118,11 @@ export default function ClientForm({
     }
   };
 
+  const q = accountSearch.trim().toLowerCase();
+  const filteredAccounts = q
+    ? accounts.filter((a) => a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q))
+    : accounts;
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-lg">
@@ -144,21 +151,33 @@ export default function ClientForm({
             ) : accounts.length === 0 ? (
               <p className="text-sm text-muted-foreground">Nenhuma conta encontrada.</p>
             ) : (
-              <ScrollArea className="h-48 rounded-md border p-2">
-                <div className="space-y-1">
-                  {accounts.map((acc) => {
-                    const badge = statusLabel(acc.account_status);
-                    return (
-                      <label key={acc.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent-soft transition-colors cursor-pointer">
-                        <Checkbox className="shrink-0" checked={selected.has(acc.id)} onCheckedChange={() => toggle(acc.id)} />
-                        <span className="text-sm flex-1 min-w-0 truncate">{acc.name}</span>
-                        {acc.currency && <Badge variant="outline" className="text-[10px] shrink-0">{acc.currency}</Badge>}
-                        {badge && <Badge variant="destructive" className="text-[10px] shrink-0">{badge}</Badge>}
-                      </label>
-                    );
-                  })}
-                </div>
-              </ScrollArea>
+              <div className="space-y-1.5">
+                <Input
+                  value={accountSearch}
+                  onChange={(e) => setAccountSearch(e.target.value)}
+                  placeholder="Buscar por nome ou ID…"
+                  className="h-8"
+                />
+                <ScrollArea className="h-48 rounded-md border p-2">
+                  {filteredAccounts.length === 0 ? (
+                    <p className="text-sm text-muted-foreground px-2 py-1.5">Nenhuma conta corresponde à busca.</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {filteredAccounts.map((acc) => {
+                        const badge = statusLabel(acc.account_status);
+                        return (
+                          <label key={acc.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent-soft transition-colors cursor-pointer">
+                            <Checkbox className="shrink-0" checked={selected.has(acc.id)} onCheckedChange={() => toggle(acc.id)} />
+                            <span className="text-sm flex-1 min-w-0 truncate">{acc.name}</span>
+                            {acc.currency && <Badge variant="outline" className="text-[10px] shrink-0">{acc.currency}</Badge>}
+                            {badge && <Badge variant="destructive" className="text-[10px] shrink-0">{badge}</Badge>}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </ScrollArea>
+              </div>
             )}
           </div>
         </div>
