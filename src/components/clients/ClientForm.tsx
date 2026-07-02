@@ -149,7 +149,7 @@ export default function ClientForm({
                   {accounts.map((acc) => {
                     const badge = statusLabel(acc.account_status);
                     return (
-                      <label key={acc.id} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-muted/50 cursor-pointer">
+                      <label key={acc.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent-soft transition-colors cursor-pointer">
                         <Checkbox checked={selected.has(acc.id)} onCheckedChange={() => toggle(acc.id)} />
                         <span className="text-sm flex-1 truncate">{acc.name}</span>
                         {acc.currency && <Badge variant="outline" className="text-[10px]">{acc.currency}</Badge>}

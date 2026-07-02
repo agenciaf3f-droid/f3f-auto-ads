@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Gauge, Loader2 } from "lucide-react";
+import { Gauge, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -135,18 +135,35 @@ export default function OtimizacoesPage() {
       )}
 
       {!loading && violations.length === 0 && (
-        <p className="text-sm text-muted-foreground">
-          Nenhuma otimização pendente. Isso acontece quando não há campanhas fora do limite, ou quando
-          nenhum limite de KPI foi configurado ainda na aba Clientes.
-        </p>
+        <div className="text-center py-16 fade-in-up">
+          <div className="w-12 h-12 rounded-xl bg-success/10 border border-success/20 flex items-center justify-center mx-auto mb-4">
+            <CheckCircle2 className="w-6 h-6 text-success" />
+          </div>
+          <p className="text-sm font-medium mb-1">Tudo dentro do limite</p>
+          <p className="text-sm text-muted-foreground max-w-sm mx-auto">
+            Nenhuma otimização pendente. Isso acontece quando não há campanhas fora do limite, ou quando
+            nenhum limite de KPI foi configurado ainda na aba Clientes.
+          </p>
+        </div>
       )}
 
       <div className="space-y-3">
-        {violations.map((v) => (
-          <Card key={v.campaignId}>
+        {violations.map((v, i) => (
+          <Card
+            key={v.campaignId}
+            className="border-l-[3px] border-l-destructive/70 bg-destructive/[0.015] fade-in-up"
+            style={{ animationDelay: `${i * 60}ms` }}
+          >
             <CardHeader>
-              <CardTitle className="text-base">{v.campaignName}</CardTitle>
-              <p className="text-xs text-muted-foreground">{v.clientName}</p>
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-md bg-destructive/10 border border-destructive/20 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-3.5 h-3.5 text-destructive" />
+                </div>
+                <div className="min-w-0">
+                  <CardTitle className="text-base truncate">{v.campaignName}</CardTitle>
+                  <p className="text-xs text-muted-foreground truncate">{v.clientName}</p>
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
               <p className="text-sm mb-4">
