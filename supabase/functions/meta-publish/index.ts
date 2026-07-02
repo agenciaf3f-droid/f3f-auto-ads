@@ -2391,25 +2391,48 @@ Deno.serve(async (req) => {
               const baldeName = candidates[0].name;
               const ruleRes = await fetch(`https://graph.facebook.com/v25.0/${baldeId}?fields=rule&access_token=${access_token}`);
               const ruleData = await ruleRes.json();
+              // GUARDA CRÍTICA: a Meta faz REPLACE total da rule (não merge). Se não conseguirmos
+              // ler com certeza a rule atual, NUNCA assumir "vazia" — isso sobrescreveria/apagaria
+              // uma regra existente com um array truncado. Só prossegue se `rule` VEIO na resposta
+              // (mesmo que "[]" explícito) e parseia como array de verdade.
               if (ruleData.error) {
-                logs.push({ step: "fase2_balde", status: "warning", ts: ts(), detail: `⚠️ Balde "${baldeName}" (${baldeId}) — erro ao ler regra atual: ${ruleData.error.message}` });
+                logs.push({ step: "fase2_balde", status: "warning", ts: ts(), detail: `⚠️ Balde "${baldeName}" (${baldeId}) — erro ao ler regra atual: ${ruleData.error.message}. NÃO atualizei (evita sobrescrever com lista vazia).` });
+              } else if (typeof ruleData.rule !== "string") {
+                logs.push({ step: "fase2_balde", status: "warning", ts: ts(), detail: `⚠️ Balde "${baldeName}" (${baldeId}) — resposta sem campo "rule" (veio: ${JSON.stringify(Object.keys(ruleData))}). NÃO atualizei (evita sobrescrever com lista vazia).` });
               } else {
-                let currentRule: any[] = [];
-                try { currentRule = JSON.parse(ruleData.rule || "[]"); } catch { currentRule = []; }
-                const alreadyIn = currentRule.some((r: any) => Number(r.object_id) === Number(vvVideoId));
-                if (alreadyIn) {
-                  logs.push({ step: "fase2_balde", status: "success", ts: ts(), detail: `Balde "${baldeName}" (${baldeId}) já continha este vídeo — nada a fazer.` });
+                let currentRule: any[] | null = null;
+                try { const p = JSON.parse(ruleData.rule); if (Array.isArray(p)) currentRule = p; } catch { currentRule = null; }
+                if (currentRule === null) {
+                  logs.push({ step: "fase2_balde", status: "warning", ts: ts(), detail: `⚠️ Balde "${baldeName}" (${baldeId}) — rule veio num formato inesperado (não-array): ${String(ruleData.rule).slice(0, 200)}. NÃO atualizei.` });
+                } else if (currentRule.length === 0) {
+                  // Rule parseou como array vazio DE VERDADE (campo "rule" veio como "[]" explícito).
+                  // Ainda assim suspeito pra um Balde já em uso — não sobrescreve sem confirmação humana.
+                  logs.push({ step: "fase2_balde", status: "warning", ts: ts(), detail: `⚠️ Balde "${baldeName}" (${baldeId}) — regra leu como VAZIA (0 vídeos). Suspeito — NÃO atualizei. Confira manualmente no Gerenciador antes de rodar de novo.` });
                 } else {
-                  const newRule = [...currentRule, { event_name: "video_view_50_percent", object_id: Number(vvVideoId) }];
-                  const updForm = new FormData();
-                  updForm.append("access_token", access_token);
-                  updForm.append("rule", JSON.stringify(newRule));
-                  const updRes = await fetch(`https://graph.facebook.com/v25.0/${baldeId}`, { method: "POST", body: updForm });
-                  const updData = await updRes.json();
-                  if (updData.error) {
-                    logs.push({ step: "fase2_balde", status: "warning", ts: ts(), detail: `⚠️ Falha ao atualizar Balde "${baldeName}" (${baldeId}): ${updData.error.message}` });
+                  const alreadyIn = currentRule.some((r: any) => Number(r.object_id) === Number(vvVideoId));
+                  if (alreadyIn) {
+                    logs.push({ step: "fase2_balde", status: "success", ts: ts(), detail: `Balde "${baldeName}" (${baldeId}) já continha este vídeo — nada a fazer.` });
                   } else {
-                    logs.push({ step: "fase2_balde", status: "success", ts: ts(), detail: `Vídeo ${vvVideoId} adicionado ao Balde "${baldeName}" (${baldeId}) — total agora: ${newRule.length} vídeo(s).` });
+                    const newRule = [...currentRule, { event_name: "video_view_50_percent", object_id: Number(vvVideoId) }];
+                    const updForm = new FormData();
+                    updForm.append("access_token", access_token);
+                    updForm.append("rule", JSON.stringify(newRule));
+                    const updRes = await fetch(`https://graph.facebook.com/v25.0/${baldeId}`, { method: "POST", body: updForm });
+                    const updData = await updRes.json();
+                    if (updData.error) {
+                      logs.push({ step: "fase2_balde", status: "warning", ts: ts(), detail: `⚠️ Falha ao atualizar Balde "${baldeName}" (${baldeId}): ${updData.error.message}` });
+                    } else {
+                      // Confirma lendo de volta — só declara sucesso se a Meta REALMENTE gravou N+1.
+                      const verifyRes = await fetch(`https://graph.facebook.com/v25.0/${baldeId}?fields=rule&access_token=${access_token}`);
+                      const verifyData = await verifyRes.json();
+                      let verifyCount = -1;
+                      try { const vp = JSON.parse(verifyData.rule); if (Array.isArray(vp)) verifyCount = vp.length; } catch { /* fica -1 */ }
+                      if (verifyCount === newRule.length) {
+                        logs.push({ step: "fase2_balde", status: "success", ts: ts(), detail: `Vídeo ${vvVideoId} adicionado ao Balde "${baldeName}" (${baldeId}) — total confirmado: ${verifyCount} vídeo(s).` });
+                      } else {
+                        logs.push({ step: "fase2_balde", status: "warning", ts: ts(), detail: `⚠️ Balde "${baldeName}" (${baldeId}) — Meta aceitou o update mas a releitura mostrou ${verifyCount} vídeo(s) (esperado ${newRule.length}). Confira manualmente no Gerenciador — pode indicar corrupção.` });
+                      }
+                    }
                   }
                 }
               }
