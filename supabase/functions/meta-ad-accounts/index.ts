@@ -230,7 +230,7 @@ Deno.serve(async (req) => {
     }
 
     // Default action: list ad accounts (direct + Business Manager owned + client)
-    const accountMap = new Map<string, { id: string; name: string }>();
+    const accountMap = new Map<string, { id: string; name: string; currency: string | null; account_status: number | null }>();
 
     const paginate = async (initialUrl: string) => {
       let url: string | null = initialUrl;
@@ -241,7 +241,12 @@ Deno.serve(async (req) => {
         if (data.data) {
           for (const acc of data.data) {
             if (!accountMap.has(acc.id)) {
-              accountMap.set(acc.id, { id: acc.id, name: acc.name || acc.id });
+              accountMap.set(acc.id, {
+                id: acc.id,
+                name: acc.name || acc.id,
+                currency: acc.currency ?? null,
+                account_status: acc.account_status ?? null,
+              });
             }
           }
         }
@@ -250,7 +255,7 @@ Deno.serve(async (req) => {
     };
 
     // 1) Contas onde user é admin direto
-    await paginate(`https://graph.facebook.com/v25.0/me/adaccounts?fields=id,name&limit=50&access_token=${access_token}`);
+    await paginate(`https://graph.facebook.com/v25.0/me/adaccounts?fields=id,name,currency,account_status&limit=50&access_token=${access_token}`);
 
     // 2) Contas via Business Manager (owned + client) — best-effort, em paralelo
     let businesses: any[] = [];
@@ -269,9 +274,9 @@ Deno.serve(async (req) => {
 
     // Paraleliza varredura dos BMs com timeout individual
     const bizTasks = businesses.flatMap((biz) => [
-      paginate(`https://graph.facebook.com/v25.0/${biz.id}/owned_ad_accounts?fields=id,name&limit=50&access_token=${access_token}`)
+      paginate(`https://graph.facebook.com/v25.0/${biz.id}/owned_ad_accounts?fields=id,name,currency,account_status&limit=50&access_token=${access_token}`)
         .catch((e) => console.log(`[ad-accounts] owned ${biz.id}: ${(e as Error).message}`)),
-      paginate(`https://graph.facebook.com/v25.0/${biz.id}/client_ad_accounts?fields=id,name&limit=50&access_token=${access_token}`)
+      paginate(`https://graph.facebook.com/v25.0/${biz.id}/client_ad_accounts?fields=id,name,currency,account_status&limit=50&access_token=${access_token}`)
         .catch((e) => console.log(`[ad-accounts] client ${biz.id}: ${(e as Error).message}`)),
     ]);
     await Promise.all(bizTasks);
