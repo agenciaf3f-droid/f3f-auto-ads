@@ -2358,6 +2358,68 @@ Deno.serve(async (req) => {
         logs.push({ step: "fase2_exclusion_audience", status: "skipped", ts: ts(), detail: `sem video_id — crie a VV50% manual.` });
       }
 
+      // 3b. Adiciona o vídeo no público "Balde" (persistente, acumula TODOS os vídeos
+      // já publicados em FASE 2 — cada nova FASE 2 soma ao Balde, nunca substitui).
+      // O gestor cria o Balde manualmente por conta ANTES de rodar FASE 2; achamos pelo
+      // nome (contém "balde" + "50", pois FASE 2 é sempre VV50%). Regra confirmada
+      // empiricamente (probe de create+update): array plano
+      // [{event_name:"video_view_50_percent", object_id}], atualizável via
+      // POST /{custom_audience_id} com `rule` reenviado (append, não substitui o resto).
+      if (vvVideoId) {
+        logs.push({ step: "fase2_balde", status: "start", ts: ts(), detail: `procurando público "Balde" na conta` });
+        try {
+          const baldeListRes = await fetch(
+            `https://graph.facebook.com/v25.0/${ad_account_id}/customaudiences?fields=id,name&limit=300&access_token=${access_token}`,
+          );
+          const baldeListData = await baldeListRes.json();
+          if (baldeListData.error) {
+            logs.push({ step: "fase2_balde", status: "warning", ts: ts(), detail: `⚠️ Não deu pra listar públicos: ${baldeListData.error.message}. Continuando SEM atualizar o Balde.` });
+          } else {
+            const allBaldes = (baldeListData.data || []).filter((a: any) => String(a.name || "").toLowerCase().includes("balde"));
+            // Se houver mais de 1 "Balde" (conta com variantes de %, ex: VV50/VV75/95%),
+            // desempata pelos que também citam "50" — FASE 2 é sempre VV50%. Com só 1 Balde
+            // na conta, usa ele direto (nome não precisa citar percentual).
+            const candidates = allBaldes.length > 1
+              ? allBaldes.filter((a: any) => String(a.name || "").toLowerCase().includes("50"))
+              : allBaldes;
+            if (candidates.length === 0) {
+              logs.push({ step: "fase2_balde", status: "warning", ts: ts(), detail: `⚠️ Nenhum público "Balde" (VV50%) encontrado nesta conta. Crie um antes de publicar FASE 2 se quiser acumular.` });
+            } else if (candidates.length > 1) {
+              logs.push({ step: "fase2_balde", status: "warning", ts: ts(), detail: `⚠️ ${candidates.length} públicos "Balde" candidatos (nomes ambíguos/duplicados: ${candidates.map((c: any) => `${c.name}(${c.id})`).join(", ")}). Não atualizei nenhum — renomeie pra deixar 1 só.` });
+            } else {
+              const baldeId = candidates[0].id;
+              const baldeName = candidates[0].name;
+              const ruleRes = await fetch(`https://graph.facebook.com/v25.0/${baldeId}?fields=rule&access_token=${access_token}`);
+              const ruleData = await ruleRes.json();
+              if (ruleData.error) {
+                logs.push({ step: "fase2_balde", status: "warning", ts: ts(), detail: `⚠️ Balde "${baldeName}" (${baldeId}) — erro ao ler regra atual: ${ruleData.error.message}` });
+              } else {
+                let currentRule: any[] = [];
+                try { currentRule = JSON.parse(ruleData.rule || "[]"); } catch { currentRule = []; }
+                const alreadyIn = currentRule.some((r: any) => Number(r.object_id) === Number(vvVideoId));
+                if (alreadyIn) {
+                  logs.push({ step: "fase2_balde", status: "success", ts: ts(), detail: `Balde "${baldeName}" (${baldeId}) já continha este vídeo — nada a fazer.` });
+                } else {
+                  const newRule = [...currentRule, { event_name: "video_view_50_percent", object_id: Number(vvVideoId) }];
+                  const updForm = new FormData();
+                  updForm.append("access_token", access_token);
+                  updForm.append("rule", JSON.stringify(newRule));
+                  const updRes = await fetch(`https://graph.facebook.com/v25.0/${baldeId}`, { method: "POST", body: updForm });
+                  const updData = await updRes.json();
+                  if (updData.error) {
+                    logs.push({ step: "fase2_balde", status: "warning", ts: ts(), detail: `⚠️ Falha ao atualizar Balde "${baldeName}" (${baldeId}): ${updData.error.message}` });
+                  } else {
+                    logs.push({ step: "fase2_balde", status: "success", ts: ts(), detail: `Vídeo ${vvVideoId} adicionado ao Balde "${baldeName}" (${baldeId}) — total agora: ${newRule.length} vídeo(s).` });
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+          logs.push({ step: "fase2_balde", status: "warning", ts: ts(), detail: `⚠️ Skipped (timeout/erro): ${(e as Error).message}` });
+        }
+      }
+
       // 3. Loop sobre audiences: 1 adset + 1 ad pra cada
       for (let i = 0; i < fase2AudienceIds.length; i++) {
         const audId = fase2AudienceIds[i];
