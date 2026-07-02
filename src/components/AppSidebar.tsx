@@ -26,7 +26,11 @@ const NAV_ITEMS: NavItem[] = [
 
 function MetaStatusDot() {
   const [connected, setConnected] = useState<boolean | null>(null);
+  const location = useLocation();
 
+  // Re-checa a cada navegação — a sidebar é persistente (layout route), não remonta
+  // por página como o Header antigo fazia. Sem isso, desconectar na tela de Config e
+  // voltar pra Campanhas deixava o indicador verde (obsoleto) até um reload completo.
   useEffect(() => {
     const cached = sessionStorage.getItem("meta_status_cache");
     if (cached) {
@@ -42,7 +46,7 @@ function MetaStatusDot() {
     fetchMetaStatus()
       .then((s) => setConnected(!!s.connected))
       .catch(() => setConnected(false));
-  }, []);
+  }, [location.pathname]);
 
   if (connected === null) return null;
 
