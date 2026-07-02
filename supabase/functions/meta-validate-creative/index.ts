@@ -217,7 +217,15 @@ Deno.serve(async (req) => {
       if (fileId && driveApiKey) {
         try {
           const apiUrl = buildDriveApiUrl(fileId, driveApiKey);
-          const res = await fetch(apiUrl, { headers: { Range: "bytes=0-15" }, signal: AbortSignal.timeout(15_000) });
+          let res = await fetch(apiUrl, { headers: { Range: "bytes=0-15" }, signal: AbortSignal.timeout(15_000) });
+          // Arquivos grandes (>100-200MB) às vezes engasgam no primeiro request (visto: 6.8s
+          // → 401/403/404, retry imediato depois → 656ms → OK, com o MESMO arquivo/link/chave).
+          // Antes de concluir "não está público", 1 retry rápido — barato e evita falso alarme
+          // num arquivo que já é público de verdade.
+          if (res.status === 401 || res.status === 403 || res.status === 404) {
+            await new Promise((r) => setTimeout(r, 1500));
+            res = await fetch(apiUrl, { headers: { Range: "bytes=0-15" }, signal: AbortSignal.timeout(15_000) });
+          }
           const ct = res.headers.get("content-type") || "";
           mark("drive_check", tDrive);
           mark("TOTAL", t0);
