@@ -32,14 +32,39 @@ export async function disconnectMeta() {
   const { error } = await supabase.from("meta_connections").delete().eq("user_id", adminRow.user_id);
   if (error) throw new Error(error.message);
   sessionStorage.removeItem("meta_status_cache");
+  sessionStorage.removeItem(AD_ACCOUNTS_CACHE_KEY);
 }
 
+const AD_ACCOUNTS_CACHE_KEY = "meta_ad_accounts_cache";
+
 export async function fetchAdAccounts(accessToken: string) {
+  try {
+    const cached = sessionStorage.getItem(AD_ACCOUNTS_CACHE_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      const cacheAge = Date.now() - (parsed._cachedAt || 0);
+      // Cache válido por 5 minutos, mesmo padrão do meta_status_cache
+      if (cacheAge < 5 * 60 * 1000 && parsed.access_token === accessToken && Array.isArray(parsed.accounts)) {
+        return parsed.accounts;
+      }
+    }
+  } catch {
+    // cache corrompido ou sessionStorage indisponível (modo privado) — segue pro fetch normal
+  }
+
   const { data, error } = await supabase.functions.invoke("meta-ad-accounts", {
     body: { access_token: accessToken },
   });
   if (error) throw new Error(error.message);
-  return data?.accounts || [];
+  const accounts = data?.accounts || [];
+
+  try {
+    sessionStorage.setItem(AD_ACCOUNTS_CACHE_KEY, JSON.stringify({ access_token: accessToken, accounts, _cachedAt: Date.now() }));
+  } catch {
+    // quota/modo privado — não impede o uso, só não cacheia
+  }
+
+  return accounts;
 }
 
 export async function fetchIgAccountsForAdAccount(accessToken: string, adAccountId: string) {
