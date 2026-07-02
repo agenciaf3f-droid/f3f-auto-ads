@@ -16,13 +16,14 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchMetaStatus, fetchCampaigns, fetchCampaignInsights, pauseCampaign } from "@/lib/meta-api";
 import { fetchClientKpiConfigs } from "@/lib/client-kpi-contract";
-import { compareKpis, type OptimizationViolation } from "@/lib/optimization-engine";
+import { compareKpis, isDismissalActive, type OptimizationViolation } from "@/lib/optimization-engine";
 import { getMetricDef } from "@/lib/meta-insights";
 
 export default function OtimizacoesPage() {
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [violations, setViolations] = useState<OptimizationViolation[]>([]);
+  const [accountErrors, setAccountErrors] = useState<string[]>([]);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [pausingId, setPausingId] = useState<string | null>(null);
   const [confirmCampaign, setConfirmCampaign] = useState<OptimizationViolation | null>(null);
@@ -49,21 +50,52 @@ export default function OtimizacoesPage() {
         const { data: { user } } = await supabase.auth.getUser();
         const { data: actioned } = await supabase
           .from("optimization_actions")
-          .select("campaign_id")
+          .select("campaign_id, action, created_at")
           .eq("user_id", user?.id ?? "");
-        const actionedIds = new Set((actioned || []).map((row) => row.campaign_id));
+        // "paused" continua excluído pra sempre (evita flicker antes da Meta propagar a pausa).
+        // "dismissed" (Manter) só silencia por 3 dias a partir do created_at — depois disso a
+        // campanha volta a ficar elegível pra reaparecer se ainda estiver fora do KPI.
+        const actionedIds = new Set(
+          (actioned || [])
+            .filter((row) => row.action === "paused" || (row.action === "dismissed" && isDismissalActive(row.created_at)))
+            .map((row) => row.campaign_id)
+        );
 
         const found: OptimizationViolation[] = [];
+        const failedAccounts: string[] = [];
         for (const config of configs) {
-          const campaigns = await fetchCampaigns(status.access_token, config.adAccountId);
-          if (campaigns.length === 0) continue;
+          try {
+            const campaigns = await fetchCampaigns(status.access_token, config.adAccountId);
+            if (campaigns.length === 0) continue;
 
-          const insights = await fetchCampaignInsights(status.access_token, campaigns.map((c: { id: string }) => c.id));
-          const accountViolations = compareKpis(campaigns, insights, config);
-          found.push(...accountViolations.filter((v) => !actionedIds.has(v.campaignId)));
+            const insights = await fetchCampaignInsights(status.access_token, campaigns.map((c: { id: string }) => c.id));
+
+            // Uma campanha isolada pode falhar (rate-limit transiente) sem que a chamada inteira
+            // lance erro — a edge function retorna 200 com só aquela campanha marcada com `error`.
+            // Se TODAS as campanhas da conta vieram com erro, trata como falha de avaliação, não
+            // como "tudo dentro do limite" (null = sem veiculação ainda, isso é normal e não conta).
+            const allErrored = campaigns.every((c: { id: string }) => {
+              const insight = insights[c.id];
+              return insight && insight.error;
+            });
+            if (allErrored) {
+              console.error(`Falha ao avaliar otimizações da conta ${config.adAccountId} (${config.clientName}): todas as campanhas retornaram erro`);
+              failedAccounts.push(config.clientName);
+              continue;
+            }
+
+            const accountViolations = compareKpis(campaigns, insights, config);
+            found.push(...accountViolations.filter((v) => !actionedIds.has(v.campaignId)));
+          } catch (e) {
+            console.error(`Falha ao avaliar otimizações da conta ${config.adAccountId} (${config.clientName})`, e);
+            failedAccounts.push(config.clientName);
+          }
         }
 
-        if (!cancelled) setViolations(found);
+        if (!cancelled) {
+          setViolations(found);
+          setAccountErrors(failedAccounts);
+        }
       } catch (e) {
         if (!cancelled) {
           toast({ variant: "destructive", title: "Erro ao carregar otimizações", description: (e as Error).message });
@@ -100,13 +132,23 @@ export default function OtimizacoesPage() {
     setPausingId(violation.campaignId);
     try {
       await pauseCampaign(accessToken, violation.campaignId);
-      await recordAction(violation, "paused");
-      toast({ title: "Campanha pausada", description: violation.campaignName });
     } catch (e) {
       toast({ variant: "destructive", title: "Erro ao pausar campanha", description: (e as Error).message });
-    } finally {
       setPausingId(null);
       setConfirmCampaign(null);
+      return;
+    }
+
+    // A campanha já foi pausada de verdade na Meta neste ponto — o resto é só bookkeeping local.
+    // Uma falha aqui não pode virar um falso "erro ao pausar" pro usuário.
+    toast({ title: "Campanha pausada", description: violation.campaignName });
+    setPausingId(null);
+    setConfirmCampaign(null);
+
+    try {
+      await recordAction(violation, "paused");
+    } catch (e) {
+      console.error("Falha ao registrar pausa em optimization_actions (campanha já pausada na Meta)", e);
     }
   }
 
@@ -135,7 +177,14 @@ export default function OtimizacoesPage() {
         </div>
       )}
 
-      {!loading && violations.length === 0 && (
+      {!loading && accountErrors.length > 0 && (
+        <div className="mb-4 rounded-md border border-destructive/20 bg-destructive/[0.04] px-4 py-3 text-sm text-destructive fade-in-up">
+          Não foi possível avaliar {accountErrors.length === 1 ? "o cliente" : "os clientes"}:{" "}
+          <strong>{accountErrors.join(", ")}</strong>. Tente novamente mais tarde.
+        </div>
+      )}
+
+      {!loading && violations.length === 0 && accountErrors.length === 0 && (
         <div className="text-center py-16 fade-in-up">
           <div className="w-12 h-12 rounded-xl bg-success/10 border border-success/20 flex items-center justify-center mx-auto mb-4">
             <CheckCircle2 className="w-6 h-6 text-success" />
