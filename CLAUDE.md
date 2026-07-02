@@ -105,7 +105,7 @@ supabase/functions/   # 21 functions + _shared/
 - `optimization_goal: CONVERSATIONS` + `destination_type: WHATSAPP`
 - `promoted_object`: `{ page_id, whats_app_business_phone_number_id, whatsapp_phone_number }` — exatamente 3 campos
 - `attribution_spec: [{ event_type: CLICK_THROUGH, window_days: 1 }]`
-- `targeting_automation: { advantage_audience: 1 }` (ativado)
+- `targeting_automation: { advantage_audience: 0 }` (desativado — confirmado com usuário 2026-07-02; público rígido, sem sugestão da Meta)
 - Creative: `source_instagram_media_id` + `instagram_user_id` + `call_to_action: WHATSAPP_MESSAGE`
 - Ad: inclui `tracking_specs` para onsite_conversion, messenger e whatsapp
 - **Variante Vendas**: `objective: OUTCOME_SALES` + pixel/`PURCHASE` no `promoted_object`
