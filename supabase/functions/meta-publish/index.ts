@@ -712,14 +712,20 @@ function blobToBase64(blob: Blob): Promise<string> {
 }
 
 // Vídeo recém-upado exige thumbnail (image_url/image_hash) no video_data, senão a Meta dá
-// erro 100/1443226 "anúncio precisa de miniatura de vídeo". O campo `picture` demora a popular;
-// a edge /thumbnails costuma vir antes. Espera processar e devolve image_hash (mais estável).
+// erro 100/1443226 "anúncio precisa de miniatura de vídeo". O campo `picture` fica pronto
+// ANTES de `thumbnails.data` no pipeline da Meta, mas é minúsculo (~160x160 — aparece
+// cinza/borrado esticado no Gerenciador). `thumbnails.data` traz resolução cheia (ex:
+// 2160x3840) mas demora mais. Por isso `picture` é só fallback de ÚLTIMO recurso — espera
+// o loop inteiro esgotar antes de aceitar ele, pra dar toda a chance da resolução cheia
+// aparecer primeiro. Confirmado com dado real: ad publicado pegou o picture 160x120 porque
+// aceitava na hora, enquanto o vídeo já tinha 20 thumbnails em 2160x3840 disponíveis.
 async function resolveVideoThumbnailField(
   videoId: string,
   accessToken: string,
   adAccountId: string,
 ): Promise<Record<string, string>> {
   let thumbUri = "";
+  let pictureFallback = "";
   for (let attempt = 0; attempt < 30; attempt++) {
     await new Promise((r) => setTimeout(r, 4000));
     try {
@@ -732,9 +738,10 @@ async function resolveVideoThumbnailField(
         const pref = thumbs.find((t: any) => t.is_preferred) || thumbs[0];
         if (pref?.uri) { thumbUri = pref.uri; break; }
       }
-      if (d?.picture) { thumbUri = d.picture; break; }
+      if (d?.picture && !pictureFallback) pictureFallback = d.picture;
     } catch { /* segue tentando */ }
   }
+  if (!thumbUri) thumbUri = pictureFallback;
   if (!thumbUri) return {};
   // Sobe o thumbnail como adimage (image_hash é mais estável que image_url da CDN da Meta).
   try {
