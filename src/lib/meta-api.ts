@@ -118,6 +118,24 @@ export async function fetchCampaigns(accessToken: string, adAccountId: string) {
   return data?.campaigns || [];
 }
 
+export async function fetchCampaignInsights(accessToken: string, campaignIds: string[]) {
+  const { data, error } = await supabase.functions.invoke("meta-campaign-insights", {
+    body: { access_token: accessToken, campaign_ids: campaignIds },
+  });
+  if (error && data) return data;
+  if (error) throw new Error(error.message);
+  return data?.insights || {};
+}
+
+export async function pauseCampaign(accessToken: string, campaignId: string) {
+  const { data, error } = await supabase.functions.invoke("meta-campaign-pause", {
+    body: { access_token: accessToken, campaign_id: campaignId },
+  });
+  if (error && data) return data;
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 export async function fetchWhatsAppNumbers(accessToken: string, adAccountId?: string, pageId?: string) {
   const { data, error } = await supabase.functions.invoke("meta-whatsapp-numbers", {
     body: { access_token: accessToken, ad_account_id: adAccountId, page_id: pageId },

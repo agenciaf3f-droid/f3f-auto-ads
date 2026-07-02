@@ -218,6 +218,36 @@ export type Database = {
         }
         Relationships: []
       }
+      optimization_actions: {
+        Row: {
+          action: string
+          ad_account_id: string
+          campaign_id: string
+          created_at: string
+          id: string
+          metric_snapshot: Json
+          user_id: string
+        }
+        Insert: {
+          action: string
+          ad_account_id: string
+          campaign_id: string
+          created_at?: string
+          id?: string
+          metric_snapshot?: Json
+          user_id: string
+        }
+        Update: {
+          action?: string
+          ad_account_id?: string
+          campaign_id?: string
+          created_at?: string
+          id?: string
+          metric_snapshot?: Json
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
