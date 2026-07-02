@@ -19,6 +19,14 @@ export type OptimizationViolation = {
   limit: number;
 };
 
+const DISMISSAL_WINDOW_MS = 3 * 24 * 60 * 60 * 1000; // 3 dias
+
+// Um "Manter" (dismissed) só silencia a violação por 3 dias a partir do created_at — depois
+// disso a campanha volta a ficar elegível pra reaparecer se ainda (ou de novo) estiver fora do KPI.
+export function isDismissalActive(createdAt: string, now: Date = new Date()): boolean {
+  return now.getTime() - new Date(createdAt).getTime() < DISMISSAL_WINDOW_MS;
+}
+
 export function compareKpis(
   campaigns: Campaign[],
   insights: InsightsMap,

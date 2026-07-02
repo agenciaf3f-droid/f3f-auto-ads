@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compareKpis } from "./optimization-engine";
+import { compareKpis, isDismissalActive } from "./optimization-engine";
 import type { ClientKpiConfig } from "./client-kpi-contract";
 
 // extractPresetBucket itself is exercised by meta-insights.test.ts — compareKpis now delegates
@@ -75,5 +75,27 @@ describe("compareKpis", () => {
     const outrosCampaigns = [{ id: "c4", name: "Campanha manual sem prefixo" }];
     const violations = compareKpis(outrosCampaigns, { c4: { spend: "990", clicks: "10" } }, config);
     expect(violations).toHaveLength(0);
+  });
+});
+
+describe("isDismissalActive", () => {
+  const now = new Date("2026-07-02T12:00:00Z");
+
+  it("is active right after the dismissal", () => {
+    expect(isDismissalActive("2026-07-02T11:00:00Z", now)).toBe(true);
+  });
+
+  it("is still active just under 3 days later", () => {
+    const almostThreeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000 + 1000).toISOString();
+    expect(isDismissalActive(almostThreeDaysAgo, now)).toBe(true);
+  });
+
+  it("expires exactly 3 days after the dismissal", () => {
+    const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    expect(isDismissalActive(threeDaysAgo, now)).toBe(false);
+  });
+
+  it("expires well past 3 days", () => {
+    expect(isDismissalActive("2026-06-20T12:00:00Z", now)).toBe(false);
   });
 });
