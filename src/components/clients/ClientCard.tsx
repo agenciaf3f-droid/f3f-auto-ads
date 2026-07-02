@@ -17,7 +17,7 @@ export default function ClientCard({
   onDelete: () => void;
 }) {
   return (
-    <div className="rounded-lg border p-4 flex items-center gap-3 hover:border-primary/30 transition-colors">
+    <div className="glass-card p-4 flex items-center gap-3 hover:-translate-y-0.5 hover:border-primary/30">
       <div className="w-9 h-9 rounded-md bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
         <Building2 className="w-4 h-4 text-primary" />
       </div>
@@ -31,7 +31,7 @@ export default function ClientCard({
         {client.notes && <p className="text-xs text-muted-foreground truncate">{client.notes}</p>}
       </div>
       <div className="flex items-center gap-1 shrink-0">
-        <Button variant="ghost" size="sm" onClick={onManage} className="gap-1.5">
+        <Button variant="ghost" size="sm" onClick={onManage} className="gap-1.5 text-primary hover:bg-primary/10 hover:text-primary">
           <BarChart3 className="h-3.5 w-3.5" /> KPIs
         </Button>
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onEdit}>

@@ -128,7 +128,7 @@ function BucketRules({
     <div className="space-y-3 pt-2">
       {rules.length === 0 && <p className="text-sm text-muted-foreground">Nenhuma regra para {bucket}.</p>}
       {rules.map((r) => (
-        <div key={r.id} className="flex items-center gap-2 text-sm rounded-md border px-3 py-2">
+        <div key={r.id} className="flex items-center gap-2 text-sm rounded-md border border-border/60 bg-muted/20 px-3 py-2">
           <span className="flex-1">
             {metricLabel(r.metric_key)} <span className="text-muted-foreground">{r.comparator === ">" ? "acima de" : "abaixo de"}</span>{" "}
             <span className="font-medium">{r.threshold_value}</span> → <span className="text-destructive">{r.label_if_triggered}</span>

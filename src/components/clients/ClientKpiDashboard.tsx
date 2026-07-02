@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2, AlertCircle, CheckCircle2, XCircle } from "lucide-react";
+import { Loader2, AlertCircle, CheckCircle2, XCircle, Building2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { fetchAdAccounts } from "@/lib/meta-api";
@@ -136,10 +136,13 @@ function AccountCard({
   const other = aggregates.get(bucketKey(account.ad_account_id, OTHER_BUCKET));
 
   return (
-    <div className="rounded-lg border p-4">
+    <div className="glass-card p-4">
       <div className="flex items-center gap-2 mb-3">
-        <h3 className="font-display font-semibold text-sm">{account.ad_account_name || account.ad_account_id}</h3>
-        {currency && <Badge variant="outline" className="text-[10px]">{currency}</Badge>}
+        <div className="w-7 h-7 rounded-md bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+          <Building2 className="w-3.5 h-3.5 text-primary" />
+        </div>
+        <h3 className="font-display font-semibold text-sm truncate">{account.ad_account_name || account.ad_account_id}</h3>
+        {currency && <Badge variant="outline" className="text-[10px] shrink-0">{currency}</Badge>}
       </div>
 
       {bucketsWithRules.length === 0 && !other ? (
@@ -179,9 +182,9 @@ function BucketBlock({
   agg?: AggregatedBucket;
 }) {
   return (
-    <div>
-      <div className="flex items-center gap-2 mb-1.5">
-        <span className="text-xs font-semibold tracking-wide uppercase text-muted-foreground">{bucket}</span>
+    <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-2.5">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[11px] font-semibold tracking-wide uppercase text-primary/80">{bucket}</span>
         {agg ? (
           <span className="text-[11px] text-muted-foreground">{agg.campaignCount} camp.</span>
         ) : (
