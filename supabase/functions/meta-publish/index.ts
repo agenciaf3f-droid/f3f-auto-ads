@@ -1758,47 +1758,33 @@ Deno.serve(async (req) => {
         lpTargeting.geo_locations = { countries: ["BR"], location_types: ["home", "recent"] };
       }
 
-      // L.T: idade/gênero + público Advantage (toggle do sistema).
-      // ON  → advantage_audience:1 e age/gender viram SUGESTÃO (Meta expande além).
-      // OFF → advantage_audience:0 + individual_setting{0,0} = limites rígidos.
+      // L.T: público Advantage (toggle do sistema). IDADE/GÊNERO FORAM REMOVIDOS do L.T —
+      // enviá-los fazia o adset sair como público DEFINIDO no Gerenciador (perdia o Advantage+;
+      // individual_setting só a UI da Meta seta, a API descarta — ver 7 create-tests).
+      // ON  → público 100% automático: só geo + advantage_audience:1 (Meta acha idade/gênero/
+      //       interesses sozinha). OFF → público RÍGIDO: público selecionado (custom_audiences) + geo.
       const ltAdvantage = body.lt_advantage === true || body.lt_advantage === "true";
-      const ltAgeMin = Number(body.lt_age_min) || 18;
-      const ltAgeMax = Number(body.lt_age_max) || 65;
-      const ltGenders: number[] = Array.isArray(body.lt_genders)
-        ? body.lt_genders.map(Number).filter((g: number) => g === 1 || g === 2)
-        : [];
       if (ltAdvantage) {
-        // Advantage+ ON = PÚBLICO PURO ADVANTAGE+. Prova empírica (probe de create nesta
-        // conta, adset ACTIVE): o shape mínimo — geo + idade (age_range = SUGESTÃO, controles
-        // largos 18-65) + gênero + targeting_automation.advantage_audience:1 — sai como
-        // advantage_audience:1 DE VERDADE. QUALQUER campo que DEFINA público (custom_audiences
-        // incluído, flexible_spec, interests, behaviors, targeting_optimization) faz a Meta
-        // cair em "expansion_all" (advantage_audience:0 = definido+expande, NÃO Advantage+).
-        // Por isso RECONSTRUÍMOS o targeting só com os campos permitidos, preservando geo e
-        // exclusões. age_min>25 como controle é rejeitado (1870188) → controle 18-65 + age_range.
+        // Reconstrói o targeting só com geo + advantage_audience:1 (+ exclusões, se houver).
+        // Qualquer campo que DEFINA público (custom_audiences incluído, age_range, genders,
+        // flexible_spec, interests) faz a Meta cair em "expansion_all" (definido, não A+A).
         const rebuilt: Record<string, any> = {
           geo_locations: lpTargeting.geo_locations,
-          age_min: 18,
-          age_max: 65,
-          age_range: [ltAgeMin, ltAgeMax],
           targeting_automation: { advantage_audience: 1 },
         };
-        if (ltGenders.length === 1) rebuilt.genders = ltGenders;
         if (lpTargeting.excluded_geo_locations) rebuilt.excluded_geo_locations = lpTargeting.excluded_geo_locations;
         if (lpTargeting.excluded_custom_audiences) rebuilt.excluded_custom_audiences = lpTargeting.excluded_custom_audiences;
         lpTargeting = rebuilt;
       } else {
-        // Advantage+ OFF: público RÍGIDO. idade/gênero como limites rígidos, mantém o público
-        // selecionado (custom_audiences), sem age_range (só vale com A+A).
-        lpTargeting.age_min = ltAgeMin;
-        lpTargeting.age_max = ltAgeMax;
+        // Advantage+ OFF: público RÍGIDO = público selecionado (custom_audiences) + geo, sem idade/gênero.
         delete lpTargeting.age_range;
+        delete lpTargeting.age_min;
+        delete lpTargeting.age_max;
+        delete lpTargeting.genders;
         lpTargeting.targeting_automation = {
           advantage_audience: 0,
           individual_setting: { age: 0, gender: 0 },
         };
-        if (ltGenders.length === 1) lpTargeting.genders = ltGenders;
-        else delete lpTargeting.genders;
         if (Array.isArray(lpTargeting.custom_audiences)) {
           lpTargeting.custom_audiences = lpTargeting.custom_audiences.filter((a: any) => a?.id);
           if (lpTargeting.custom_audiences.length === 0) delete lpTargeting.custom_audiences;
@@ -1851,7 +1837,7 @@ Deno.serve(async (req) => {
       else p.start_time = new Date().toISOString();
       if (schedule?.end_time) p.end_time = schedule.end_time;
 
-      console.log(`[FASE3-LP-adset] promoted_object: ${JSON.stringify(p.promoted_object)} | destination=WEBSITE | URL=${lp_url} | advantage=${ltAdvantage} age=${ltAgeMin}-${ltAgeMax} genders=${JSON.stringify(ltGenders)}`);
+      console.log(`[FASE3-LP-adset] promoted_object: ${JSON.stringify(p.promoted_object)} | destination=WEBSITE | URL=${lp_url} | advantage=${ltAdvantage} (idade/genero removidos do L.T)`);
       return { payload: p };
     };
 
