@@ -1281,6 +1281,8 @@ Deno.serve(async (req) => {
     // FASE 2 — multiple audience IDs (one adset per audience)
     const fase2AudienceIds: string[] = body.fase2_audiences || [];
     const fase2AudienceNames: string[] = body.fase2_audience_names || [];
+    // ADAPTADO: 1 único adset com os 2 públicos combinados (em vez de N adsets, 1 por público).
+    const fase2CombinedAdset: boolean = body.fase2_combined_adset === true;
 
     // ══════════════════════════════════════════════════════════════════
     //  PIPELINE LOG: Identify which preset we're running
@@ -1903,6 +1905,56 @@ Deno.serve(async (req) => {
       return { payload: p };
     };
 
+    // === FASE 2 ADAPTADO AdSet builder ===
+    // Igual ao buildFase2Adset (idade/gênero/exclusão/orçamento/DSA/agendamento idênticos),
+    // só muda: recebe os 2 audience_ids de inclusão e os combina no MESMO adset
+    // (custom_audiences com 2 entradas — Meta combina como OR), em vez de 1 adset por público.
+    const buildFase2AdsetCombined = (name: string, includedAudienceIds: string[], excludedAudienceId: string | null): { payload?: Record<string, any>; error?: string } => {
+      if (!Array.isArray(includedAudienceIds) || includedAudienceIds.length !== 2 || includedAudienceIds.some((id) => !id)) {
+        return { error: "FASE 2 ADAPTADO requer exatamente 2 audience_ids de inclusão combinados no mesmo conjunto." };
+      }
+      const f2AgeMin = Number(body.fase2_age_min) || 18;
+      const f2AgeMax = Number(body.fase2_age_max) || 65;
+      const f2Genders: number[] = Array.isArray(body.fase2_genders) ? body.fase2_genders.map(Number).filter((g: number) => g === 1 || g === 2) : [];
+      const f2Targeting: Record<string, any> = {
+        custom_audiences: includedAudienceIds.map((id) => ({ id })),
+        geo_locations: { countries: ["BR"], location_types: ["home", "recent"] },
+        age_min: f2AgeMin,
+        age_max: f2AgeMax,
+        targeting_automation: { advantage_audience: 0 },
+        targeting_relaxation_types: { lookalike: 0, custom_audience: 0 },
+      };
+      if (f2Genders.length === 1) f2Targeting.genders = f2Genders;
+      if (excludedAudienceId) {
+        f2Targeting.excluded_custom_audiences = [{ id: excludedAudienceId }];
+      }
+      const p: Record<string, any> = {
+        campaign_id: campaignId,
+        name,
+        status: "ACTIVE",
+        billing_event: "IMPRESSIONS",
+        optimization_goal: "THRUPLAY",
+        destination_type: "ON_VIDEO",
+        targeting: f2Targeting,
+        attribution_spec: [{ event_type: "CLICK_THROUGH", window_days: 1 }],
+        access_token,
+      };
+      applyDsa(p);
+      if (structure === "ABO") {
+        p.daily_budget = Math.round(Number(budget) * 100);
+        p.bid_strategy = inheritedBidStrategy || "LOWEST_COST_WITHOUT_CAP";
+        if (inheritedBidStrategy && inheritedBidStrategy !== "LOWEST_COST_WITHOUT_CAP" && inheritedBidAmount) {
+          p.bid_amount = inheritedBidAmount;
+        }
+      }
+      if (schedule?.start_time) p.start_time = schedule.start_time;
+      else p.start_time = new Date().toISOString();
+      if (schedule?.end_time) p.end_time = schedule.end_time;
+
+      console.log(`[FASE2-adset-combined] inclusions=${includedAudienceIds.join("+")}, exclusion=${excludedAudienceId || "—"}, opt=THRUPLAY`);
+      return { payload: p };
+    };
+
     // Router
     const buildAdsetPayload = (name: string): { payload?: Record<string, any>; error?: string } => {
       if (isIgProfilePreset) return { payload: buildFase1Adset(name) };
@@ -2292,6 +2344,11 @@ Deno.serve(async (req) => {
       if (resolvedCreatives.length !== 1) {
         return respond({ ok: false, step: "publish", error_message: "FASE 2 exige exatamente 1 criativo. Forneça 1 criativo." });
       }
+      // ADAPTADO: re-checagem no backend (defesa real — frontend não é confiável). Roda ANTES
+      // de criar o criativo pra não deixar objeto órfão na Meta se o público estiver errado.
+      if (fase2CombinedAdset && fase2AudienceIds.length !== 2) {
+        return respond({ ok: false, step: "publish", error_message: "FASE 2 ADAPTADO exige exatamente 2 públicos combinados." });
+      }
       const cr = resolvedCreatives[0];
 
       // 1. Cria 1 creative compartilhado PRIMEIRO (precisamos do video_id dele p/ VV50%).
@@ -2453,7 +2510,49 @@ Deno.serve(async (req) => {
         }
       }
 
-      // 3. Loop sobre audiences: 1 adset + 1 ad pra cada
+      // 3. ADAPTADO: 1 único adset com os 2 públicos combinados. COMPLETO: loop existente
+      // (inalterado, byte-idêntico ao original — só movido pro else) — 1 adset por audience.
+      if (fase2CombinedAdset) {
+        const combinedName = `[${fase2AudienceNames[0] || fase2AudienceIds[0]} + ${fase2AudienceNames[1] || fase2AudienceIds[1]}] - ${cr.name}`;
+        const adsetBuild = buildFase2AdsetCombined(combinedName, fase2AudienceIds, exclusionAudienceId);
+        if (adsetBuild.error) {
+          failures.push({ index: 1, name: "combined", step: "adset", reason: adsetBuild.error });
+        } else {
+          const adsetResult = await createAdset(adsetBuild.payload!, "adset_1");
+          if (adsetResult.warning) {
+            return respond({ ok: false, step: "idempotency", campaign_id: campaignId, warning: true, error_message: adsetResult.warning });
+          }
+          if (adsetResult.error) {
+            failures.push({ index: 1, name: "combined", step: "adset", reason: adsetResult.error.message || JSON.stringify(adsetResult.error) });
+          } else {
+            const adsetId = adsetResult.id!;
+            adsetIds.push(adsetId);
+            adsetsCreated++;
+
+            const adPayload = {
+              adset_id: adsetId,
+              name: `${cr.name} - 01`,
+              status: "ACTIVE",
+              creative: { creative_id: sharedCreativeId },
+              access_token,
+            };
+            logs.push({ step: "ad_1", status: "start", ts: ts(), detail: `creative=${sharedCreativeId}, adset=${adsetId}` });
+            const adRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/ads`, {
+              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(adPayload),
+            });
+            const adData = await adRes.json();
+            if (adData.error) {
+              const errDetail = `${adData.error.message} | code=${adData.error.code} | subcode=${adData.error.error_subcode}`;
+              logs.push({ step: "ad_1", status: "error", ts: ts(), detail: errDetail });
+              failures.push({ index: 1, name: "combined", step: "ad", reason: errDetail });
+            } else {
+              adIds.push(adData.id);
+              adsCreated++;
+              logs.push({ step: "ad_1", status: "success", ts: ts(), detail: `id=${adData.id}` });
+            }
+          }
+        }
+      } else {
       for (let i = 0; i < fase2AudienceIds.length; i++) {
         const audId = fase2AudienceIds[i];
         const audName = fase2AudienceNames[i] || audId;
@@ -2499,9 +2598,10 @@ Deno.serve(async (req) => {
         adsCreated++;
         logs.push({ step: `ad_${idx}`, status: "success", ts: ts(), detail: `id=${adData.id}` });
       }
+      }
 
       // Skip o restante do fluxo CBO/ABO
-      logs.push({ step: "summary", status: failures.length === 0 ? "success" : "error", ts: ts(), detail: `preset=FASE 2, adsets=${adsetsCreated}, creatives=${creativesCreated}, ads=${adsCreated}, failures=${failures.length}, exclusion_audience=${exclusionAudienceId}` });
+      logs.push({ step: "summary", status: failures.length === 0 ? "success" : "error", ts: ts(), detail: `preset=FASE 2${fase2CombinedAdset ? " ADAPTADO" : ""}, adsets=${adsetsCreated}, creatives=${creativesCreated}, ads=${adsCreated}, failures=${failures.length}, exclusion_audience=${exclusionAudienceId}` });
       return respond({
         ok: failures.length === 0,
         campaign_id: campaignId,

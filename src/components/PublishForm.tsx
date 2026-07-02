@@ -112,6 +112,20 @@ const PRESETS = [
     not_implemented: false,
   },
   {
+    id: "fase2-polones-adaptado",
+    label: "FASE 2 - POLONÊS ADAPTADO",
+    objective: "OUTCOME_ENGAGEMENT",
+    optimization_goal: "THRUPLAY",
+    billing_event: "IMPRESSIONS",
+    bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+    destination_type: "ON_VIDEO",
+    default_cta: "NO_BUTTON",
+    status: "PAUSED",
+    fase: "FASE 2",
+    requires_whatsapp: false,
+    not_implemented: false,
+  },
+  {
     id: "fase3-br",
     label: "FASE 3 - LEADS | ZAP",
     objective: "OUTCOME_LEADS",
@@ -964,6 +978,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const isFase3Lp = selectedPreset.destination_type === "WEBSITE";
   const isFase3VendasZap = selectedPreset.id === "fase3-vendas-zap";
   const isFase2 = selectedPreset.fase === "FASE 2";
+  const isFase2Adaptado = selectedPreset.id === "fase2-polones-adaptado";
   const selectedWhatsapp = whatsappNumbers.find(n => n.id === selectedWhatsappId);
 
   // FASE 2 — usa nomes das audiences selecionadas no nome da campanha
@@ -977,10 +992,13 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           ? `${fase2AudienceNamesList[0]} +${fase2AudienceNamesList.length - 1}`
           : "Multi")
     : (isFase3Lp && ltAdvantage ? "Advantage+" : selectedAudienceName);
+  // Adaptado leva "ADAPTADO" no nome pra diferenciar do Completo no Gerenciador — mesmos
+  // 2 públicos dariam nome idêntico senão (só a estrutura interna difere: 1 conjunto combinado vs N).
+  const fase2NamingLabel = isFase2Adaptado ? "FASE 2 ADAPTADO" : selectedPreset.fase;
   const computedCampaignName = campaignStructure === "new" && budget && (isFase3Lp ? campaignNameInput : (namingPublicName || isFase2))
     ? (isFase3Lp
         ? generateLtCampaignName({ productName: campaignNameInput, presetLabel: selectedPreset.label, structure: distributionStructure })
-        : generateCampaignName({ presetLabel: selectedPreset.fase, publicName: namingPublicName || "Multi", budget: Number(budget), campaignName: campaignNameInput }))
+        : generateCampaignName({ presetLabel: isFase2 ? fase2NamingLabel : selectedPreset.fase, publicName: namingPublicName || "Multi", budget: Number(budget), campaignName: campaignNameInput }))
     : null;
   const computedAdsetName = adsetNameInput && (namingPublicName || isFase2)
     ? (isFase2
@@ -1011,7 +1029,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
   // Structure descriptions
   const structureDescription = isFase2
-    ? `1 Campanha → ${fase2Audiences.length || "N"} Conjunto(s) → 1 Ad/conjunto (criativo compartilhado)`
+    ? isFase2Adaptado
+      ? `1 Campanha → 1 Conjunto (2 públicos combinados) → 1 Anúncio (criativo compartilhado)`
+      : `1 Campanha → ${fase2Audiences.length || "N"} Conjunto(s) → 1 Ad/conjunto (criativo compartilhado)`
     : distributionStructure === "CBO"
       ? `1 Campanha → 1 Conjunto → ${creatives.length} Anúncio(s)`
       : `1 Campanha → ${creatives.length} Conjunto(s) → 1 Anúncio/conjunto`;
@@ -1057,8 +1077,12 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const fase2Validate = (): { valid: boolean; errors: string[] } => {
     if (!isFase2) return { valid: true, errors: [] };
     const errors: string[] = [];
-    if (fase2Audiences.length < 2) errors.push("FASE 2 requer no mínimo 2 públicos selecionados.");
-    if (fase2Audiences.length > 10) errors.push("FASE 2 aceita no máximo 10 públicos.");
+    if (isFase2Adaptado) {
+      if (fase2Audiences.length !== 2) errors.push("FASE 2 ADAPTADO requer exatamente 2 públicos selecionados.");
+    } else {
+      if (fase2Audiences.length < 2) errors.push("FASE 2 requer no mínimo 2 públicos selecionados.");
+      if (fase2Audiences.length > 10) errors.push("FASE 2 aceita no máximo 10 públicos.");
+    }
     if (creatives.length !== 1) errors.push("FASE 2 exige exatamente 1 criativo (vídeo).");
     return { valid: errors.length === 0, errors };
   };
@@ -1204,7 +1228,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     checks.push({ label: "Access Token", ok: !!accessToken, detail: accessToken ? "presente" : "ausente" });
     checks.push({ label: "Conta de Anúncios", ok: !!selectedAccount, detail: selectedAccount || "ausente" });
     if (isFase2) {
-      checks.push({ label: "Públicos (FASE 2)", ok: fase2Audiences.length >= 2 && fase2Audiences.length <= 10, detail: `${fase2Audiences.length} público(s) selecionado(s)` });
+      const audOk = isFase2Adaptado ? fase2Audiences.length === 2 : (fase2Audiences.length >= 2 && fase2Audiences.length <= 10);
+      checks.push({ label: isFase2Adaptado ? "Públicos (ADAPTADO)" : "Públicos (FASE 2)", ok: audOk, detail: `${fase2Audiences.length} público(s) selecionado(s)` });
     } else if (isFase3Lp && ltAdvantage) {
       checks.push({ label: "Público", ok: true, detail: "Advantage+ (Meta define automaticamente)" });
     } else {
@@ -1321,6 +1346,10 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         fase2_age_min: isFase2 ? Number(fase2AgeMin) || 18 : undefined,
         fase2_age_max: isFase2 ? Number(fase2AgeMax) || 65 : undefined,
         fase2_genders: isFase2 ? (fase2Gender === "male" ? [1] : fase2Gender === "female" ? [2] : []) : undefined,
+        // ADAPTADO: 1 conjunto com os 2 públicos combinados (em vez de N conjuntos, 1 por público).
+        // preset.objective/optimization_goal/etc são idênticos ao Completo — sem esta flag o backend
+        // não tem como distinguir os dois presets.
+        fase2_combined_adset: isFase2 ? isFase2Adaptado : undefined,
         lt_advantage: isFase3Lp ? ltAdvantage : undefined,
         schedule,
         utm_template: utmTemplate.trim() || UTM_DEFAULT,
@@ -1979,12 +2008,18 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           <Card className="glass-card p-6 space-y-4">
             <Label className="font-display font-semibold text-sm">
               {isFase2
-                ? `Públicos (FASE 2: ${fase2Audiences.length}/10) ${audiences.length > 0 ? `— ${audiences.length} disponíveis` : ""}`
+                ? isFase2Adaptado
+                  ? `Públicos (ADAPTADO: ${fase2Audiences.length}/2) ${audiences.length > 0 ? `— ${audiences.length} disponíveis` : ""}`
+                  : `Públicos (FASE 2: ${fase2Audiences.length}/10) ${audiences.length > 0 ? `— ${audiences.length} disponíveis` : ""}`
                 : `Público ${audiences.length > 0 ? `(${audiences.length})` : ""}`}
             </Label>
             {loadingAudiences ? (
               <div className="space-y-2">
-                <p className="text-xs text-muted-foreground">Selecione 2 a 10 públicos. Cada um vira um conjunto separado, todos com o mesmo criativo.</p>
+                <p className="text-xs text-muted-foreground">
+                  {isFase2Adaptado
+                    ? "Selecione exatamente 2 públicos — serão combinados em 1 único conjunto (mesmo criativo)."
+                    : "Selecione 2 a 10 públicos. Cada um vira um conjunto separado, todos com o mesmo criativo."}
+                </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {[...Array(4)].map((_, i) => (
                     <div key={i} className="flex items-center gap-2 px-2 py-1.5">
@@ -1997,7 +2032,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
             ) : audiences.length > 0 ? (
               isFase2 ? (
                 <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground">Selecione 2 a 10 públicos. Cada um vira um conjunto separado, todos com o mesmo criativo.</p>
+                  <p className="text-xs text-muted-foreground">
+                  {isFase2Adaptado
+                    ? "Selecione exatamente 2 públicos — serão combinados em 1 único conjunto (mesmo criativo)."
+                    : "Selecione 2 a 10 públicos. Cada um vira um conjunto separado, todos com o mesmo criativo."}
+                </p>
                   <div className="relative">
                     <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                     <Input
@@ -2014,7 +2053,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                       if (list.length === 0) return <p className="text-xs text-muted-foreground col-span-full text-center py-2">Nenhum público encontrado</p>;
                       return list.map((aud) => {
                       const checked = fase2Audiences.includes(aud.id);
-                      const disabled = !checked && fase2Audiences.length >= 10;
+                      const cap = isFase2Adaptado ? 2 : 10;
+                      const disabled = !checked && fase2Audiences.length >= cap;
                       return (
                         <label key={aud.id} className={`flex items-center gap-2 px-2 py-1.5 rounded border transition-colors ${checked ? "bg-primary/20 border-primary/70 font-semibold shadow-sm ring-1 ring-primary/30" : "border-border"} ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-muted/50 focus-within:ring-2 focus-within:ring-primary/40"}`}>
                           <input
@@ -2034,7 +2074,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                     })()}
                   </div>
                   {fase2Audiences.length > 0 && fase2Audiences.length < 2 && (
-                    <p className="text-[10px] text-warning">FASE 2 requer no mínimo 2 públicos.</p>
+                    <p className="text-[10px] text-warning">{isFase2Adaptado ? "ADAPTADO requer exatamente 2 públicos." : "FASE 2 requer no mínimo 2 públicos."}</p>
                   )}
 
                   {/* Segmentação manual: idade + gênero (sem sugestão automática) */}
