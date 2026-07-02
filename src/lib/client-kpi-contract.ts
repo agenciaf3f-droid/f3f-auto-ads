@@ -11,7 +11,15 @@ export type ClientKpiConfig = {
   clientId: string;
   clientName: string;
   adAccountId: string;
-  kpi: { metric: string; operator: ">" | "<"; value: number; presetBucket: PresetBucket }[];
+  kpi: {
+    metric: string;
+    operator: ">" | "<";
+    value: number;
+    presetBucket: PresetBucket;
+    // Só populado (e relevante) pra presetBucket "L.T" — nome do produto salvo na regra,
+    // usado por compareKpis pra restringir o match a campanhas desse produto específico.
+    campaignNameFilter: string | null;
+  }[];
 };
 
 export async function fetchClientKpiConfigs(): Promise<ClientKpiConfig[]> {
@@ -46,6 +54,7 @@ export async function fetchClientKpiConfigs(): Promise<ClientKpiConfig[]> {
         operator: r.comparator,
         value: r.threshold_value,
         presetBucket: r.preset_bucket as PresetBucket,
+        campaignNameFilter: r.campaign_name_filter,
       })),
     });
   }
