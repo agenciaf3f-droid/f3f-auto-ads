@@ -17,6 +17,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { fetchMetaStatus, fetchCampaigns, fetchCampaignInsights, pauseCampaign } from "@/lib/meta-api";
 import { fetchClientKpiConfigs } from "@/lib/client-kpi-contract";
 import { compareKpis, type OptimizationViolation } from "@/lib/optimization-engine";
+import { getMetricDef } from "@/lib/meta-insights";
 
 export default function OtimizacoesPage() {
   const { toast } = useToast();
@@ -167,7 +168,8 @@ export default function OtimizacoesPage() {
             </CardHeader>
             <CardContent>
               <p className="text-sm mb-4">
-                O KPI <strong>{v.metric}</strong> está em <strong>{v.actual.toFixed(2)}</strong> —{" "}
+                O KPI <strong>{getMetricDef(v.metric)?.label ?? v.metric}</strong> está em{" "}
+                <strong>{v.actual.toFixed(2)}</strong> —{" "}
                 {v.operator === ">" ? "acima" : "abaixo"} do limite de <strong>{v.limit}</strong>{" "}
                 definido para este cliente. Essa campanha está performando fora do esperado.
               </p>

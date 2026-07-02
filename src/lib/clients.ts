@@ -107,6 +107,14 @@ export async function listClientKpiRules(clientAdAccountId: string): Promise<Cli
   return (data || []) as ClientKpiRule[];
 }
 
+// Busca todas as regras do usuário de uma vez (RLS já escopa por auth.uid()) — usado pela
+// aba Otimizações para montar configs sem N+1 query por conta.
+export async function listAllClientKpiRules(): Promise<ClientKpiRule[]> {
+  const { data, error } = await supabase.from("client_kpi_rules").select("*");
+  if (error) throw new Error(error.message);
+  return (data || []) as ClientKpiRule[];
+}
+
 export interface UpsertKpiRuleInput {
   client_ad_account_id: string;
   preset_bucket: string;
