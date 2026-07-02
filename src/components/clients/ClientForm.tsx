@@ -5,7 +5,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { fetchAdAccounts } from "@/lib/meta-api";
@@ -144,7 +143,7 @@ export default function ClientForm({
             ) : accounts.length === 0 ? (
               <p className="text-sm text-muted-foreground">Nenhuma conta encontrada.</p>
             ) : (
-              <ScrollArea className="h-48 rounded-md border p-2">
+              <div className="h-48 overflow-y-auto rounded-md border p-2">
                 <div className="space-y-1">
                   {accounts.map((acc) => {
                     const badge = statusLabel(acc.account_status);
@@ -158,7 +157,7 @@ export default function ClientForm({
                     );
                   })}
                 </div>
-              </ScrollArea>
+              </div>
             )}
           </div>
         </div>
