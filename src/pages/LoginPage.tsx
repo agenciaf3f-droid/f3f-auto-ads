@@ -58,9 +58,9 @@ export default function LoginPage() {
       <div className="relative md:w-[52%] bg-zinc-950 flex-col justify-between p-8 md:p-12 hidden md:flex md:min-h-[100dvh] overflow-hidden">
 
         <div
-          className="absolute inset-0 opacity-[0.035] pointer-events-none"
+          className="absolute inset-0 opacity-[0.14] pointer-events-none"
           style={{
-            backgroundImage: "radial-gradient(circle at 30% 20%, hsl(160 84% 44%) 0%, transparent 60%), radial-gradient(circle at 80% 80%, hsl(35 95% 55%) 0%, transparent 55%)",
+            backgroundImage: "radial-gradient(circle at 25% 15%, hsl(271 91% 60%) 0%, transparent 55%), radial-gradient(circle at 85% 85%, hsl(288 85% 55%) 0%, transparent 55%)",
           }}
         />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_rgba(255,255,255,0.03)_0%,_transparent_50%)] pointer-events-none" />
