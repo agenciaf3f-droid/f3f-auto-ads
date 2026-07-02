@@ -175,6 +175,50 @@ const UTM_DEFAULT = "utm_source=FB&utm_campaign={{campaign.name}}|{{campaign.id}
 let creativeCounter = 0;
 function nextCreativeId() { return `cr_${++creativeCounter}_${Date.now()}`; }
 
+// ── Orquestração paralela de publish ──
+const PUBLISH_CONCURRENCY = 3;              // quantos criativos sobem em paralelo (balance velocidade x rate limit da Meta)
+const PUBLISH_BACKOFF = [3000, 8000, 20000]; // backoff (ms) de retry só p/ erro transiente {1,2}/transporte
+const RATE_LIMIT_CODES = new Set([4, 17, 32, 341, 613]); // rate-limit da Meta: falha rápido (decai em ~15min), não martela
+const FAST_RETRY_CODES = new Set([1, 2]);   // transiente curto: vale re-tentar com backoff
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Pool de concorrência: no máx `limit` workers simultâneos consumindo `items` (cursor síncrono = atômico no event loop).
+async function runPool<T>(items: T[], limit: number, worker: (item: T) => Promise<void>, staggerMs = 0): Promise<void> {
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async (_unused, runnerIdx) => {
+    // Escalona a largada dos workers (runner n espera n*staggerMs) pra 1ª onda não disparar
+    // K uploads simultâneos em t=0 — reduz o pico de writes que dispara rate limit.
+    if (staggerMs && runnerIdx > 0) await sleep(runnerIdx * staggerMs);
+    while (cursor < items.length) {
+      const k = cursor++;
+      await worker(items[k]);
+    }
+  });
+  await Promise.all(runners);
+}
+
+// Código Meta do erro: preferir estruturado (error_code, vem da edge), senão raspar "code=NNN" de reason/msg.
+function metaErrorCode(r: unknown): number | null {
+  const o = r as Record<string, unknown> | null;
+  if (o && typeof o.error_code === "number") return o.error_code;
+  const hay = `${(o?.error_message as string) ?? ""} ${(o?.error as string) ?? ""} ${o?.failures ? JSON.stringify(o.failures) : ""}`;
+  const m = hay.match(/\bcode=(\d+)\b/);
+  return m ? Number(m[1]) : null;
+}
+
+// Classe de retry: "rate_limit" (falha rápido, não martela), "fast" (backoff), "none".
+function classifyRetry(r: unknown, threw: boolean): "rate_limit" | "fast" | "none" {
+  if (threw) return "fast";
+  const o = r as Record<string, unknown> | null;
+  const c = metaErrorCode(r);
+  if (c != null && RATE_LIMIT_CODES.has(c)) return "rate_limit";
+  if (c != null && FAST_RETRY_CODES.has(c)) return "fast";
+  // is_transient sem código legível pode ser rate-limit — falha rápido (viés seguro p/ a conta), não martela.
+  if (o?.is_transient === true) return "rate_limit";
+  return "none";
+}
+
 // Logs vivem aqui (estado próprio) para que addLog NÃO re-renderize o form gigante.
 // Durante validate/publish o storm de logs antes derrubava o frame rate (spinner
 // "travava"); agora só este painel pequeno re-renderiza.
@@ -1368,7 +1412,32 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           return publishAd({ ...vp, creatives: [c], creative_link: c.link, creative_type: c.type, creative_name: c.name, ad_name: c.name, ...extra });
         };
 
-        addLog(`🚀 [publish] Orquestrando ${total} criativos (1 por chamada — evita timeout/OOM da edge)`);
+        addLog(`🚀 [publish] Orquestrando ${total} criativos (${PUBLISH_CONCURRENCY} em paralelo, auto-retry em transiente — evita timeout/OOM da edge)`);
+
+        // Retry: transiente {1,2}/transporte → backoff; rate-limit {4,17,32,341,613} → falha
+        // rápido e aciona rateLimitTripped (o pool para de despachar). NUNCA lança (transporte
+        // vira ri._transport). warning/idempotency nunca re-tenta. Usado pela 1ª chamada e pelo pool.
+        let rateLimitTripped = false;
+        const publishWithRetry = async (thunk: () => Promise<any>, label: string, canTrip: boolean): Promise<any> => {
+          let attempt = 0;
+          for (;;) {
+            let ri: any, threw = false;
+            try { ri = await thunk(); }
+            catch (e) { threw = true; ri = { ok: false, _transport: true, error_message: e instanceof Error ? e.message : "erro de transporte" }; }
+            if (ri?.ok) return ri;
+            if (ri?.warning || ri?.step === "idempotency") return ri;
+            const cls = classifyRetry(ri, threw);
+            if (cls === "rate_limit") { if (canTrip) rateLimitTripped = true; return ri; }
+            if (cls === "fast" && attempt < PUBLISH_BACKOFF.length) {
+              const wait = PUBLISH_BACKOFF[attempt] + Math.floor(Math.random() * 800);
+              addLog(`⏳ [publish] ${label} transiente — retry em ${Math.round(wait / 1000)}s`);
+              attempt++;
+              await sleep(wait);
+              continue;
+            }
+            return ri;
+          }
+        };
 
         // Retomada: se este é o mesmo payload validado de uma tentativa anterior
         // que publicou parcialmente, continua da campanha já criada em vez de
@@ -1396,7 +1465,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           addLog(`📦 [publish] 1/${total} — "${allCreatives[0].name}"`);
           let r1;
           try {
-            r1 = await callFor(0, {});
+            r1 = await publishWithRetry(() => callFor(0, {}), `1/${total}`, false);
           } catch (e) {
             const msg = e instanceof Error ? e.message : "erro";
             addLog(`❌ 1/${total} falhou (campanha não criada): ${msg}`);
@@ -1439,35 +1508,34 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           addLog(`✅ 1/${total} ok — campanha ${campaignId}`);
         }
 
-        // Chamadas restantes — reusa campanha; CBO reusa adset, ABO ignora (cria novo)
+        // Chamadas restantes — reusa campanha; CBO reusa adset, ABO ignora (cria novo).
+        // Rodam em PARALELO (pool de PUBLISH_CONCURRENCY) pra sobrepor a espera de vídeo de
+        // cada chamada. A 1ª chamada já criou campanha+adset → sem race de criação.
         const failNames: string[] = [];
         const creativeErrors: { name: string; error: string }[] = [];
         const stillPending: number[] = [];
-        for (const i of pending) {
+        await runPool(pending, PUBLISH_CONCURRENCY, async (i) => {
+          if (rateLimitTripped) { stillPending.push(i); return; }
           addLog(`📦 [publish] ${i + 1}/${total} — "${allCreatives[i].name}"`);
-          try {
-            const ri = await callFor(i, { existing_campaign_id: campaignId, existing_adset_id: firstAdsetId });
-            if (ri?.ok) {
-              okNames.push(allCreatives[i].name);
-              adsetsCreated += ri.adsets_created ?? 0;
-              adsCreated += ri.ads_created ?? 0;
-              addLog(`✅ ${i + 1}/${total} ok`);
-            } else {
-              const errMsg = ri?.error_user_msg || ri?.error_message || ri?.error || "erro desconhecido";
-              failNames.push(allCreatives[i].name);
-              creativeErrors.push({ name: allCreatives[i].name, error: errMsg });
-              stillPending.push(i);
-              if (ri?.logs) for (const l of ri.logs) addLog(`  [${l.step}] ${l.status}${l.detail ? ` — ${l.detail}` : ""}`);
-              addLog(`❌ ${i + 1}/${total} falhou: ${errMsg}`);
-            }
-          } catch (e) {
-            const errMsg = e instanceof Error ? e.message : "erro de transporte";
+          const ri = await publishWithRetry(
+            () => callFor(i, { existing_campaign_id: campaignId, existing_adset_id: firstAdsetId }),
+            `${i + 1}/${total}`, true,
+          );
+          if (ri?.ok) {
+            okNames.push(allCreatives[i].name);
+            adsetsCreated += ri.adsets_created ?? 0;
+            adsCreated += ri.ads_created ?? 0;
+            addLog(`✅ ${i + 1}/${total} ok`);
+          } else {
+            const errMsg = ri?.error_user_msg || ri?.error_message || ri?.error || "erro desconhecido";
             failNames.push(allCreatives[i].name);
             creativeErrors.push({ name: allCreatives[i].name, error: errMsg });
             stillPending.push(i);
-            addLog(`❌ ${i + 1}/${total} falhou (transporte): ${errMsg}`);
+            if (ri?.logs) for (const l of ri.logs) addLog(`  [${l.step}] ${l.status}${l.detail ? ` — ${l.detail}` : ""}`);
+            addLog(`❌ ${i + 1}/${total} falhou: ${errMsg}`);
           }
-        }
+        }, 400);
+        if (rateLimitTripped) addLog(`🛑 [publish] Rate limit da Meta — parei de despachar. Aguarde ~15 min e clique Publicar pra retomar os pendentes.`);
 
         const allOk = stillPending.length === 0;
         if (allOk) {

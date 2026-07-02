@@ -38,6 +38,12 @@ function formatMetaError(err: any) {
   };
 }
 
+// Erro Meta transiente/rate-limit (module scope — o `isTransient` de runFase3SanityChecks é local).
+// Códigos: 1/2 transiente curto, 4/17/32/341/613 rate-limit. O frontend usa isto pra decidir retry.
+const TRANSIENT_META_CODES = [1, 2, 4, 17, 32, 341, 613];
+const isTransientMeta = (err: any) =>
+  !!err && (err.is_transient === true || TRANSIENT_META_CODES.includes(Number(err?.code)));
+
 function normalizeForHash(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((item) => normalizeForHash(item));
   if (value && typeof value === "object") {
@@ -1930,6 +1936,9 @@ Deno.serve(async (req) => {
     // Primeiro erro de adset (objeto Meta completo) — surfaced no topo da resposta
     // pra o card de erro do frontend mostrar o motivo real, não só "verifique os logs".
     let firstAdsetError: any = null;
+    // 1º erro Meta de creative/ad — no fluxo CBO/paralelo o adset dá certo/reusado e a falha
+    // vem daqui; sem isto o error_code/is_transient não chega ao frontend (só string em reason).
+    let firstMetaError: any = null;
     const adsetRetryBackoffMs = [2000, 6000, 15000];
     const maxAdsetAttempts = 3;
     const adsetDedupeWindowMinutes = 10;
@@ -1950,6 +1959,7 @@ Deno.serve(async (req) => {
         const errDetail = `${creativeData.error.message} | code=${creativeData.error.code} | subcode=${creativeData.error.error_subcode} | user_title=${creativeData.error.error_user_title || ""} | user_msg=${creativeData.error.error_user_msg || ""}`;
         logs.push({ step: `creative_${idx}`, status: "error", ts: ts(), detail: `${errDetail} | payload=${JSON.stringify(sanitizePayload(creativePayload))}` });
         failures.push({ index: idx, name: cr.name, step: "creative", reason: errDetail });
+        if (!firstMetaError) firstMetaError = creativeData.error;
         return false;
       }
 
@@ -1986,6 +1996,7 @@ Deno.serve(async (req) => {
         console.log(`[ad_${idx}] full_error: ${fullError}`);
         logs.push({ step: `ad_${idx}`, status: "error", ts: ts(), detail: errDetail });
         failures.push({ index: idx, name: cr.name, step: "ad", reason: errDetail });
+        if (!firstMetaError) firstMetaError = e;
         return false;
       }
       adIds.push(adData.id);
@@ -2504,13 +2515,16 @@ Deno.serve(async (req) => {
     }
 
     if (adsCreated === 0) {
+      // adset OU creative/ad — o que falhou primeiro (CBO/paralelo falha em creative/ad).
+      const firstErr = firstAdsetError || firstMetaError;
       return respond({
         ok: false, step: "publish", campaign_id: campaignId,
         error_message: `Nenhum anúncio criado (${failures.length} falha(s)). ${adsetsCreated} adset(s), ${creativesCreated} creative(s).`,
-        error_user_title: firstAdsetError?.error_user_title || undefined,
-        error_user_msg: firstAdsetError?.error_user_msg || undefined,
-        error_code: firstAdsetError?.code ?? undefined,
-        error_subcode: firstAdsetError?.error_subcode ?? undefined,
+        error_user_title: firstErr?.error_user_title || undefined,
+        error_user_msg: firstErr?.error_user_msg || undefined,
+        error_code: firstErr?.code ?? undefined,
+        error_subcode: firstErr?.error_subcode ?? undefined,
+        is_transient: isTransientMeta(firstErr),
         adsets_created: adsetsCreated, ads_created: 0, failures,
       });
     }
