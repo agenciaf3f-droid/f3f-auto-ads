@@ -99,7 +99,7 @@ const PRESETS = [
   },
   {
     id: "fase2-publico-completo",
-    label: "FASE 2 - PÚBLICO COMPLETO",
+    label: "FASE 2 - POLONÊS COMPLETO",
     objective: "OUTCOME_ENGAGEMENT",
     optimization_goal: "THRUPLAY",
     billing_event: "IMPRESSIONS",
