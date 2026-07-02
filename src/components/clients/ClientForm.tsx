@@ -129,7 +129,7 @@ export default function ClientForm({
           <DialogTitle>{isEdit ? "Editar cliente" : "Novo cliente"}</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="space-y-4 min-w-0">
           <div className="space-y-1.5">
             <Label htmlFor="client-name">Nome</Label>
             <Input id="client-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Loja do João" />
