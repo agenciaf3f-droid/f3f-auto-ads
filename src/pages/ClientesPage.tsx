@@ -111,6 +111,8 @@ export default function ClientesPage() {
         onSaved={load}
         accessToken={token}
         client={editing}
+        clients={clients}
+        linksByClient={linksByClient}
       />
 
       <Dialog open={!!detail} onOpenChange={(o) => !o && setDetail(null)}>

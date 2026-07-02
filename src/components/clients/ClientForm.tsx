@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,14 +7,17 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { fetchAdAccounts } from "@/lib/meta-api";
 import {
   createClient,
   updateClient,
+  deleteClient,
   linkAdAccount,
   unlinkAdAccount,
   listClientAdAccounts,
   type Client,
+  type ClientAdAccount,
 } from "@/lib/clients";
 
 interface AdAccount {
@@ -33,12 +36,16 @@ export default function ClientForm({
   onSaved,
   accessToken,
   client,
+  clients,
+  linksByClient,
 }: {
   open: boolean;
   onClose: () => void;
   onSaved: () => void;
   accessToken?: string;
   client?: Client | null;
+  clients: Client[];
+  linksByClient: Record<string, ClientAdAccount[]>;
 }) {
   const isEdit = !!client;
   const [name, setName] = useState("");
@@ -71,7 +78,22 @@ export default function ClientForm({
       .finally(() => setLoadingAccounts(false));
   }, [open, accessToken]);
 
+  // Contas já vinculadas a OUTROS clientes do gestor (UNIQUE(user_id, ad_account_id) no banco —
+  // uma conta só pode pertencer a 1 cliente). Exclui os links do próprio cliente em edição.
+  const accountOwner = useMemo(() => {
+    const map = new Map<string, { clientId: string; clientName: string }>();
+    for (const [clientId, links] of Object.entries(linksByClient)) {
+      if (isEdit && client && clientId === client.id) continue;
+      const owner = clients.find((c) => c.id === clientId);
+      for (const link of links) {
+        map.set(link.ad_account_id, { clientId, clientName: owner?.name || "outro cliente" });
+      }
+    }
+    return map;
+  }, [linksByClient, clients, isEdit, client]);
+
   const toggle = (id: string) => {
+    if (accountOwner.has(id)) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -83,6 +105,12 @@ export default function ClientForm({
   const handleSave = async () => {
     if (!name.trim()) {
       toast.error("Nome do cliente é obrigatório");
+      return;
+    }
+    const conflicts = [...selected].filter((id) => accountOwner.has(id));
+    if (conflicts.length > 0) {
+      const names = conflicts.map((id) => accounts.find((a) => a.id === id)?.name || id).join(", ");
+      toast.error(`Remova as contas já vinculadas a outro cliente antes de salvar: ${names}`);
       return;
     }
     setSaving(true);
@@ -102,9 +130,17 @@ export default function ClientForm({
         }
         toast.success("Cliente atualizado");
       } else {
+        // Cria o cliente só depois de validar os conflitos acima. Se mesmo assim o link falhar
+        // (corrida entre abas), desfaz o cliente recém-criado para não sobrar linha órfã que
+        // duplicaria num retry.
         const created = await createClient(name.trim(), notes.trim() || undefined);
-        for (const id of selected) {
-          await linkAdAccount(created.id, id, nameById.get(id) || null);
+        try {
+          for (const id of selected) {
+            await linkAdAccount(created.id, id, nameById.get(id) || null);
+          }
+        } catch (linkErr) {
+          await deleteClient(created.id).catch(() => {});
+          throw linkErr;
         }
         toast.success("Cliente criado");
       }
@@ -164,12 +200,29 @@ export default function ClientForm({
                     <div className="space-y-1">
                       {filteredAccounts.map((acc) => {
                         const badge = statusLabel(acc.account_status);
+                        const conflict = accountOwner.get(acc.id);
                         return (
-                          <label key={acc.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent-soft transition-colors cursor-pointer">
-                            <Checkbox className="shrink-0" checked={selected.has(acc.id)} onCheckedChange={() => toggle(acc.id)} />
+                          <label
+                            key={acc.id}
+                            className={cn(
+                              "flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors",
+                              conflict ? "opacity-60 cursor-not-allowed" : "hover:bg-accent-soft cursor-pointer",
+                            )}
+                          >
+                            <Checkbox
+                              className="shrink-0"
+                              checked={selected.has(acc.id)}
+                              disabled={!!conflict}
+                              onCheckedChange={() => toggle(acc.id)}
+                            />
                             <span className="text-sm flex-1 min-w-0 truncate">{acc.name}</span>
                             {acc.currency && <Badge variant="outline" className="text-[10px] shrink-0">{acc.currency}</Badge>}
                             {badge && <Badge variant="destructive" className="text-[10px] shrink-0">{badge}</Badge>}
+                            {conflict && (
+                              <Badge variant="destructive" className="text-[10px] shrink-0">
+                                Vinculada a {conflict.clientName}
+                              </Badge>
+                            )}
                           </label>
                         );
                       })}

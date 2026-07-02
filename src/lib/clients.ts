@@ -88,7 +88,12 @@ export async function linkAdAccount(
     .insert({ user_id, client_id: clientId, ad_account_id: adAccountId, ad_account_name: adAccountName || null })
     .select()
     .single();
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (error.code === "23505") {
+      throw new Error("Essa conta de anúncio já está vinculada a outro cliente.");
+    }
+    throw new Error(error.message);
+  }
   return data as ClientAdAccount;
 }
 
