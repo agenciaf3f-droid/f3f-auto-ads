@@ -105,10 +105,17 @@ export interface MetricDef {
   compute: (agg: AggregatedBucket) => number | null;
 }
 
-// action_type candidatos — NÃO confirmados contra payload real ainda.
+// action_type candidato — NÃO confirmado contra payload real ainda.
 export const PENDING_ACTION_TYPES = {
   whatsappConversation: "onsite_conversion.messaging_conversation_started_7d",
-  purchase: "offsite_conversion.fb_pixel_purchase",
+} as const;
+
+// action_type confirmado contra o catálogo oficial de campos da Meta (ads_get_field_context):
+// "actions:omni_purchase" é o tipo unificado de compra retornado pela Graph API atual.
+// "offsite_conversion.fb_pixel_purchase" (usado antes) é o tipo legado do Pixel antigo e
+// não aparece mais no catálogo — trocado.
+export const CONFIRMED_ACTION_TYPES = {
+  purchase: "omni_purchase",
 } as const;
 
 export const METRIC_REGISTRY: MetricDef[] = [
@@ -154,9 +161,9 @@ export const METRIC_REGISTRY: MetricDef[] = [
     key: "cost_per_purchase",
     label: "Custo por venda",
     unit: "currency",
-    verified: false,
+    verified: true,
     compute: (a) => {
-      const c = a.actionCounts[PENDING_ACTION_TYPES.purchase] || 0;
+      const c = a.actionCounts[CONFIRMED_ACTION_TYPES.purchase] || 0;
       return c > 0 ? a.spend / c : null;
     },
   },

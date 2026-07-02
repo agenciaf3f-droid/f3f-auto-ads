@@ -10,7 +10,7 @@ const TRANSIENT_META_CODES = [1, 2, 4, 17, 32, 341, 613];
 const isTransientMeta = (err: any) =>
   !!err && (err.is_transient === true || TRANSIENT_META_CODES.includes(Number(err?.code)));
 
-const INSIGHTS_FIELDS = "spend,cpm,ctr,cpc,cpp,actions,cost_per_action_type,frequency";
+const INSIGHTS_FIELDS = "spend,impressions,clicks,cpm,ctr,cpc,cpp,actions,cost_per_action_type,frequency";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
