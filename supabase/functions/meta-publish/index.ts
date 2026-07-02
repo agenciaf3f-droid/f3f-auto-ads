@@ -712,20 +712,51 @@ function blobToBase64(blob: Blob): Promise<string> {
 }
 
 // Vídeo recém-upado exige thumbnail (image_url/image_hash) no video_data, senão a Meta dá
-// erro 100/1443226 "anúncio precisa de miniatura de vídeo". O campo `picture` fica pronto
-// ANTES de `thumbnails.data` no pipeline da Meta, mas é minúsculo (~160x160 — aparece
-// cinza/borrado esticado no Gerenciador). `thumbnails.data` traz resolução cheia (ex:
-// 2160x3840) mas demora mais. Estratégia: assim que `picture` aparece, dá uma JANELA DE
-// GRAÇA curta (~32s) esperando o thumbnail bom aparecer; se não vier nesse prazo, aceita
-// o picture pequeno em vez de continuar até os 120s — vídeo grande/lento pode nunca gerar
-// thumbnails.data dentro da janela total, e aí o publish falhava por inteiro (regressão de
-// uma tentativa anterior que esperava os 120s inteiros sem fallback limitado). Se picture
-// TAMBÉM nunca aparecer, continua tentando até o fim (só então falha de verdade).
+// erro 100/1443226 "anúncio precisa de miniatura de vídeo". Sobe a imagem (bytes já em mãos
+// via fetch) como adimage — image_hash é mais estável que image_url de CDN externa.
+async function uploadThumbnailAsAdimage(
+  imageResponse: Response,
+  accessToken: string,
+  adAccountId: string,
+): Promise<Record<string, string> | null> {
+  try {
+    const b64 = await blobToBase64(await imageResponse.blob());
+    const form = new FormData();
+    form.append("access_token", accessToken);
+    form.append("filename", "video_thumb.jpg");
+    form.append("bytes", b64);
+    const up = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/adimages`, { method: "POST", body: form });
+    const upd = await up.json();
+    if (upd?.images) { const k = Object.keys(upd.images)[0]; return { image_hash: upd.images[k].hash }; }
+  } catch { /* cai pro fallback do chamador */ }
+  return null;
+}
+
+// Depender do pipeline assíncrono de thumbnail da Meta é corrida contra tempo que ela não
+// garante terminar (vídeo longo/lento pode nunca gerar `picture`/`thumbnails.data` dentro do
+// budget, e aí o publish falhava por inteiro). Pra vídeo de origem Drive, pega a miniatura
+// direto do Drive (gerada no upload, sem relação com o processamento da Meta) via endpoint
+// nativo `drive.google.com/thumbnail` — não precisa de OAuth/API key (arquivo já é público
+// por requisito do produto). Só cai pro polling da Meta se isso falhar por qualquer motivo.
 async function resolveVideoThumbnailField(
   videoId: string,
   accessToken: string,
   adAccountId: string,
+  driveLink?: string,
 ): Promise<Record<string, string>> {
+  if (driveLink) {
+    try {
+      const fileId = extractDriveFileId(driveLink);
+      if (fileId) {
+        const tr = await fetch(`https://drive.google.com/thumbnail?id=${fileId}&sz=w1280`);
+        if (tr.ok && (tr.headers.get("content-type") || "").startsWith("image/")) {
+          const uploaded = await uploadThumbnailAsAdimage(tr, accessToken, adAccountId);
+          if (uploaded) return uploaded;
+        }
+      }
+    } catch { /* cai pro polling da Meta abaixo */ }
+  }
+
   let thumbUri = "";
   let pictureFallback = "";
   let attemptsSincePicture = 0;
@@ -751,20 +782,11 @@ async function resolveVideoThumbnailField(
   }
   if (!thumbUri) thumbUri = pictureFallback;
   if (!thumbUri) return {};
-  // Sobe o thumbnail como adimage (image_hash é mais estável que image_url da CDN da Meta).
-  try {
-    const tr = await fetch(thumbUri);
-    if (tr.ok) {
-      const b64 = await blobToBase64(await tr.blob());
-      const form = new FormData();
-      form.append("access_token", accessToken);
-      form.append("filename", "video_thumb.jpg");
-      form.append("bytes", b64);
-      const up = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/adimages`, { method: "POST", body: form });
-      const upd = await up.json();
-      if (upd?.images) { const k = Object.keys(upd.images)[0]; return { image_hash: upd.images[k].hash }; }
-    }
-  } catch { /* cai pro image_url */ }
+  const tr = await fetch(thumbUri);
+  if (tr.ok) {
+    const uploaded = await uploadThumbnailAsAdimage(tr, accessToken, adAccountId);
+    if (uploaded) return uploaded;
+  }
   return { image_url: thumbUri };
 }
 
@@ -871,7 +893,7 @@ async function buildFase1Creative(
 
     } else if (result.video_id) {
       // Vídeo precisa de thumbnail no video_data (senão Meta erro 100/1443226).
-      const thumbnailField = await resolveVideoThumbnailField(result.video_id, accessToken, adAccountId);
+      const thumbnailField = await resolveVideoThumbnailField(result.video_id, accessToken, adAccountId, creativeLink);
 
       const videoData: Record<string, any> = {
         video_id: result.video_id,
@@ -1009,7 +1031,7 @@ async function buildFase2Creative(
     if (!result.video_id) return { error: "FASE 2 Drive: arquivo precisa ser vídeo (não imagem)." };
 
     // Vídeo precisa de thumbnail no video_data (senão Meta erro 100/1443226).
-    const thumbnailField = await resolveVideoThumbnailField(result.video_id, accessToken, adAccountId);
+    const thumbnailField = await resolveVideoThumbnailField(result.video_id, accessToken, adAccountId, creativeLink);
 
     const videoData: Record<string, any> = {
       video_id: result.video_id,
@@ -1088,7 +1110,7 @@ async function buildFase3LpCreative(
 
     if (result.video_id) {
       // Vídeo precisa de thumbnail no video_data (senão Meta erro 100/1443226).
-      const thumbnailField = await resolveVideoThumbnailField(result.video_id, accessToken, adAccountId);
+      const thumbnailField = await resolveVideoThumbnailField(result.video_id, accessToken, adAccountId, creativeLink);
 
       const videoData: Record<string, any> = {
         video_id: result.video_id,
@@ -1180,7 +1202,7 @@ async function buildFase3Creative(
 
     } else if (result.video_id) {
       // Vídeo precisa de thumbnail no video_data (senão Meta erro 100/1443226).
-      const thumbnailField = await resolveVideoThumbnailField(result.video_id, accessToken, adAccountId);
+      const thumbnailField = await resolveVideoThumbnailField(result.video_id, accessToken, adAccountId, creativeLink);
 
       const videoData: Record<string, any> = {
         video_id: result.video_id,
