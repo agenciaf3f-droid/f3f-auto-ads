@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import Header from "@/components/Header";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, AlertCircle, Loader2, LogIn, Unplug, RefreshCw, AlertTriangle, Plug } from "lucide-react";
@@ -53,11 +52,9 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="min-h-[100dvh] bg-background">
-      <Header />
-      <main className="max-w-2xl mx-auto px-4 py-10">
+    <div className="max-w-2xl mx-auto px-4 py-10">
 
-        <div className="mb-8 fade-in-up">
+      <div className="mb-8 fade-in-up">
           <h1 className="font-display text-2xl font-bold tracking-tight mb-1.5">Configurações</h1>
           <p className="text-sm text-muted-foreground">Gerencie suas integrações e preferências</p>
         </div>
@@ -167,7 +164,6 @@ export default function SettingsPage() {
           </div>
         </div>
 
-      </main>
     </div>
   );
 }

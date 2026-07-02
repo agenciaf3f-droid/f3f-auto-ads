@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import Header from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -53,11 +52,9 @@ export default function AdminPage() {
   if (!allowed) return null;
 
   return (
-    <div className="min-h-[100dvh] bg-background">
-      <Header />
-      <main className="max-w-2xl mx-auto px-4 py-10">
+    <div className="max-w-2xl mx-auto px-4 py-10">
 
-        <div className="mb-8 fade-in-up">
+      <div className="mb-8 fade-in-up">
           <div className="flex items-center gap-2 mb-3">
             <div className="w-7 h-7 rounded-md bg-primary/10 border border-primary/20 flex items-center justify-center">
               <ShieldCheck className="w-3.5 h-3.5 text-primary" />
@@ -126,7 +123,6 @@ export default function AdminPage() {
           </p>
         </div>
 
-      </main>
     </div>
   );
 }
