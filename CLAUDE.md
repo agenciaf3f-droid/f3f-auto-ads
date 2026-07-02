@@ -162,7 +162,7 @@ npm run test       # Vitest (run único)
 npm run test:watch # Vitest watch
 ```
 
-> **Antes de commitar frontend**: rodar `npx tsc --noEmit`. O Vite build NÃO roda `tsc` — refs órfãs passam no build e crasham em runtime.
+> **Antes de commitar frontend**: rodar `npx tsc -p tsconfig.app.json`. ⚠️ `npx tsc --noEmit` (sem `-p`) é **no-op** — o `tsconfig.json` raiz tem `files: []`, então não checa nada. O Vite build também NÃO roda `tsc` — refs órfãs/erros de tipo passam no build e crasham em runtime.
 
 ## Banco de dados (Supabase)
 
