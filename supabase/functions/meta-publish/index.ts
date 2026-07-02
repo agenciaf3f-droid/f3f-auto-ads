@@ -1792,9 +1792,14 @@ Deno.serve(async (req) => {
           individual_setting: { age: 0, gender: 0 },
         };
       }
-      // Advantage+ acha o público sozinho — sem seleção manual na UI. Remove
-      // custom_audiences vazias (audience_id="" vira [{id:""}], que o Meta rejeita).
-      if (Array.isArray(lpTargeting.custom_audiences)) {
+      // Advantage+ acha o público sozinho. Enviar custom_audiences INCLUÍDO faz a Meta
+      // tratar o público como DEFINIDO e SAIR do Advantage+ (bug do "virou definição").
+      // Com Advantage+ ON: remover custom_audiences incluído por completo (exclusões,
+      // se houver, seguem válidas). Com OFF (público rígido): manter o público selecionado
+      // e só limpar entradas vazias (audience_id="" vira [{id:""}], que o Meta rejeita).
+      if (ltAdvantage) {
+        delete lpTargeting.custom_audiences;
+      } else if (Array.isArray(lpTargeting.custom_audiences)) {
         lpTargeting.custom_audiences = lpTargeting.custom_audiences.filter((a: any) => a?.id);
         if (lpTargeting.custom_audiences.length === 0) delete lpTargeting.custom_audiences;
       }
@@ -1809,6 +1814,11 @@ Deno.serve(async (req) => {
             { event_type: "ENGAGED_VIDEO_VIEW", window_days: 1 },
           ]
         : [{ event_type: "CLICK_THROUGH", window_days: 7 }];
+      // L.T (VENDAS, objective OUTCOME_SALES): modelo de atribuição INCREMENTAL. A Meta
+      // exige que, com is_incremental_attribution_enabled, NÃO se envie attribution_spec
+      // (são mutuamente exclusivos). Suportado só p/ OFFSITE_CONVERSIONS/VALUE/ROAS — L.T
+      // se enquadra. LEADS|LP (OUTCOME_LEADS) segue com attribution_spec normal.
+      const useIncrementalAttribution = preset?.objective === "OUTCOME_SALES";
       const p: Record<string, any> = {
         campaign_id: campaignId,
         name,
@@ -1820,10 +1830,14 @@ Deno.serve(async (req) => {
           pixel_id: String(pixel_id),
           custom_event_type: lpEvent,
         },
-        attribution_spec: lpAttribution,
         targeting: lpTargeting,
         access_token,
       };
+      if (useIncrementalAttribution) {
+        p.is_incremental_attribution_enabled = true;
+      } else {
+        p.attribution_spec = lpAttribution;
+      }
       applyDsa(p);
       if (structure === "ABO") {
         p.daily_budget = Math.round(Number(budget) * 100);
