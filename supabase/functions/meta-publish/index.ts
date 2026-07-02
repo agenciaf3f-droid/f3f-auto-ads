@@ -715,10 +715,12 @@ function blobToBase64(blob: Blob): Promise<string> {
 // erro 100/1443226 "anúncio precisa de miniatura de vídeo". O campo `picture` fica pronto
 // ANTES de `thumbnails.data` no pipeline da Meta, mas é minúsculo (~160x160 — aparece
 // cinza/borrado esticado no Gerenciador). `thumbnails.data` traz resolução cheia (ex:
-// 2160x3840) mas demora mais. Por isso `picture` é só fallback de ÚLTIMO recurso — espera
-// o loop inteiro esgotar antes de aceitar ele, pra dar toda a chance da resolução cheia
-// aparecer primeiro. Confirmado com dado real: ad publicado pegou o picture 160x120 porque
-// aceitava na hora, enquanto o vídeo já tinha 20 thumbnails em 2160x3840 disponíveis.
+// 2160x3840) mas demora mais. Estratégia: assim que `picture` aparece, dá uma JANELA DE
+// GRAÇA curta (~32s) esperando o thumbnail bom aparecer; se não vier nesse prazo, aceita
+// o picture pequeno em vez de continuar até os 120s — vídeo grande/lento pode nunca gerar
+// thumbnails.data dentro da janela total, e aí o publish falhava por inteiro (regressão de
+// uma tentativa anterior que esperava os 120s inteiros sem fallback limitado). Se picture
+// TAMBÉM nunca aparecer, continua tentando até o fim (só então falha de verdade).
 async function resolveVideoThumbnailField(
   videoId: string,
   accessToken: string,
@@ -726,6 +728,8 @@ async function resolveVideoThumbnailField(
 ): Promise<Record<string, string>> {
   let thumbUri = "";
   let pictureFallback = "";
+  let attemptsSincePicture = 0;
+  const GRACE_ATTEMPTS = 8; // ~32s (4s/poll) de graça pro thumbnail bom, depois de já ter o picture
   for (let attempt = 0; attempt < 30; attempt++) {
     await new Promise((r) => setTimeout(r, 4000));
     try {
@@ -739,6 +743,10 @@ async function resolveVideoThumbnailField(
         if (pref?.uri) { thumbUri = pref.uri; break; }
       }
       if (d?.picture && !pictureFallback) pictureFallback = d.picture;
+      if (pictureFallback) {
+        attemptsSincePicture++;
+        if (attemptsSincePicture >= GRACE_ATTEMPTS) break; // esgotou a graça, aceita o pequeno
+      }
     } catch { /* segue tentando */ }
   }
   if (!thumbUri) thumbUri = pictureFallback;
