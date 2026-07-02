@@ -124,7 +124,7 @@ export default function ClientForm({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEdit ? "Editar cliente" : "Novo cliente"}</DialogTitle>
         </DialogHeader>
