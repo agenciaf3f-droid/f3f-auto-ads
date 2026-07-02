@@ -2,8 +2,9 @@ import { supabase } from "@/integrations/supabase/client";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
-export function getMetaLoginUrl() {
-  return `${SUPABASE_URL}/functions/v1/meta-login`;
+export function getMetaLoginUrl(state?: string) {
+  const base = `${SUPABASE_URL}/functions/v1/meta-login`;
+  return state ? `${base}?state=${encodeURIComponent(state)}` : base;
 }
 
 export async function exchangeCodeForToken(code: string, redirectUri?: string) {
