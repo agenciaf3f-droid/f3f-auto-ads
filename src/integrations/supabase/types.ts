@@ -1,3 +1,4 @@
+Initialising login role...
 export type Json =
   | string
   | number
@@ -10,7 +11,32 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.1"
+    PostgrestVersion: "14.5"
+  }
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
   }
   public: {
     Tables: {
@@ -25,6 +51,115 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      client_ad_accounts: {
+        Row: {
+          ad_account_id: string
+          ad_account_name: string | null
+          client_id: string
+          created_at: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          ad_account_id: string
+          ad_account_name?: string | null
+          client_id: string
+          created_at?: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          ad_account_id?: string
+          ad_account_name?: string | null
+          client_id?: string
+          created_at?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_ad_accounts_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_kpi_rules: {
+        Row: {
+          client_ad_account_id: string
+          comparator: string
+          created_at: string
+          id: string
+          label_if_triggered: string
+          metric_key: string
+          preset_bucket: string
+          threshold_value: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          client_ad_account_id: string
+          comparator: string
+          created_at?: string
+          id?: string
+          label_if_triggered?: string
+          metric_key: string
+          preset_bucket: string
+          threshold_value: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          client_ad_account_id?: string
+          comparator?: string
+          created_at?: string
+          id?: string
+          label_if_triggered?: string
+          metric_key?: string
+          preset_bucket?: string
+          threshold_value?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_kpi_rules_client_ad_account_id_fkey"
+            columns: ["client_ad_account_id"]
+            isOneToOne: false
+            referencedRelation: "client_ad_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      clients: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          notes: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          notes?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          notes?: string | null
+          updated_at?: string
           user_id?: string
         }
         Relationships: []
@@ -295,7 +430,13 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {},
   },
 } as const
+<claude-code-hint v="1" type="plugin" value="supabase@claude-plugins-official" />
+A new version of Supabase CLI is available: v2.109.0 (currently installed v2.98.1)
+We recommend updating regularly for new features and bug fixes: https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli
