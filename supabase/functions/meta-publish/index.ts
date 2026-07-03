@@ -340,13 +340,14 @@ function validateFase3Attribution(attr: any[]) {
   return { ok: true };
 }
 
-function buildTargeting(audienceType: string, audienceId: string, targetingSpec: any, locationTargeting?: { included?: any[]; excluded?: any[] }) {
+function buildTargeting(audienceType: string, audienceIds: string[], targetingSpec: any, locationTargeting?: { included?: any[]; excluded?: any[] }) {
   let base: Record<string, any>;
-  if (audienceType === "saved" && targetingSpec) {
+  // Saved audience só quando público único; múltiplos → custom_audiences combinado (OR).
+  if (audienceType === "saved" && targetingSpec && audienceIds.length <= 1) {
     base = cleanTargeting({ ...targetingSpec });
   } else {
     base = {
-      custom_audiences: [{ id: audienceId }],
+      custom_audiences: audienceIds.map((id) => ({ id })),
       geo_locations: { countries: ["BR"] },
     };
   }
@@ -1321,6 +1322,15 @@ Deno.serve(async (req) => {
     // ADAPTADO: 1 único adset com os 2 públicos combinados (em vez de N adsets, 1 por público).
     const fase2CombinedAdset: boolean = body.fase2_combined_adset === true;
 
+    // Multi-público (FASE 1 / FASE 3): N públicos combinados (OR) em 1 adset via custom_audiences.
+    // Sem audience_ids (caminho single antigo) normaliza p/ [audience_id] → comportamento idêntico.
+    const audienceIdsArr: string[] = (Array.isArray(body.audience_ids) && body.audience_ids.length)
+      ? body.audience_ids.filter(Boolean)
+      : (audience_id ? [audience_id] : []);
+    const audienceNamesArr: string[] = (Array.isArray(body.audience_names) && body.audience_names.length)
+      ? body.audience_names
+      : (body.audience_name ? [body.audience_name] : []);
+
     // ══════════════════════════════════════════════════════════════════
     //  PIPELINE LOG: Identify which preset we're running
     // ══════════════════════════════════════════════════════════════════
@@ -1475,7 +1485,7 @@ Deno.serve(async (req) => {
     }));
     logs.push({ step: "resolve_creatives", status: "success", ts: ts(), detail: `${resolvedCreatives.length} resolved` });
 
-    const targeting = buildTargeting(audience_type || "custom", audience_id, targeting_spec, location_targeting);
+    const targeting = buildTargeting(audience_type || "custom", audienceIdsArr, targeting_spec, location_targeting);
     const finalCampaignName = campaign_name || generated_name || "Campaign";
 
     // ══════════════════════════════════════════════════════════════════
@@ -1687,8 +1697,8 @@ Deno.serve(async (req) => {
 
       // custom_audiences vs saved_audiences — tratar tipo corretamente
       const audienceType = body.audience_type || "custom";
-      if (audience_id) {
-        if (audienceType === "saved" && targeting_spec) {
+      if (audienceIdsArr.length) {
+        if (audienceType === "saved" && targeting_spec && audienceIdsArr.length <= 1) {
           // Saved audience: mesclar targeting_spec (interests, behaviors, etc.)
           const savedTargeting = { ...targeting_spec };
           // RESPEITA a idade segmentada no público: age_range (Advantage+) tem prioridade; senão age_min/age_max.
@@ -1710,9 +1720,9 @@ Deno.serve(async (req) => {
           Object.assign(fase3Targeting, savedTargeting);
           console.log(`[FASE3-adset] audience type=saved, age=${fase3AgeMin}-${fase3AgeMax}, merged targeting_spec fields`);
         } else {
-          // Custom audience: enviar como custom_audiences
-          fase3Targeting.custom_audiences = [{ id: audience_id, name: audienceName || "" }];
-          console.log(`[FASE3-adset] audience type=custom, id=${audience_id}`);
+          // Custom audience(s): 1+ combinados como custom_audiences (Meta faz OR entre eles)
+          fase3Targeting.custom_audiences = audienceIdsArr.map((id, i) => ({ id, name: audienceNamesArr[i] || "" }));
+          console.log(`[FASE3-adset] audience type=custom, ids=${audienceIdsArr.join("+")}`);
         }
       } else if (targeting?.custom_audiences) {
         fase3Targeting.custom_audiences = targeting.custom_audiences;
@@ -2669,7 +2679,10 @@ Deno.serve(async (req) => {
       } catch { return ""; }
     })();
     const chanTag = isWhatsAppPreset ? "WHATS" : isWebsitePreset ? (lpSlug || "PAGINA") : isIgProfilePreset ? "IG" : "PAGINA";
-    const audTag = (body.audience_name || adset_name || generated_name || "Público").trim();
+    const audTagRaw = audienceNamesArr.length
+      ? audienceNamesArr.join(" + ")
+      : (adset_name || generated_name || "Público");
+    const audTag = (audTagRaw.length > 150 ? audTagRaw.slice(0, 147) + "..." : audTagRaw).trim();
     const makeAdsetName = (creativeName?: string) =>
       creativeName ? `[${audTag}] {${chanTag}} - ${creativeName}` : `[${audTag}] {${chanTag}}`;
 

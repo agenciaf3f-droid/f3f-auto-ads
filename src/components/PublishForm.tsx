@@ -189,6 +189,11 @@ const UTM_DEFAULT = "utm_source=FB&utm_campaign={{campaign.name}}|{{campaign.id}
 let creativeCounter = 0;
 function nextCreativeId() { return `cr_${++creativeCounter}_${Date.now()}`; }
 
+let audienceRowCounter = 0;
+function nextAudienceRowId() { return `aud_${++audienceRowCounter}_${Date.now()}`; }
+
+interface AudienceRow { id: string; audienceId: string }
+
 // ── Orquestração paralela de publish ──
 const PUBLISH_CONCURRENCY = 3;              // quantos criativos sobem em paralelo (balance velocidade x rate limit da Meta)
 const PUBLISH_BACKOFF = [3000, 8000, 20000]; // backoff (ms) de retry só p/ erro transiente {1,2}/transporte
@@ -306,6 +311,8 @@ export default function PublishForm() {
   const [selectedAccount, setSelectedAccount] = useState("");
   const [audiences, setAudiences] = useState<Audience[]>([]);
   const [selectedAudience, setSelectedAudience] = useState("");
+  // Multi-público (FASE 1 / FASE 3): N linhas de público, combinadas (OR) em 1 conjunto.
+  const [audienceRows, setAudienceRows] = useState<AudienceRow[]>([{ id: nextAudienceRowId(), audienceId: "" }]);
   const [campaignNameInput, setCampaignNameInput] = useState("");
   const [adsetNameInput, setAdsetNameInput] = useState("");
   const [budget, setBudget] = useState("");
@@ -522,6 +529,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     // Reset audiences
     setAudiences([]);
     setSelectedAudience("");
+    setAudienceRows([{ id: nextAudienceRowId(), audienceId: "" }]);
     // Reset validation/publish state
     setValidationResult(null);
     setPublishResult(null);
@@ -741,6 +749,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       setSelectedAccount("");
       setAudiences([]);
       setSelectedAudience("");
+      setAudienceRows([{ id: nextAudienceRowId(), audienceId: "" }]);
       setCampaigns([]);
       setSelectedCampaign("");
       setWhatsappNumbers([]);
@@ -973,6 +982,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     setCreatives(prev => prev.map(c => c.id === id ? { ...c, ...updates, validation: updates.link !== undefined || updates.type !== undefined ? null : c.validation } : c));
   };
 
+  // Audience management (mesma mecânica dos criativos)
+  const addAudience = () => setAudienceRows(prev => [...prev, { id: nextAudienceRowId(), audienceId: "" }]);
+  const removeAudience = (id: string) => setAudienceRows(prev => prev.length <= 1 ? prev : prev.filter(r => r.id !== id));
+  const updateAudience = (id: string, audienceId: string) => setAudienceRows(prev => prev.map(r => r.id === id ? { ...r, audienceId } : r));
+
   const selectedAud = audiences.find((a) => a.id === selectedAudience);
   const selectedAudienceName = selectedAud?.name || "";
   const selectedPreset = PRESETS.find(p => p.id === preset)!;
@@ -982,6 +996,23 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const isFase2 = selectedPreset.fase === "FASE 2";
   const isFase2Adaptado = selectedPreset.id === "fase2-polones-adaptado";
   const selectedWhatsapp = whatsappNumbers.find(n => n.id === selectedWhatsappId);
+
+  // Multi-público: FASE 1 (perfil IG) + FASE 3 ZAP (Leads/Vendas). NÃO inclui LP/website (Advantage+).
+  const isMultiAud = selectedPreset.destination_type === "INSTAGRAM_PROFILE" || isFase3;
+  const multiAudIds = [...new Set(audienceRows.map(r => r.audienceId).filter(Boolean))];
+  const multiAudNamesList = multiAudIds.map(id => audiences.find(a => a.id === id)?.name || id);
+  const multiSingleAud = audiences.find(a => a.id === multiAudIds[0]);
+  const anySavedSelected = multiAudIds.some(id => audiences.find(a => a.id === id)?.type === "saved");
+  // Opções por linha: dedupe entre linhas; com >1 linha só custom (salvo não combina no Meta).
+  const audienceOptionsFor = (rowId: string): Audience[] => {
+    const restrictCustom = audienceRows.length > 1;
+    const thisRow = audienceRows.find(r => r.id === rowId);
+    const otherIds = new Set(audienceRows.filter(r => r.id !== rowId).map(r => r.audienceId).filter(Boolean));
+    return audiences.filter(a =>
+      a.id === thisRow?.audienceId ||
+      (!otherIds.has(a.id) && (!restrictCustom || a.type === "custom"))
+    );
+  };
 
   // FASE 2 — usa nomes das audiences selecionadas no nome da campanha
   const fase2AudienceNamesList = isFase2
@@ -993,6 +1024,12 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         : fase2AudienceNamesList.length > 1
           ? `${fase2AudienceNamesList[0]} +${fase2AudienceNamesList.length - 1}`
           : "Multi")
+    : isMultiAud
+      ? (multiAudNamesList.length === 1
+          ? multiAudNamesList[0]
+          : multiAudNamesList.length > 1
+            ? `${multiAudNamesList[0]} +${multiAudNamesList.length - 1}`
+            : "")
     : (isFase3Lp && ltAdvantage ? "Advantage+" : selectedAudienceName);
   // Adaptado leva "ADAPTADO" no nome pra diferenciar do Completo no Gerenciador — mesmos
   // 2 públicos dariam nome idêntico senão (só a estrutura interna difere: 1 conjunto combinado vs N).
@@ -1025,7 +1062,13 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     ? (lpSlug || "PAGINA")
     : (selectedPreset.destination_type === "WHATSAPP" ? "WHATS"
       : selectedPreset.destination_type === "INSTAGRAM_PROFILE" ? "IG" : "PAGINA");
-  const previewAudTag = (selectedAudienceName || (isFase3Lp && ltAdvantage ? "Advantage+" : "Público")).trim();
+  const previewAudTag = (() => {
+    if (isMultiAud && multiAudNamesList.length > 0) {
+      const joined = multiAudNamesList.join(" + ");
+      return (joined.length > 150 ? joined.slice(0, 147) + "..." : joined).trim();
+    }
+    return (selectedAudienceName || (isFase3Lp && ltAdvantage ? "Advantage+" : "Público")).trim();
+  })();
   const previewAdsetName = (creativeName?: string) =>
     creativeName ? `[${previewAudTag}] {${previewChanTag}} - ${creativeName}` : `[${previewAudTag}] {${previewChanTag}}`;
 
@@ -1110,7 +1153,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     // L.T + Advantage+ não usa público manual (Meta acha sozinho) → dispensa.
     const audienceOk = isFase2
       ? fase2Audiences.length >= 2
-      : (isFase3Lp && ltAdvantage) ? true : !!selectedAudience;
+      : isMultiAud
+        ? multiAudIds.length >= 1
+        : (isFase3Lp && ltAdvantage) ? true : !!selectedAudience;
     if (!selectedAccount || !audienceOk || !budget) {
       const missing = [
         !selectedAccount && "conta de anúncios",
@@ -1295,10 +1340,16 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       const payload: Record<string, unknown> = {
         access_token: accessToken,
         ad_account_id: selectedAccount,
-        audience_id: selectedAudience,
-        audience_type: selectedAud?.type || "custom",
-        audience_name: selectedAudienceName || (isFase3Lp && ltAdvantage ? "Advantage+" : ""),
-        targeting_spec: selectedAud?.targeting_spec || null,
+        audience_id: isMultiAud ? (multiAudIds[0] || "") : selectedAudience,
+        audience_type: isMultiAud
+          ? (multiAudIds.length >= 2 ? "custom" : (multiSingleAud?.type || "custom"))
+          : (selectedAud?.type || "custom"),
+        audience_name: isMultiAud
+          ? (multiAudNamesList[0] || "")
+          : (selectedAudienceName || (isFase3Lp && ltAdvantage ? "Advantage+" : "")),
+        targeting_spec: isMultiAud
+          ? (multiAudIds.length >= 2 ? null : (multiSingleAud?.targeting_spec || null))
+          : (selectedAud?.targeting_spec || null),
         creatives: finalCreatives.map(c => ({ type: c.type, link: c.link, name: c.name })),
         creative_link: finalCreatives[0].link,
         creative_type: finalCreatives[0].type,
@@ -1343,6 +1394,10 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         fase2_audience_names: isFase2
           ? fase2Audiences.map(id => audiences.find(a => a.id === id)?.name || id)
           : undefined,
+        // Multi-público FASE 1/FASE 3: N públicos combinados (OR) em 1 conjunto. Só quando >=2;
+        // com 1 público o caminho single (audience_id acima) segue idêntico ao antigo.
+        audience_ids: (isMultiAud && multiAudIds.length >= 2) ? multiAudIds : undefined,
+        audience_names: (isMultiAud && multiAudIds.length >= 2) ? multiAudNamesList : undefined,
         fase2_age_min: isFase2 ? Number(fase2AgeMin) || 18 : undefined,
         fase2_age_max: isFase2 ? Number(fase2AgeMax) || 65 : undefined,
         fase2_genders: isFase2 ? (fase2Gender === "male" ? [1] : fase2Gender === "female" ? [2] : []) : undefined,
@@ -2006,7 +2061,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 ? isFase2Adaptado
                   ? `Públicos (ADAPTADO: ${fase2Audiences.length}/10) ${audiences.length > 0 ? `— ${audiences.length} disponíveis` : ""}`
                   : `Públicos (FASE 2: ${fase2Audiences.length}/10) ${audiences.length > 0 ? `— ${audiences.length} disponíveis` : ""}`
-                : `Público ${audiences.length > 0 ? `(${audiences.length})` : ""}`}
+                : isMultiAud
+                  ? `Públicos (${multiAudIds.length} selecionado${multiAudIds.length === 1 ? "" : "s"})${audiences.length > 0 ? ` — ${audiences.length} disponíveis` : ""}`
+                  : `Público ${audiences.length > 0 ? `(${audiences.length})` : ""}`}
             </Label>
             {loadingAudiences ? (
               <div className="space-y-2">
@@ -2094,6 +2151,43 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                     </div>
                   </div>
                   <p className="text-[10px] text-muted-foreground">Segmentação manual — sem expansão/sugestão automática do Meta.</p>
+                </div>
+              ) : isMultiAud ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-muted-foreground">Selecione um ou mais públicos — todos combinados (OR) em 1 conjunto.</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1 text-xs"
+                      disabled={anySavedSelected}
+                      title={anySavedSelected ? "Público salvo não pode ser combinado com outros" : undefined}
+                      onClick={addAudience}
+                    >
+                      <PlusCircle className="w-3.5 h-3.5" /> Adicionar público
+                    </Button>
+                  </div>
+                  {audienceRows.map((row) => (
+                    <div key={row.id} className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        <SearchableSelect
+                          options={audienceOptionsFor(row.id)}
+                          value={row.audienceId}
+                          onValueChange={(v) => updateAudience(row.id, v)}
+                          placeholder="Selecione o público"
+                          searchPlaceholder="Pesquisar público por nome..."
+                        />
+                      </div>
+                      {audienceRows.length > 1 && (
+                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0 shrink-0" onClick={() => removeAudience(row.id)}>
+                          <X className="w-3.5 h-3.5 text-muted-foreground" />
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                  {anySavedSelected && audienceRows.length === 1 && (
+                    <p className="text-[10px] text-muted-foreground">Público salvo não pode ser combinado com outros — remova-o para adicionar mais de um.</p>
+                  )}
                 </div>
               ) : (
                 <SearchableSelect
@@ -2463,7 +2557,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                       ))
                     ) : (
                       <>
-                        {!isFase2 && selectedAudienceName && (
+                        {!isFase2 && (isMultiAud ? multiAudIds.length > 0 : selectedAudienceName) && (
                           <p className="text-xs font-mono text-primary break-all">
                             Conjunto: {previewAdsetName(distributionStructure === "ABO" ? (creatives[0]?.name || "Criativo 1") : undefined)}
                             {distributionStructure === "CBO" && creatives.length > 1 ? " (todos criativos)" : ""}
