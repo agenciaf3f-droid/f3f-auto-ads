@@ -13,9 +13,10 @@ import {
   deleteKpiRule,
   type ClientAdAccount,
   type ClientKpiRule,
+  type ClientLtProduct,
 } from "@/lib/clients";
 
-export default function ClientKpiRulesEditor({ adAccounts }: { adAccounts: ClientAdAccount[] }) {
+export default function ClientKpiRulesEditor({ adAccounts, products }: { adAccounts: ClientAdAccount[]; products: ClientLtProduct[] }) {
   const [accountId, setAccountId] = useState<string>(adAccounts[0]?.id || "");
   const [rules, setRules] = useState<ClientKpiRule[]>([]);
   const [loading, setLoading] = useState(false);
@@ -65,6 +66,7 @@ export default function ClientKpiRulesEditor({ adAccounts }: { adAccounts: Clien
                 bucket={bucket}
                 accountId={accountId}
                 rules={rules.filter((r) => r.preset_bucket === bucket)}
+                products={products}
                 onChanged={() => load(accountId)}
               />
             )}
@@ -79,11 +81,13 @@ function BucketRules({
   bucket,
   accountId,
   rules,
+  products,
   onChanged,
 }: {
   bucket: PresetBucket;
   accountId: string;
   rules: ClientKpiRule[];
+  products: ClientLtProduct[];
   onChanged: () => void;
 }) {
   const [metric, setMetric] = useState("");
@@ -155,51 +159,63 @@ function BucketRules({
         </div>
       ))}
 
-      {available.length > 0 && (
-        <div className="flex flex-wrap items-end gap-2 pt-1">
+      {isLt && products.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Cadastre produtos L.T na aba "Produtos L.T" antes de criar regras.</p>
+      ) : (
+        <div className="space-y-2 pt-1">
           {isLt && (
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Nome do produto</label>
-              <Input
-                value={productName}
-                onChange={(e) => setProductName(e.target.value)}
-                placeholder="ex: DDX"
-                className="w-[140px]"
-              />
+              <label className="text-xs font-medium text-muted-foreground">Produto</label>
+              <Select value={productName} onValueChange={setProductName}>
+                <SelectTrigger className="w-[180px]"><SelectValue placeholder="Escolha o produto" /></SelectTrigger>
+                <SelectContent>
+                  {products.map((p) => (
+                    <SelectItem key={p.id} value={p.product_name}>{p.product_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           )}
-          <Select value={metric} onValueChange={setMetric}>
-            <SelectTrigger className="w-[220px]"><SelectValue placeholder="Métrica" /></SelectTrigger>
-            <SelectContent>
-              {available.map((m) => (
-                <SelectItem key={m.key} value={m.key}>
-                  <span className="flex items-center gap-1.5">
-                    {m.label}
-                    {!m.verified && <Badge variant="outline" className="text-[9px]">pendente</Badge>}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={comparator} onValueChange={(v) => setComparator(v as ">" | "<")}>
-            <SelectTrigger className="w-[130px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value=">">acima de</SelectItem>
-              <SelectItem value="<">abaixo de</SelectItem>
-            </SelectContent>
-          </Select>
-          <Input
-            type="number"
-            step="any"
-            value={threshold}
-            onChange={(e) => setThreshold(e.target.value)}
-            placeholder="valor"
-            className="w-[110px]"
-          />
-          <Button size="sm" onClick={add} disabled={saving}>
-            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-            <span className="ml-1">Adicionar</span>
-          </Button>
+          {available.length > 0 ? (
+            <div className="flex flex-wrap items-end gap-2">
+              <Select value={metric} onValueChange={setMetric}>
+                <SelectTrigger className="w-[220px]"><SelectValue placeholder="Métrica" /></SelectTrigger>
+                <SelectContent>
+                  {available.map((m) => (
+                    <SelectItem key={m.key} value={m.key}>
+                      <span className="flex items-center gap-1.5">
+                        {m.label}
+                        {!m.verified && <Badge variant="outline" className="text-[9px]">pendente</Badge>}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={comparator} onValueChange={(v) => setComparator(v as ">" | "<")}>
+                <SelectTrigger className="w-[130px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value=">">acima de</SelectItem>
+                  <SelectItem value="<">abaixo de</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input
+                type="number"
+                step="any"
+                value={threshold}
+                onChange={(e) => setThreshold(e.target.value)}
+                placeholder="valor"
+                className="w-[110px]"
+              />
+              <Button size="sm" onClick={add} disabled={saving}>
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                <span className="ml-1">Adicionar</span>
+              </Button>
+            </div>
+          ) : (
+            isLt && productName && (
+              <p className="text-[11px] text-muted-foreground">Todas as métricas já têm regra para "{productName}". Escolha outro produto para adicionar mais.</p>
+            )
+          )}
         </div>
       )}
     </div>

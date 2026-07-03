@@ -21,6 +21,14 @@ export interface ClientAdAccount {
   created_at: string;
 }
 
+export interface ClientLtProduct {
+  id: string;
+  user_id: string;
+  client_id: string;
+  product_name: string;
+  created_at: string;
+}
+
 export interface ClientKpiRule {
   id: string;
   user_id: string;
@@ -100,6 +108,38 @@ export async function linkAdAccount(
 
 export async function unlinkAdAccount(id: string): Promise<void> {
   const { error } = await supabase.from("client_ad_accounts").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+// ── client_lt_products (produtos L.T por cliente; alimentam o dropdown de produto nas regras L.T) ──
+export async function listClientLtProducts(clientId: string): Promise<ClientLtProduct[]> {
+  const { data, error } = await supabase
+    .from("client_lt_products")
+    .select("*")
+    .eq("client_id", clientId)
+    .order("product_name");
+  if (error) throw new Error(error.message);
+  return (data || []) as ClientLtProduct[];
+}
+
+export async function addClientLtProduct(clientId: string, productName: string): Promise<ClientLtProduct> {
+  const user_id = await currentUserId();
+  const { data, error } = await supabase
+    .from("client_lt_products")
+    .insert({ user_id, client_id: clientId, product_name: productName.trim() })
+    .select()
+    .single();
+  if (error) {
+    if (error.code === "23505") {
+      throw new Error("Esse produto já está cadastrado para este cliente.");
+    }
+    throw new Error(error.message);
+  }
+  return data as ClientLtProduct;
+}
+
+export async function deleteClientLtProduct(id: string): Promise<void> {
+  const { error } = await supabase.from("client_lt_products").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
 

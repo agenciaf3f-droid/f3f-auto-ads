@@ -6,11 +6,11 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { fetchMetaStatus } from "@/lib/meta-api";
-import { listClients, listClientAdAccounts, deleteClient, type Client, type ClientAdAccount } from "@/lib/clients";
+import { listClients, listClientAdAccounts, listClientLtProducts, deleteClient, type Client, type ClientAdAccount, type ClientLtProduct } from "@/lib/clients";
 import ClientCard from "@/components/clients/ClientCard";
 import ClientForm from "@/components/clients/ClientForm";
 import ClientKpiRulesEditor from "@/components/clients/ClientKpiRulesEditor";
-import ClientKpiDashboard from "@/components/clients/ClientKpiDashboard";
+import ClientLtProductsManager from "@/components/clients/ClientLtProductsManager";
 
 export default function ClientesPage() {
   const [clients, setClients] = useState<Client[]>([]);
@@ -22,6 +22,7 @@ export default function ClientesPage() {
   const [editing, setEditing] = useState<Client | null>(null);
   const [detail, setDetail] = useState<Client | null>(null);
   const [toDelete, setToDelete] = useState<Client | null>(null);
+  const [detailProducts, setDetailProducts] = useState<ClientLtProduct[]>([]);
 
   const load = async () => {
     setLoading(true);
@@ -58,6 +59,12 @@ export default function ClientesPage() {
   };
 
   const detailLinks = detail ? linksByClient[detail.id] || [] : [];
+
+  const loadDetailProducts = () => {
+    if (!detail) { setDetailProducts([]); return; }
+    listClientLtProducts(detail.id).then(setDetailProducts).catch(() => setDetailProducts([]));
+  };
+  useEffect(() => { loadDetailProducts(); }, [detail?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-10">
@@ -121,16 +128,16 @@ export default function ClientesPage() {
             <DialogTitle>{detail?.name}</DialogTitle>
           </DialogHeader>
           {detail && (
-            <Tabs defaultValue="dashboard">
+            <Tabs defaultValue="produtos">
               <TabsList className="grid grid-cols-2 w-full">
-                <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+                <TabsTrigger value="produtos">Produtos L.T</TabsTrigger>
                 <TabsTrigger value="kpis">Configurar KPIs</TabsTrigger>
               </TabsList>
-              <TabsContent value="dashboard" className="pt-3">
-                <ClientKpiDashboard adAccounts={detailLinks} accessToken={token} />
+              <TabsContent value="produtos" className="pt-3">
+                <ClientLtProductsManager clientId={detail.id} products={detailProducts} onChanged={loadDetailProducts} />
               </TabsContent>
               <TabsContent value="kpis" className="pt-3">
-                <ClientKpiRulesEditor adAccounts={detailLinks} />
+                <ClientKpiRulesEditor adAccounts={detailLinks} products={detailProducts} />
               </TabsContent>
             </Tabs>
           )}
