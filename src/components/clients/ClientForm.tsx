@@ -27,9 +27,6 @@ interface AdAccount {
   account_status?: number | null;
 }
 
-// account_status: 1=ativo; qualquer outro = alguma restrição (2=desabilitada, etc.)
-const statusLabel = (s?: number | null) => (s === 1 ? null : "inativa");
-
 export default function ClientForm({
   open,
   onClose,
@@ -199,7 +196,6 @@ export default function ClientForm({
                   ) : (
                     <div className="space-y-1">
                       {filteredAccounts.map((acc) => {
-                        const badge = statusLabel(acc.account_status);
                         const conflict = accountOwner.get(acc.id);
                         return (
                           <label
@@ -216,8 +212,6 @@ export default function ClientForm({
                               onCheckedChange={() => toggle(acc.id)}
                             />
                             <span className="text-sm flex-1 min-w-0 truncate">{acc.name}</span>
-                            {acc.currency && <Badge variant="outline" className="text-[10px] shrink-0">{acc.currency}</Badge>}
-                            {badge && <Badge variant="destructive" className="text-[10px] shrink-0">{badge}</Badge>}
                             {conflict && (
                               <Badge variant="destructive" className="text-[10px] shrink-0">
                                 Vinculada a {conflict.clientName}
