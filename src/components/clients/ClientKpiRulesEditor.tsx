@@ -104,7 +104,7 @@ function BucketRules({
       .filter((r) => !isLt || (r.campaign_name_filter || "").trim().toLowerCase() === productName.trim().toLowerCase())
       .map((r) => r.metric_key),
   );
-  const available = METRIC_REGISTRY.filter((m) => !usedMetrics.has(m.key));
+  const available = METRIC_REGISTRY.filter((m) => !usedMetrics.has(m.key) && (!m.buckets || m.buckets.includes(bucket)));
 
   const add = async () => {
     if (!metric || threshold.trim() === "" || Number.isNaN(Number(threshold))) {

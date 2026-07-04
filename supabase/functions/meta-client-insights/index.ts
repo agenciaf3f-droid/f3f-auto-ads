@@ -12,7 +12,7 @@ const timedFetch = (url: string, init?: RequestInit) =>
 // de origem (a Graph API não devolve isso no nível campaign) — o frontend precisa disso
 // para agregar/avaliar KPI por conta, nunca cruzando contas diferentes.
 const INSIGHT_FIELDS =
-  "campaign_id,campaign_name,spend,impressions,clicks,ctr,cpm,frequency,reach,actions,cost_per_action_type";
+  "campaign_id,campaign_name,spend,impressions,clicks,ctr,cpm,frequency,reach,actions,cost_per_action_type,video_p95_watched_actions";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
