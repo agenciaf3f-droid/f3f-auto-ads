@@ -32,6 +32,7 @@ import {
   fetchPixels, type AdPixel,
 } from "@/lib/meta-api";
 import { generateCampaignName, generateLtCampaignName, generateAdsetName, generateAdName_v2 } from "@/lib/naming";
+import { listClientAdAccounts, listClientLtProducts } from "@/lib/clients";
 import SearchableSelect from "@/components/SearchableSelect";
 import IDDisplay from "@/components/IDDisplay";
 import LocationSelector, { type LocationItem } from "@/components/LocationSelector";
@@ -314,6 +315,9 @@ export default function PublishForm() {
   // Multi-público (FASE 1 / FASE 3): N linhas de público, combinadas (OR) em 1 conjunto.
   const [audienceRows, setAudienceRows] = useState<AudienceRow[]>([{ id: nextAudienceRowId(), audienceId: "" }]);
   const [campaignNameInput, setCampaignNameInput] = useState("");
+  // Produtos L.T cadastrados em Clientes p/ a conta selecionada (alimenta dropdown de produto).
+  const [ltProducts, setLtProducts] = useState<{ id: string; name: string }[]>([]);
+  const [ltProductsClientId, setLtProductsClientId] = useState<string | null>(null);
   const [adsetNameInput, setAdsetNameInput] = useState("");
   const [budget, setBudget] = useState("");
   const [campaignStructure, setCampaignStructure] = useState<CampaignStructure>("new");
@@ -472,6 +476,34 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     if (selectedAccount && accessToken) {
       loadAccountContext();
     }
+  }, [selectedAccount]);
+
+  // Produtos L.T: se a conta selecionada estiver vinculada a um cliente (aba Clientes),
+  // carrega os produtos cadastrados p/ virar dropdown (evita erro de digitação que quebra
+  // o match exato com a regra de KPI em optimization-engine.ts).
+  useEffect(() => {
+    if (!selectedAccount) {
+      setLtProducts([]);
+      setLtProductsClientId(null);
+      return;
+    }
+    (async () => {
+      try {
+        const rows = await listClientAdAccounts();
+        const row = rows.find(r => r.ad_account_id === selectedAccount);
+        if (!row) {
+          setLtProducts([]);
+          setLtProductsClientId(null);
+          return;
+        }
+        setLtProductsClientId(row.client_id);
+        const products = await listClientLtProducts(row.client_id);
+        setLtProducts(products.map(p => ({ id: p.id, name: p.product_name })));
+      } catch {
+        setLtProducts([]);
+        setLtProductsClientId(null);
+      }
+    })();
   }, [selectedAccount]);
 
   // When preset changes, reload FASE 3 resources if identity is already loaded
@@ -1920,11 +1952,21 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
             {campaignStructure === "new" && (
               <div className="space-y-2">
                 <Label className="text-xs font-medium text-muted-foreground">{isFase3Lp ? "Nome do produto" : "Nome da Campanha"}</Label>
-                <Input
-                  placeholder={isFase3Lp ? 'Ex: "LDX"' : 'Ex: "Campanha Tráfego - Joelho"'}
-                  value={campaignNameInput}
-                  onChange={(e) => setCampaignNameInput(e.target.value)}
-                />
+                {isFase3Lp && ltProducts.length > 0 ? (
+                  <SearchableSelect
+                    options={ltProducts.map(p => ({ id: p.name, name: p.name }))}
+                    value={campaignNameInput}
+                    onValueChange={setCampaignNameInput}
+                    placeholder="Selecione o produto"
+                    searchPlaceholder="Pesquisar produto..."
+                  />
+                ) : (
+                  <Input
+                    placeholder={isFase3Lp ? 'Ex: "LDX"' : 'Ex: "Campanha Tráfego - Joelho"'}
+                    value={campaignNameInput}
+                    onChange={(e) => setCampaignNameInput(e.target.value)}
+                  />
+                )}
                 {isFase3Lp && (
                   <p className="text-[10px] text-muted-foreground">
                     Nome final: <span className="font-mono">{computedCampaignName || "[PRODUTO] [L.T] [dd/mm] [ABO] [TESTE] [CRIATIVO] -"}</span>
