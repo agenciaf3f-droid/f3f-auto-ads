@@ -94,9 +94,7 @@ export const bucketKey = (adAccountId: string, bucket: BucketKey) => `${adAccoun
 // ── Registry de métricas ─────────────────────────────────────────────────────
 // compute() devolve null quando não é computável (denominador 0) — evita NaN/Infinity
 // e divisão por zero em bucket vazio. `verified` = action_type confirmado contra um
-// payload REAL de /insights. Os cost-per-action ainda são PENDENTES: as strings de
-// action_type abaixo são candidatas e precisam ser confirmadas antes de virarem
-// load-bearing (decisão #6 do plano). Escalares (spend/ctr/cpm/cpc) são certos.
+// payload REAL de /insights. Escalares (spend/ctr/cpm/cpc) são certos.
 export interface MetricDef {
   key: string;
   label: string;
@@ -105,17 +103,18 @@ export interface MetricDef {
   compute: (agg: AggregatedBucket) => number | null;
 }
 
-// action_type candidato — NÃO confirmado contra payload real ainda.
-export const PENDING_ACTION_TYPES = {
-  whatsappConversation: "onsite_conversion.messaging_conversation_started_7d",
-} as const;
-
 // action_type confirmado contra o catálogo oficial de campos da Meta (ads_get_field_context):
 // "actions:omni_purchase" é o tipo unificado de compra retornado pela Graph API atual.
 // "offsite_conversion.fb_pixel_purchase" (usado antes) é o tipo legado do Pixel antigo e
 // não aparece mais no catálogo — trocado.
+//
+// "onsite_conversion.messaging_conversation_started_7d" confirmado em 2026-07-04 via MCP
+// Meta-ADS (oráculo) contra 3 campanhas FASE 3 reais e ativas na conta 611479810596612:
+// spend/contagem de "Messaging conversations started" reconcilia ao centavo com o
+// cost_per_result que a própria Meta exibe (ex.: R$13.875,43 / 664 = R$20,90).
 export const CONFIRMED_ACTION_TYPES = {
   purchase: "omni_purchase",
+  whatsappConversation: "onsite_conversion.messaging_conversation_started_7d",
 } as const;
 
 export const METRIC_REGISTRY: MetricDef[] = [
@@ -151,9 +150,9 @@ export const METRIC_REGISTRY: MetricDef[] = [
     key: "cost_per_whatsapp_conversation",
     label: "Custo por conversa (WhatsApp)",
     unit: "currency",
-    verified: false,
+    verified: true,
     compute: (a) => {
-      const c = a.actionCounts[PENDING_ACTION_TYPES.whatsappConversation] || 0;
+      const c = a.actionCounts[CONFIRMED_ACTION_TYPES.whatsappConversation] || 0;
       return c > 0 ? a.spend / c : null;
     },
   },
