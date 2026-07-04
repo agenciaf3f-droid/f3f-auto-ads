@@ -107,6 +107,9 @@ export interface MetricDef {
   unit: "currency" | "percent" | "count";
   verified: boolean;
   compute: (agg: AggregatedBucket) => number | null;
+  // Buckets em que a métrica aparece no dropdown de KPI. Omitido = todos (comportamento
+  // pré-existente das genéricas: spend/ctr/cpm/cpc/whatsapp/purchase).
+  buckets?: PresetBucket[];
 }
 
 // action_type confirmado contra o catálogo oficial de campos da Meta (ads_get_field_context):
@@ -177,6 +180,7 @@ export const METRIC_REGISTRY: MetricDef[] = [
     label: "CCP",
     unit: "currency",
     verified: true,
+    buckets: ["FASE 2"],
     // Valor usado ÷ (Cliques (todos) − Cliques no link) — fórmula confirmada com o usuário
     // (mesmo cálculo usado no Stract). "link_click" é action_type padrão da Meta.
     compute: (a) => {
@@ -189,6 +193,7 @@ export const METRIC_REGISTRY: MetricDef[] = [
     label: "CPV95%",
     unit: "currency",
     verified: true,
+    buckets: ["FASE 2"],
     // Valor usado ÷ VV95% (video_p95_watched_actions — campo padrão da Meta, fora do array
     // genérico de actions).
     compute: (a) => (a.vv95 > 0 ? a.spend / a.vv95 : null),
