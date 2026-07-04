@@ -139,6 +139,38 @@ export type Database = {
           },
         ]
       }
+      client_lt_products: {
+        Row: {
+          client_id: string
+          created_at: string
+          id: string
+          product_name: string
+          user_id: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          id?: string
+          product_name: string
+          user_id: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          id?: string
+          product_name?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_lt_products_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       clients: {
         Row: {
           created_at: string
