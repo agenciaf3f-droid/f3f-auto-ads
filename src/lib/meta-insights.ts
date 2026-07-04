@@ -38,6 +38,7 @@ export interface InsightRow {
   reach?: string;
   actions?: { action_type: string; value: string }[];
   cost_per_action_type?: { action_type: string; value: string }[];
+  video_p95_watched_actions?: { action_type: string; value: string }[];
 }
 
 const num = (v?: string | number): number => {
@@ -55,6 +56,7 @@ export interface AggregatedBucket {
   spend: number;
   impressions: number;
   clicks: number;
+  vv95: number;
   actionCounts: Record<string, number>;
   campaignCount: number;
 }
@@ -73,6 +75,7 @@ export function aggregateByAccountBucket(insights: InsightRow[]): Map<string, Ag
         spend: 0,
         impressions: 0,
         clicks: 0,
+        vv95: 0,
         actionCounts: {},
         campaignCount: 0,
       };
@@ -84,6 +87,9 @@ export function aggregateByAccountBucket(insights: InsightRow[]): Map<string, Ag
     agg.campaignCount += 1;
     for (const a of row.actions || []) {
       agg.actionCounts[a.action_type] = (agg.actionCounts[a.action_type] || 0) + num(a.value);
+    }
+    for (const v of row.video_p95_watched_actions || []) {
+      agg.vv95 += num(v.value);
     }
   }
   return map;
@@ -165,6 +171,27 @@ export const METRIC_REGISTRY: MetricDef[] = [
       const c = a.actionCounts[CONFIRMED_ACTION_TYPES.purchase] || 0;
       return c > 0 ? a.spend / c : null;
     },
+  },
+  {
+    key: "ccp",
+    label: "CCP",
+    unit: "currency",
+    verified: true,
+    // Valor usado ÷ (Cliques (todos) − Cliques no link) — fórmula confirmada com o usuário
+    // (mesmo cálculo usado no Stract). "link_click" é action_type padrão da Meta.
+    compute: (a) => {
+      const nonLinkClicks = a.clicks - (a.actionCounts["link_click"] || 0);
+      return nonLinkClicks > 0 ? a.spend / nonLinkClicks : null;
+    },
+  },
+  {
+    key: "cpv95",
+    label: "CPV95%",
+    unit: "currency",
+    verified: true,
+    // Valor usado ÷ VV95% (video_p95_watched_actions — campo padrão da Meta, fora do array
+    // genérico de actions).
+    compute: (a) => (a.vv95 > 0 ? a.spend / a.vv95 : null),
   },
 ];
 

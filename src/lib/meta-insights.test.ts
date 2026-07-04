@@ -73,6 +73,14 @@ describe("aggregateByAccountBucket", () => {
     ]);
     expect(agg.get(bucketKey("act_A", "FASE 3"))!.actionCounts["x"]).toBe(5);
   });
+
+  it("soma vv95 (video_p95_watched_actions), campo separado de actions", () => {
+    const agg = aggregateByAccountBucket([
+      { ad_account_id: "act_A", campaign_name: "[FASE 2] [G] [d] [p] [R$]", spend: "10", video_p95_watched_actions: [{ action_type: "video_view", value: "7" }] },
+      { ad_account_id: "act_A", campaign_name: "[FASE 2] [G] [d] [p] [R$]", spend: "10", video_p95_watched_actions: [{ action_type: "video_view", value: "3" }] },
+    ]);
+    expect(agg.get(bucketKey("act_A", "FASE 2"))!.vv95).toBe(10);
+  });
 });
 
 describe("métricas derivadas (razão sobre somas)", () => {
@@ -94,8 +102,38 @@ describe("métricas derivadas (razão sobre somas)", () => {
   });
 });
 
+describe("CCP e CPV95% (FASE 2)", () => {
+  it("ccp = spend / (clicks - link_click)", () => {
+    const agg = aggregateByAccountBucket([
+      { ad_account_id: "act_A", campaign_name: "[FASE 2] [G]", spend: "1012.40", clicks: "1236", actions: [{ action_type: "link_click", value: "61" }] },
+    ]).get(bucketKey("act_A", "FASE 2"))!;
+    expect(getMetricDef("ccp")!.compute(agg)).toBeCloseTo(1012.40 / 1175);
+  });
+
+  it("ccp null quando cliques não-link é 0 (evita divisão por zero)", () => {
+    const agg = aggregateByAccountBucket([
+      { ad_account_id: "act_A", campaign_name: "[FASE 2] [G]", spend: "10", clicks: "5", actions: [{ action_type: "link_click", value: "5" }] },
+    ]).get(bucketKey("act_A", "FASE 2"))!;
+    expect(getMetricDef("ccp")!.compute(agg)).toBeNull();
+  });
+
+  it("cpv95 = spend / vv95", () => {
+    const agg = aggregateByAccountBucket([
+      { ad_account_id: "act_A", campaign_name: "[FASE 2] [G]", spend: "1012.40", video_p95_watched_actions: [{ action_type: "video_view", value: "5872" }] },
+    ]).get(bucketKey("act_A", "FASE 2"))!;
+    expect(getMetricDef("cpv95")!.compute(agg)).toBeCloseTo(1012.40 / 5872);
+  });
+
+  it("cpv95 null quando vv95 é 0", () => {
+    const agg = aggregateByAccountBucket([
+      { ad_account_id: "act_A", campaign_name: "[FASE 2] [G]", spend: "10" },
+    ]).get(bucketKey("act_A", "FASE 2"))!;
+    expect(getMetricDef("cpv95")!.compute(agg)).toBeNull();
+  });
+});
+
 describe("bucket vazio / divisão por zero (sem crash)", () => {
-  const empty = { adAccountId: "act_A", bucket: "FASE 1" as const, spend: 0, impressions: 0, clicks: 0, actionCounts: {}, campaignCount: 0 };
+  const empty = { adAccountId: "act_A", bucket: "FASE 1" as const, spend: 0, impressions: 0, clicks: 0, vv95: 0, actionCounts: {}, campaignCount: 0 };
 
   it("razões devolvem null quando denominador é 0", () => {
     expect(getMetricDef("cpm")!.compute(empty)).toBeNull();
@@ -113,7 +151,7 @@ describe("bucket vazio / divisão por zero (sem crash)", () => {
 });
 
 describe("evaluateRule", () => {
-  const agg = { adAccountId: "act_A", bucket: "FASE 1" as const, spend: 100, impressions: 2000, clicks: 40, actionCounts: {}, campaignCount: 1 };
+  const agg = { adAccountId: "act_A", bucket: "FASE 1" as const, spend: 100, impressions: 2000, clicks: 40, vv95: 0, actionCounts: {}, campaignCount: 1 };
 
   it("comparator > dispara quando valor acima do threshold", () => {
     // cpm = 50
