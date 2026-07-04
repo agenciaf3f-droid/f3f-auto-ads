@@ -17,7 +17,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { fetchMetaStatus, fetchCampaigns, fetchCampaignInsights, pauseCampaign } from "@/lib/meta-api";
 import { fetchClientKpiConfigs } from "@/lib/client-kpi-contract";
 import { compareKpis, isDismissalActive, type OptimizationViolation } from "@/lib/optimization-engine";
-import { getMetricDef } from "@/lib/meta-insights";
+import { getMetricDef, type DateRangeSelection } from "@/lib/meta-insights";
+import DateRangeSelector from "@/components/clients/DateRangeSelector";
 
 export default function OtimizacoesPage() {
   const { toast } = useToast();
@@ -27,6 +28,7 @@ export default function OtimizacoesPage() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [pausingId, setPausingId] = useState<string | null>(null);
   const [confirmCampaign, setConfirmCampaign] = useState<OptimizationViolation | null>(null);
+  const [range, setRange] = useState<DateRangeSelection>({ mode: "preset", preset: "last_7d" });
 
   useEffect(() => {
     let cancelled = false;
@@ -68,7 +70,7 @@ export default function OtimizacoesPage() {
             const campaigns = await fetchCampaigns(status.access_token, config.adAccountId);
             if (campaigns.length === 0) continue;
 
-            const insights = await fetchCampaignInsights(status.access_token, campaigns.map((c: { id: string }) => c.id));
+            const insights = await fetchCampaignInsights(status.access_token, campaigns.map((c: { id: string }) => c.id), range);
 
             // Uma campanha isolada pode falhar (rate-limit transiente) sem que a chamada inteira
             // lance erro — a edge function retorna 200 com só aquela campanha marcada com `error`.
@@ -107,7 +109,7 @@ export default function OtimizacoesPage() {
 
     load();
     return () => { cancelled = true; };
-  }, [toast]);
+  }, [toast, range]);
 
   async function recordAction(violation: OptimizationViolation, action: "dismissed" | "paused") {
     const { data: { user } } = await supabase.auth.getUser();
@@ -169,6 +171,10 @@ export default function OtimizacoesPage() {
         <p className="text-sm text-muted-foreground">
           Campanhas que estouraram um limite de KPI configurado na aba Clientes aparecem aqui.
         </p>
+      </div>
+
+      <div className="mb-6 fade-in-up">
+        <DateRangeSelector value={range} onChange={setRange} />
       </div>
 
       {loading && (
