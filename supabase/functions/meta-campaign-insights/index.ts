@@ -16,16 +16,29 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { access_token, campaign_ids } = await req.json();
+    const body = await req.json();
+    const { access_token, campaign_ids, date_preset, since, until } = body as {
+      access_token?: string;
+      campaign_ids?: string[];
+      date_preset?: string;
+      since?: string;
+      until?: string;
+    };
     if (!access_token || !Array.isArray(campaign_ids) || campaign_ids.length === 0) {
       return new Response(JSON.stringify({ error: "access_token and campaign_ids required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
+    // Range: time_range (custom) tem prioridade sobre date_preset. Default last_7d (comportamento
+    // pré-existente, preservado quando nenhum range é enviado — ver meta-client-insights p/ o mesmo padrão).
+    const rangeParam = since && until
+      ? `time_range=${encodeURIComponent(JSON.stringify({ since, until }))}`
+      : `date_preset=${encodeURIComponent(date_preset || "last_7d")}`;
+
     const insights: Record<string, unknown> = {};
     for (const campaignId of campaign_ids) {
-      const url = `https://graph.facebook.com/v25.0/${campaignId}/insights?fields=${INSIGHTS_FIELDS}&date_preset=last_7d&access_token=${access_token}`;
+      const url = `https://graph.facebook.com/v25.0/${campaignId}/insights?fields=${INSIGHTS_FIELDS}&${rangeParam}&access_token=${access_token}`;
       const res = await fetch(url);
       const data = await res.json();
 

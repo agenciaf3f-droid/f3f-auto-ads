@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import type { DateRangeSelection } from "@/lib/meta-insights";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
@@ -144,10 +145,21 @@ export async function fetchCampaigns(accessToken: string, adAccountId: string) {
   return data?.campaigns || [];
 }
 
-export async function fetchCampaignInsights(accessToken: string, campaignIds: string[]) {
-  const { data, error } = await supabase.functions.invoke("meta-campaign-insights", {
-    body: { access_token: accessToken, campaign_ids: campaignIds },
-  });
+export async function fetchCampaignInsights(
+  accessToken: string,
+  campaignIds: string[],
+  range?: DateRangeSelection,
+) {
+  const body: Record<string, unknown> = { access_token: accessToken, campaign_ids: campaignIds };
+  if (range) {
+    if (range.mode === "custom") {
+      body.since = range.since;
+      body.until = range.until;
+    } else {
+      body.date_preset = range.preset;
+    }
+  }
+  const { data, error } = await supabase.functions.invoke("meta-campaign-insights", { body });
   if (error && data) return data;
   if (error) throw new Error(error.message);
   return data?.insights || {};
