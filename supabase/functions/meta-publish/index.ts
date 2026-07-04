@@ -1600,21 +1600,30 @@ Deno.serve(async (req) => {
       // - promoted_object SÓ com page_id (formato historicamente funcional, conforme
       //   commit e2da2d5). Adicionar instagram_profile_id causa #1346001 ao linkar o ad
       //   quando user conectado não é admin direto da Page (cenário típico de agência via BM).
-      // - sem attribution_spec
       const promotedObject: Record<string, any> = { page_id: pageId };
       const p: Record<string, any> = {
         name,
         campaign_id: campaignId,
         billing_event: "IMPRESSIONS",
-        // VISIT_INSTAGRAM_PROFILE (não PROFILE_VISIT): combo coerente com destino
-        // INSTAGRAM_PROFILE + CTA VIEW_INSTAGRAM_PROFILE. Confirmado como goal canônico
-        // do MCP pra visita de perfil IG. PROFILE_VISIT é genérico (FB ou IG) e a
-        // incoerência com destino/CTA IG dispara #1346001 em certas mídias.
-        optimization_goal: "VISIT_INSTAGRAM_PROFILE",
+        // PROFILE_VISIT (não VISIT_INSTAGRAM_PROFILE): revertido em 2026-07-04.
+        // Diagnóstico (campanha gabarito 6966176029411, ACTIVE, R$1355 gasto, 169997
+        // reach) rodava com PROFILE_VISIT e recebia o tracking_spec
+        // action.type=visit_instagram_profile no ad — sinal de que a Meta só reconhece
+        // a otimização de visita a perfil IG sob esse goal. O commit 9cff8ce (08/06)
+        // trocou pra VISIT_INSTAGRAM_PROFILE citando "validado em conta real" (MCP),
+        // mas todo adset criado pelo sistema desde então NÃO recebe esse tracking_spec —
+        // Meta não reconhece o goal como sinal de otimização de perfil IG, resultado
+        // de entrega muito pior que campanhas idênticas subidas com PROFILE_VISIT.
+        // Ver #1346001 na justificativa original: é erro de creative-incompatibility,
+        // não de optimization_goal — não há evidência de que PROFILE_VISIT o cause.
+        optimization_goal: "PROFILE_VISIT",
         targeting: { ...targeting, targeting_automation: { advantage_audience: 0 } },
         status: "ACTIVE",
         destination_type: "INSTAGRAM_PROFILE",
         promoted_object: promotedObject,
+        // Attribution presente no gabarito funcional; ausente aqui deixava a Meta usar
+        // a janela default em vez da mesma janela usada pela campanha que funcionou bem.
+        attribution_spec: [{ event_type: "CLICK_THROUGH", window_days: 1 }],
         access_token,
       };
       applyDsa(p);
@@ -1631,7 +1640,7 @@ Deno.serve(async (req) => {
       else p.start_time = new Date().toISOString();
       if (schedule?.end_time) p.end_time = schedule.end_time;
 
-      console.log(`[FASE1-adset] ── FIXED: destination=INSTAGRAM_PROFILE, optimization=VISIT_INSTAGRAM_PROFILE, advantage_audience=0`);
+      console.log(`[FASE1-adset] ── FIXED: destination=INSTAGRAM_PROFILE, optimization=PROFILE_VISIT, advantage_audience=0`);
       console.log(`[FASE1-adset] ── VARIABLE: name="${name}", page=${pageId}, budget=${p.daily_budget || "CBO"}`);
       return p;
     };

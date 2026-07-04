@@ -4,7 +4,7 @@
 
 Ferramenta SaaS para criação e publicação automatizada de anúncios no Meta Ads (Facebook/Instagram). Integra com a Meta Graph API **v25.0** via Supabase Edge Functions. Usuários são gestores de tráfego que sobem campanhas rapidamente sem abrir o Gerenciador de Anúncios. Quatro presets de campanha:
 
-- **FASE 1** — Tráfego para perfil do Instagram (`OUTCOME_TRAFFIC`, `VISIT_INSTAGRAM_PROFILE`, `INSTAGRAM_PROFILE`)
+- **FASE 1** — Tráfego para perfil do Instagram (`OUTCOME_TRAFFIC`, `PROFILE_VISIT`, `INSTAGRAM_PROFILE`)
 - **FASE 2** — Engajamento de vídeo p/ montar públicos (`THRUPLAY`, `ON_VIDEO`) — alimenta audiências VV
 - **FASE 3** — Leads via WhatsApp (`OUTCOME_LEADS`, `CONVERSATIONS`, `WHATSAPP`); variante **Vendas** usa `OUTCOME_SALES`
 - **L.T** — Tráfego p/ site / conversões (`OFFSITE_CONVERSIONS`, `WEBSITE`) com nomenclatura própria
@@ -90,10 +90,11 @@ supabase/functions/   # 21 functions + _shared/
 ## Regras críticas por preset
 
 ### FASE 1 (tráfego p/ perfil IG)
-- Adset: `optimization_goal: VISIT_INSTAGRAM_PROFILE` + `destination_type: INSTAGRAM_PROFILE`
-- `promoted_object` **DEVE** ter `{ page_id, instagram_profile_id }` — sem `instagram_profile_id` o ad falha com 100/2446391
+- Adset: `optimization_goal: PROFILE_VISIT` + `destination_type: INSTAGRAM_PROFILE` — **NÃO** `VISIT_INSTAGRAM_PROFILE` (revertido 2026-07-04: diagnóstico contra campanha gabarito real mostrou que a Meta só anexa o `tracking_specs` `action.type=visit_instagram_profile` no ad — sinal de reconhecimento do goal — sob `PROFILE_VISIT`; `VISIT_INSTAGRAM_PROFILE` faz o sistema entregar pior sem erro nenhum, silenciosamente)
+- `promoted_object`: **só** `{ page_id }` — sem `instagram_profile_id` (confirmado no gabarito real; ver comentário em `buildFase1Adset`)
+- `attribution_spec: [{ event_type: CLICK_THROUGH, window_days: 1 }]` (presente no gabarito; sem isso a Meta usa janela default)
 - `targeting_automation: { advantage_audience: 0 }` (desativado)
-- Creative: `source_instagram_media_id` + `instagram_user_id` + `call_to_action: VISIT_PROFILE`
+- Creative: `source_instagram_media_id` + `instagram_user_id` + `call_to_action: VIEW_INSTAGRAM_PROFILE`
 
 ### FASE 2 (engajamento de vídeo)
 - `optimization_goal: THRUPLAY` + `destination_type: ON_VIDEO`
@@ -126,7 +127,7 @@ supabase/functions/   # 21 functions + _shared/
 
 | Code | Subcode | Causa | Fix |
 |------|---------|-------|-----|
-| 100 | 2446391 | Ad rejeitado — creative incompatível com adset | Garantir `instagram_profile_id` no `promoted_object` do adset FASE 1 |
+| 100 | 2446391 | Ad rejeitado — creative incompatível com adset | Causa não é `instagram_profile_id` ausente (gabarito real funciona sem ele) — investigar CTA/goal/destination_type coerentes antes de mexer no `promoted_object` |
 | 3858634 | — | "Anunciante ausente" (DSA, BR) | Verificação de anunciante no Business Manager — **não resolve por API** |
 | 1,2,4,17,32,341,613 | — | Rate-limit / transiente Meta | `isTransient()` → falha rápido com "Limite de requisições da Meta atingido… aguarde ~15 min" + retry com backoff (2s/6s/15s) |
 
