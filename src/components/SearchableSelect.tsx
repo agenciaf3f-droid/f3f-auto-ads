@@ -142,7 +142,9 @@ export default function SearchableSelect({
               >
                 <div className="min-w-0">
                   <span className="font-medium">{o.name}</span>
-                  <span className="ml-2 text-muted-foreground text-[10px]">{o.id}</span>
+                  {o.id !== o.name && (
+                    <span className="ml-2 text-muted-foreground text-[10px]">{o.id}</span>
+                  )}
                 </div>
                 {o.id === value && <Check className="w-3.5 h-3.5 shrink-0" />}
               </div>
