@@ -83,8 +83,11 @@ Deno.serve(async (req) => {
     // Retry com backoff em erro transiente/rate-limit da Meta (code 17/613/…). O drill-in dispara as
     // 2 chamadas Graph logo depois do board já ter queimado insights de todas as campanhas — pico que
     // pode tropeçar no code 17 e devolver 400 (a msg PT amigável é preservada no final). Só re-tenta em
-    // erro transiente; erro real (campanha inválida, token) falha na hora. Padrão de meta-publish: 2s/6s/15s.
-    const RETRY_BACKOFF_MS = [2000, 6000, 15000];
+    // erro transiente; erro real (campanha inválida, token) falha na hora.
+    // Backoff CURTO (1s/3s, ~4s máx): o drill-in é interativo. Retry curto recupera blip momentâneo
+    // (code 1/2); rate-limit sustentado (17) só limpa em minutos — não adianta esperar, falha rápido e
+    // a msg PT ("aguarde ~15 min") orienta o usuário. Melhor UX que travar a tela por dezenas de seg.
+    const RETRY_BACKOFF_MS = [1000, 3000];
     let structureData: { error?: MetaError; data?: unknown[] } = {};
     let insightsData: { error?: MetaError; data?: unknown[] } = {};
     for (let attempt = 0; ; attempt++) {
