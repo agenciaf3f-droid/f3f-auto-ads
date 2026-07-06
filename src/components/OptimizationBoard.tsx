@@ -3,9 +3,19 @@ import { Gauge, Loader2, AlertTriangle, CheckCircle2, History, ChevronRight, Che
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { fetchMetaStatus, fetchCampaigns, fetchCampaignInsights, fetchNodeInsights, pauseCampaign, type MetaNodeInsight } from "@/lib/meta-api";
+import {
+  fetchMetaStatus,
+  fetchCampaigns,
+  fetchCampaignInsights,
+  fetchNodeInsights,
+  pauseCampaign,
+  notifyClientPause,
+  type MetaNodeInsight,
+  type NotifyClientPauseParams,
+} from "@/lib/meta-api";
 import { fetchClientKpiConfigs } from "@/lib/client-kpi-contract";
 import {
   compareKpis,
@@ -97,6 +107,11 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
   // Id do nó (adset ou ad) sendo pausado agora — desabilita só o botão daquele nó.
   const [pausingId, setPausingId] = useState<string | null>(null);
   const [range, setRange] = useState<DateRangeSelection>({ mode: "preset", preset: "last_7d" });
+
+  // Preview do aviso ao grupo de WhatsApp do cliente, aberto logo após uma pausa bem-sucedida.
+  // `params` já vem com dry_run:false pronto pro clique em "Enviar aviso".
+  const [notifyPreview, setNotifyPreview] = useState<{ text: string; groupId: string; clientName: string | null; params: NotifyClientPauseParams } | null>(null);
+  const [sendingNotify, setSendingNotify] = useState(false);
 
   // Drill-in: null = cards de campanha; { campaign } = conjuntos da campanha; { campaign, adset } =
   // criativos do conjunto. Sem rota nova — navegação é só estado local do board.
@@ -312,6 +327,53 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
       console.error("Falha ao registrar pausa em optimization_actions (nó já pausado na Meta)", e);
     }
     setPausingId(null);
+
+    // Best-effort: prepara o aviso pro grupo de WhatsApp do cliente. A pausa já está feita acima —
+    // qualquer falha aqui (sem grupo, rede, edge fora) NUNCA desfaz/bloqueia o que já aconteceu.
+    try {
+      const level: "adset" | "ad" = "adset" in drill ? "ad" : "adset";
+      const previewParams: NotifyClientPauseParams = {
+        access_token: accessToken,
+        ad_account_id: drill.campaign.adAccountId,
+        level,
+        node_id: node.id,
+        adset_id: "adset" in drill ? drill.adset.id : undefined,
+        node_name: node.name,
+        metric_label: getMetricDef(drill.campaign.metric)?.label ?? drill.campaign.metric,
+        dry_run: true,
+      };
+      const result = await notifyClientPause(previewParams);
+      // `=== true`/`=== false`, não truthy: com `strict:false` (tsconfig.app.json) o TS não estreita
+      // essa união discriminada por booleano em `if (result.ok)` — vira erro de tsc no `else`.
+      if (result.ok === true && "text" in result) {
+        setNotifyPreview({ text: result.text, groupId: result.group_id, clientName: result.client_name, params: { ...previewParams, dry_run: false } });
+      } else if (result.ok === false) {
+        toast({ title: "Cliente sem grupo de WhatsApp — não avisado." });
+      }
+    } catch (e) {
+      console.error("Falha ao preparar aviso ao cliente no WhatsApp (pausa já concluída)", e);
+    }
+  }
+
+  // Envio real do aviso (dry_run:false) a partir do preview aberto. Best-effort: falha aqui é só
+  // toast — a pausa já aconteceu antes desse dialog existir.
+  async function handleEnviarAviso() {
+    if (!notifyPreview) return;
+    setSendingNotify(true);
+    try {
+      const result = await notifyClientPause(notifyPreview.params);
+      // `=== true` (não truthy) pelo mesmo motivo do preview acima — ver comentário em pausarNo.
+      if (result.ok === true) {
+        toast({ title: "Cliente avisado no grupo" });
+      } else {
+        toast({ variant: "destructive", title: "Erro ao avisar cliente", description: result.reason });
+      }
+    } catch (e) {
+      toast({ variant: "destructive", title: "Erro ao avisar cliente", description: (e as Error).message });
+    } finally {
+      setSendingNotify(false);
+      setNotifyPreview(null);
+    }
   }
 
   // Card de violação, reusado por Pendentes e Histórico. `meta` presente = card do Histórico:
@@ -642,6 +704,30 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
       )}
 
       {drill && renderDrillView()}
+
+      <Dialog open={!!notifyPreview} onOpenChange={(o) => !o && setNotifyPreview(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Avisar o cliente no grupo?</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            Enviando para{" "}
+            <strong className="text-foreground">{notifyPreview?.clientName ?? "cliente"}</strong>
+            {notifyPreview?.groupId ? <> · grupo <span className="font-mono">{notifyPreview.groupId}</span></> : null}. Confira antes de enviar.
+          </p>
+          <p className="min-w-0 max-h-[50vh] overflow-y-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 font-mono text-xs text-muted-foreground">
+            {notifyPreview?.text}
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNotifyPreview(null)}>
+              Agora não
+            </Button>
+            <Button onClick={handleEnviarAviso} disabled={sendingNotify}>
+              {sendingNotify ? "Enviando..." : "Enviar aviso"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

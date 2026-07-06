@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fetchAdAccounts } from "@/lib/meta-api";
+import SearchableSelect from "@/components/SearchableSelect";
 import {
   createClient,
   updateClient,
@@ -16,6 +17,7 @@ import {
   linkAdAccount,
   unlinkAdAccount,
   listClientAdAccounts,
+  listClientDashboards,
   type Client,
   type ClientAdAccount,
 } from "@/lib/clients";
@@ -25,6 +27,29 @@ interface AdAccount {
   name: string;
   currency?: string | null;
   account_status?: number | null;
+}
+
+interface ClientDashboard {
+  nome: string;
+  email: string | null;
+  whatsapp_group_id: string;
+}
+
+// Normaliza texto p/ comparação de nomes (remove acento, colapsa espaços, minúsculo).
+function normalizeForMatch(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// "F3F - <Nome> - <PLANO>" → "<nome>" normalizado (tira prefixo "F3F -" e sufixo " - <PLANO>").
+function dashboardCoreName(nome: string): string {
+  const semPrefixo = nome.replace(/^\s*f3f\s*-\s*/i, "");
+  const semSufixo = semPrefixo.replace(/\s*-\s*[^-]*$/, "");
+  return normalizeForMatch(semSufixo);
 }
 
 export default function ClientForm({
@@ -52,6 +77,9 @@ export default function ClientForm({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [dashboards, setDashboards] = useState<ClientDashboard[]>([]);
+  const [groupId, setGroupId] = useState("");
+  const [groupTouched, setGroupTouched] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -59,12 +87,31 @@ export default function ClientForm({
     setNotes(client?.notes || "");
     setAccountSearch("");
     setSelected(new Set());
+    setGroupId("");
+    setGroupTouched(false);
     if (isEdit && client) {
       listClientAdAccounts(client.id)
         .then((links) => setSelected(new Set(links.map((l) => l.ad_account_id))))
         .catch(() => {});
     }
   }, [open, client, isEdit]);
+
+  // Dashboards da base Agenciaf3f (nome→grupo) — só usados na criação, pra auto-match.
+  useEffect(() => {
+    if (!open || isEdit) return;
+    listClientDashboards()
+      .then((rows) => setDashboards(rows))
+      .catch(() => setDashboards([])); // sem integração configurada ainda → cai no fallback manual
+  }, [open, isEdit]);
+
+  // Auto-casa o grupo pelo nome normalizado enquanto o gestor não mexer manualmente no campo.
+  useEffect(() => {
+    if (!open || isEdit || groupTouched || dashboards.length === 0) return;
+    const typed = normalizeForMatch(name);
+    if (!typed) return;
+    const match = dashboards.find((d) => dashboardCoreName(d.nome) === typed);
+    setGroupId(match?.whatsapp_group_id || "");
+  }, [name, dashboards, open, isEdit, groupTouched]);
 
   useEffect(() => {
     if (!open || !accessToken) return;
@@ -88,6 +135,15 @@ export default function ClientForm({
     }
     return map;
   }, [linksByClient, clients, isEdit, client]);
+
+  const groupOptions = useMemo(
+    () => [
+      { id: "", name: "— Sem grupo —" },
+      ...dashboards.map((d) => ({ id: d.whatsapp_group_id, name: d.nome })),
+    ],
+    [dashboards],
+  );
+  const matchedDashboard = dashboards.find((d) => d.whatsapp_group_id === groupId);
 
   const toggle = (id: string) => {
     if (accountOwner.has(id)) return;
@@ -130,7 +186,7 @@ export default function ClientForm({
         // Cria o cliente só depois de validar os conflitos acima. Se mesmo assim o link falhar
         // (corrida entre abas), desfaz o cliente recém-criado para não sobrar linha órfã que
         // duplicaria num retry.
-        const created = await createClient(name.trim(), notes.trim() || undefined);
+        const created = await createClient(name.trim(), notes.trim() || undefined, groupId || undefined);
         try {
           for (const id of selected) {
             await linkAdAccount(created.id, id, nameById.get(id) || null);
@@ -171,6 +227,34 @@ export default function ClientForm({
             <Label htmlFor="client-notes">Notas (opcional)</Label>
             <Input id="client-notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Observações internas" />
           </div>
+
+          {!isEdit && (
+            <div className="space-y-1.5">
+              <Label>Grupo do WhatsApp (cliente)</Label>
+              {dashboards.length > 0 ? (
+                <>
+                  <SearchableSelect
+                    options={groupOptions}
+                    value={groupId}
+                    onValueChange={(v) => { setGroupId(v); setGroupTouched(true); }}
+                    placeholder="Selecione o grupo…"
+                    searchPlaceholder="Buscar por dashboard…"
+                  />
+                  {matchedDashboard && (
+                    <p className="text-xs text-muted-foreground">
+                      Grupo casado com o dashboard "{matchedDashboard.nome}"
+                    </p>
+                  )}
+                </>
+              ) : (
+                <Input
+                  value={groupId}
+                  onChange={(e) => { setGroupId(e.target.value); setGroupTouched(true); }}
+                  placeholder="ID do grupo (ex: 120363...@g.us)"
+                />
+              )}
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label>Contas de anúncio</Label>

@@ -285,3 +285,27 @@ export async function runAdsetDiff(params: { access_token: string; ad_account_id
   if (error) throw new Error(error.message || "Erro no diff de adset");
   return data;
 }
+
+export type NotifyClientPauseParams = {
+  access_token: string;
+  ad_account_id: string;
+  level: "adset" | "ad";
+  node_id: string;
+  adset_id?: string;
+  node_name: string;
+  metric_label: string;
+  dry_run: boolean;
+};
+
+export type NotifyClientPauseResult =
+  | { ok: true; group_id: string; client_name: string | null; text: string; links: unknown }
+  | { ok: true; sent: true }
+  | { ok: false; reason: string };
+
+export async function notifyClientPause(params: NotifyClientPauseParams): Promise<NotifyClientPauseResult> {
+  const { data, error } = await supabase.functions.invoke("notify-client-whatsapp", {
+    body: params,
+  });
+  if (error) throw new Error(error.message);
+  return data as NotifyClientPauseResult;
+}
