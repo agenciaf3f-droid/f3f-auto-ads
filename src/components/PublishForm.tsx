@@ -326,6 +326,7 @@ export default function PublishForm() {
   const [selectedCampaign, setSelectedCampaign] = useState("");
   const [preset, setPreset] = useState<PresetId>("fase1-trafego");
   const [loadingCampaigns, setLoadingCampaigns] = useState(false);
+  const [loadingAdAccounts, setLoadingAdAccounts] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingAudiences, setLoadingAudiences] = useState(false);
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
@@ -806,6 +807,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
   const loadAdAccounts = async () => {
     if (!accessToken) return;
+    setLoadingAdAccounts(true);
     try {
       addLog("📡 Carregando todas as contas de anúncios...");
       const accounts = await fetchAdAccounts(accessToken);
@@ -813,6 +815,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       addLog(`✅ ${accounts.length} conta(s) encontrada(s)`);
     } catch (err: unknown) {
       addLog(`❌ Erro ao carregar contas: ${err instanceof Error ? err.message : "Erro"}`);
+    } finally {
+      setLoadingAdAccounts(false);
     }
   };
 
@@ -1764,13 +1768,19 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           {/* Ad Account */}
           <Card className="glass-card p-6 space-y-4">
             <Label className="font-display font-semibold text-sm">Conta de Anúncios ({adAccounts.length})</Label>
-            <SearchableSelect
-              options={adAccounts}
-              value={selectedAccount}
-              onValueChange={setSelectedAccount}
-              placeholder="Selecione a conta"
-              searchPlaceholder="Pesquisar por nome ou ID..."
-            />
+            {loadingAdAccounts && adAccounts.length === 0 ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" /> Carregando contas de anúncios...
+              </div>
+            ) : (
+              <SearchableSelect
+                options={adAccounts}
+                value={selectedAccount}
+                onValueChange={setSelectedAccount}
+                placeholder="Selecione a conta"
+                searchPlaceholder="Pesquisar por nome ou ID..."
+              />
+            )}
           </Card>
 
           {/* Identity */}
