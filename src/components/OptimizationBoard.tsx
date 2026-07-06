@@ -304,6 +304,31 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     toast({ title: "Campanha mantida", description: violation.campaignName });
   }
 
+  // Desliga a CAMPANHA inteira (PAUSED) direto do card — fallback sempre disponível, sem depender
+  // do drill-in de conjuntos/criativos (que some se a edge de estrutura falhar). Não dispara aviso
+  // WhatsApp: a edge notify opera por nó (adset/ad) e campanha não tem nó único. Reusa `pausingId`
+  // como trava de clique (card da lista e nós do drill nunca aparecem juntos, sem colisão).
+  async function handleDesligarCampanha(violation: OptimizationViolation) {
+    if (!accessToken) return;
+    setPausingId(violation.campaignId);
+    try {
+      await pauseCampaign(accessToken, violation.campaignId);
+    } catch (e) {
+      toast({ variant: "destructive", title: "Erro ao desligar", description: (e as Error).message });
+      setPausingId(null);
+      return;
+    }
+    // Pausa aplicada na Meta. Registra a ação (sai de Pendentes, entra no Histórico). Falha aqui
+    // (RLS/rede) não desfaz a pausa já feita — só o bookkeeping local fica pra trás, sem travar a UI.
+    try {
+      await recordAction(violation, "paused");
+    } catch (e) {
+      console.error("Falha ao registrar pausa da campanha em optimization_actions (já pausada na Meta)", e);
+    }
+    setPausingId(null);
+    toast({ title: "Campanha desligada", description: violation.campaignName });
+  }
+
   // Pausa só o NÓ clicado (conjunto ou criativo) — nunca a campanha inteira. pauseCampaign aceita
   // qualquer node id (Graph API: POST /{id}?status=PAUSED é idêntico pra campaign/adset/ad).
   async function pausarNo(node: MetaNodeInsight) {
@@ -461,6 +486,15 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => handleManter(v)}>
               {meta ? "Manter mais" : "Manter"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-destructive hover:text-destructive"
+              disabled={pausingId === v.campaignId}
+              onClick={() => handleDesligarCampanha(v)}
+            >
+              {pausingId === v.campaignId ? "Desligando..." : "Desligar"}
             </Button>
           </div>
         </CardContent>
