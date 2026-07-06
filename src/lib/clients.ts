@@ -68,7 +68,7 @@ export async function createClient(name: string, notes?: string, whatsappGroupId
   return data as Client;
 }
 
-export async function updateClient(id: string, fields: { name?: string; notes?: string | null }): Promise<void> {
+export async function updateClient(id: string, fields: { name?: string; notes?: string | null; whatsapp_group_id?: string | null }): Promise<void> {
   const { error } = await supabase.from("clients").update(fields).eq("id", id);
   if (error) throw new Error(error.message);
 }
