@@ -196,7 +196,22 @@ export async function fetchNodeInsights(
   }
   const { data, error } = await supabase.functions.invoke("meta-node-insights", { body });
   if (error && data) throw new Error(data.error || error.message);
-  if (error) throw new Error(error.message);
+  if (error) {
+    // Numa resposta non-2xx o supabase-js devolve error=FunctionsHttpError e data=null (NÃO parseia
+    // o body), então o guard acima não pega e cairíamos no genérico "Edge Function returned a
+    // non-2xx status code". A mensagem PT que a edge montou (ex.: rate-limit da Meta) fica no
+    // error.context (a Response) — lê ela pra mostrar a causa real. Mesmo padrão se repete nos
+    // outros invokes deste arquivo; corrigido só aqui (o do drill-in, que é o reportado).
+    let detail = error.message;
+    try {
+      const ctx = (error as { context?: Response }).context;
+      const body = ctx ? await ctx.json() : null;
+      if (body?.error) detail = body.error;
+    } catch {
+      // body não-JSON ou já consumido — mantém a mensagem genérica.
+    }
+    throw new Error(detail);
+  }
   return (data?.nodes || []) as MetaNodeInsight[];
 }
 
