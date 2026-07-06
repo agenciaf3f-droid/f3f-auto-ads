@@ -304,13 +304,13 @@ export default function PublishForm() {
     pending: number[];
   } | null>(null);
 
-  // FASE 2 COMPLETO multi-criativo: 1 campanha por criativo. Progresso p/ retomar SÓ os
-  // criativos pendentes numa 2ª tentativa — FASE 2 não tem dedupe lock no backend
-  // (é WhatsApp-only), então recomeçar do zero recriaria campanhas já publicadas.
+  // FASE 2 COMPLETO multi-criativo: 1 campanha por criativo. Guarda as campanhas já
+  // publicadas com sucesso nesta sessão, indexadas por CHAVE DE CONTEÚDO do criativo
+  // (name+link) — não por identidade do payload, que a validação recria a cada clique.
+  // FASE 2 não tem dedupe lock no backend (é WhatsApp-only), então republicar um criativo
+  // já publicado criaria campanha DUPLICADA (gasto dobrado). Este ref evita isso.
   const fase2MultiCampaignRef = useRef<{
-    payload: Record<string, unknown>;
-    campaigns: { name: string; campaignId: string; adsets: number; ads: number }[];
-    pending: number[];
+    campaigns: { name: string; key: string; campaignId: string; adsets: number; ads: number }[];
   } | null>(null);
 
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -318,7 +318,6 @@ export default function PublishForm() {
   const [metaLoading, setMetaLoading] = useState(true);
 
   const [adAccounts, setAdAccounts] = useState<AdAccount[]>([]);
-  const [loadingAdAccounts, setLoadingAdAccounts] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState("");
   const [audiences, setAudiences] = useState<Audience[]>([]);
   const [selectedAudience, setSelectedAudience] = useState("");
@@ -823,7 +822,6 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
   const loadAdAccounts = async () => {
     if (!accessToken) return;
-    setLoadingAdAccounts(true);
     try {
       addLog("📡 Carregando todas as contas de anúncios...");
       const accounts = await fetchAdAccounts(accessToken);
@@ -831,8 +829,6 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       addLog(`✅ ${accounts.length} conta(s) encontrada(s)`);
     } catch (err: unknown) {
       addLog(`❌ Erro ao carregar contas: ${err instanceof Error ? err.message : "Erro"}`);
-    } finally {
-      setLoadingAdAccounts(false);
     }
   };
 
@@ -1198,6 +1194,12 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       if (minBudget && per < minBudget) {
         errors.push(`Orçamento dividido (R$${per.toFixed(2)}/campanha) fica abaixo do mínimo da Meta (R$${minBudget}). Aumente o orçamento ou use "Orçamento por campanha".`);
       }
+    }
+    // COMPLETO multi-criativo cria SEMPRE campanhas novas (1 por criativo) — impossível
+    // empilhar N campanhas numa existente. Bloqueia (senão a escolha "campanha existente"
+    // seria descartada em silêncio e N campanhas novas subiriam mesmo assim).
+    if (!isFase2Adaptado && creatives.length > 1 && campaignStructure === "existing") {
+      errors.push('FASE 2 com múltiplos criativos sempre cria campanhas novas (1 por criativo). Desmarque "usar campanha existente" ou reduza para 1 criativo.');
     }
     return { valid: errors.length === 0, errors };
   };
@@ -1620,12 +1622,21 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           }
         };
 
-        // Retomada: mesmo payload de tentativa parcial → refaz SÓ os pendentes (sem dedupe
-        // no backend, recomeçar do zero recriaria as campanhas já publicadas = duplicata).
-        const resume = fase2MultiCampaignRef.current?.payload === vp ? fase2MultiCampaignRef.current : null;
-        const done: { name: string; campaignId: string; adsets: number; ads: number }[] = resume ? [...resume.campaigns] : [];
-        const pending: number[] = resume ? resume.pending : Array.from({ length: total }, (_, i) => i);
-        if (resume) addLog(`↻ [publish] Retomando — ${pending.length}/${total} criativo(s) pendente(s)`);
+        // Retomada por CHAVE DE CONTEÚDO do criativo (name+link), NÃO por identidade do objeto
+        // vp: a validação recria vp a cada clique, então comparar por referência perderia o
+        // rastro das campanhas já publicadas e as recriaria DUPLICADAS (backend não tem dedupe
+        // p/ FASE 2). Regra: nunca republicar um criativo já publicado com sucesso nesta sessão.
+        const creativeKey = (c: { name: string; link: string }) => `${c.name} ${c.link}`;
+        const prevDone = fase2MultiCampaignRef.current?.campaigns ?? [];
+        // chave name+link é única por criativo: o link (URL/shortcode) nunca contém espaço,
+        // então o separador " " não gera colisão entre criativos distintos.
+        const currentKeys = new Set(allCreatives.map(creativeKey));
+        // Só reaproveita campanhas cujo criativo pertence AO batch atual — evita vazar campanhas
+        // de um publish anterior não-relacionado pro resultado/contagem deste.
+        const done = prevDone.filter(d => currentKeys.has(d.key));
+        const publishedKeys = new Set(done.map(d => d.key));
+        const pending: number[] = allCreatives.map((_, i) => i).filter(i => !publishedKeys.has(creativeKey(allCreatives[i])));
+        if (done.length > 0) addLog(`↻ [publish] ${done.length} campanha(s) já publicada(s) nesta sessão — pulando; ${pending.length}/${total} pendente(s)`);
 
         const failNames: string[] = [];
         const creativeErrors: { name: string; error: string }[] = [];
@@ -1635,7 +1646,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           addLog(`📦 [publish] criativo ${i + 1}/${total} — "${allCreatives[i].name}" (nova campanha)`);
           const ri = await publishWithRetry(() => callFor(i), `${i + 1}/${total}`);
           if (ri?.ok && ri.campaign_id) {
-            done.push({ name: allCreatives[i].name, campaignId: ri.campaign_id, adsets: ri.adsets_created ?? 0, ads: ri.ads_created ?? 0 });
+            done.push({ name: allCreatives[i].name, key: creativeKey(allCreatives[i]), campaignId: ri.campaign_id, adsets: ri.adsets_created ?? 0, ads: ri.ads_created ?? 0 });
             addLog(`✅ criativo ${i + 1}/${total} ok — campanha ${ri.campaign_id}`);
           } else {
             const errMsg = ri?.error_user_msg || ri?.error_message || ri?.error || "erro desconhecido";
@@ -1659,7 +1670,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           toast.success(`${total} campanhas publicadas (1 por criativo)!`);
           setValidatedPayload(null);
         } else {
-          fase2MultiCampaignRef.current = { payload: vp, campaigns: done, pending: stillPending };
+          fase2MultiCampaignRef.current = { campaigns: done };
           addLog(`⚠️ Parcial: ${done.length}/${total} campanhas criadas. Falharam: ${failNames.join(", ")}`);
           setPublishResult({ ok: false, step: "partial", campaign_id: campaignIds[0], campaign_ids: campaignIds, adsets_created: totalAdsets, ads_created: totalAds, error_message: `${failNames.length}/${total} criativos falharam`, creative_errors: creativeErrors });
           toast.error(`${failNames.length}/${total} criativos falharam — clique Publicar pra retomar os pendentes.`, { duration: 8000 });
@@ -1916,19 +1927,13 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           {/* Ad Account */}
           <Card className="glass-card p-6 space-y-4">
             <Label className="font-display font-semibold text-sm">Conta de Anúncios ({adAccounts.length})</Label>
-            {loadingAdAccounts ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="w-4 h-4 animate-spin" /> Carregando contas de anúncios...
-              </div>
-            ) : (
-              <SearchableSelect
-                options={adAccounts}
-                value={selectedAccount}
-                onValueChange={setSelectedAccount}
-                placeholder="Selecione a conta"
-                searchPlaceholder="Pesquisar por nome ou ID..."
-              />
-            )}
+            <SearchableSelect
+              options={adAccounts}
+              value={selectedAccount}
+              onValueChange={setSelectedAccount}
+              placeholder="Selecione a conta"
+              searchPlaceholder="Pesquisar por nome ou ID..."
+            />
           </Card>
 
           {/* Identity */}
