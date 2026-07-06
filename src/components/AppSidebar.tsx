@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Megaphone, Users, Settings, Gauge } from "lucide-react";
+import { Megaphone, Users, Settings, Gauge, History } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -21,6 +21,7 @@ type NavItem = {
 const NAV_ITEMS: NavItem[] = [
   { label: "Campanhas", to: "/", icon: Megaphone },
   { label: "Otimizações", to: "/otimizacoes", icon: Gauge },
+  { label: "Histórico", to: "/historico", icon: History },
   { label: "Clientes", to: "/clientes", icon: Users },
   { label: "Config", to: "/settings", icon: Settings },
 ];

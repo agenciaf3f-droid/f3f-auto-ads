@@ -8,6 +8,19 @@ const corsHeaders = {
 // Mesmos campos de meta-campaign-insights (subset usado pelas métricas do registry).
 const INSIGHTS_FIELDS = "spend,impressions,clicks,actions,video_p95_watched_actions";
 
+// Rate-limit / transiente da Meta (mesmos códigos de meta-campaign-insights). Sem traduzir, o dialog
+// fecharia mostrando "(#17) User request limit reached" cru; com tradução dá mensagem acionável.
+const TRANSIENT_META_CODES = [1, 2, 4, 17, 32, 341, 613];
+const metaErrorResponse = (err: { code?: number; is_transient?: boolean; message?: string }) => {
+  const transient = !!err && (err.is_transient === true || TRANSIENT_META_CODES.includes(Number(err.code)));
+  const message = transient
+    ? "Limite de requisições da Meta atingido, tente novamente mais tarde."
+    : (err?.message ?? "Erro desconhecido da Meta");
+  return new Response(JSON.stringify({ error: message }), {
+    status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+};
+
 type Level = "adset" | "ad";
 
 type ActionValue = { action_type: string; value: string };
@@ -58,21 +71,16 @@ Deno.serve(async (req) => {
     // devolve uma linha por adset_id/ad_id, sem precisar de 1 chamada por nó).
     const structureFields = level === "adset" ? "id,name,effective_status" : "id,name,effective_status,adset_id";
     const structureUrl = `https://graph.facebook.com/v25.0/${campaign_id}/${level}s?fields=${structureFields}&limit=200&access_token=${access_token}`;
-    const insightsUrl = `https://graph.facebook.com/v25.0/${campaign_id}/insights?level=${level}&fields=${INSIGHTS_FIELDS}&${rangeParam}&access_token=${access_token}`;
+    // limit=200 no insights TAMBÉM: o /insights?level=adset|ad pagina em ~25 por default. Sem isso,
+    // campanha com >25 nós (FASE 2 = 1 criativo + N adsets) traz métrica só dos 25 primeiros e o
+    // resto renderiza "sem dados" — gestor pausaria o nó errado.
+    const insightsUrl = `https://graph.facebook.com/v25.0/${campaign_id}/insights?level=${level}&fields=${INSIGHTS_FIELDS}&${rangeParam}&limit=200&access_token=${access_token}`;
 
     const [structureRes, insightsRes] = await Promise.all([fetch(structureUrl), fetch(insightsUrl)]);
     const [structureData, insightsData] = await Promise.all([structureRes.json(), insightsRes.json()]);
 
-    if (structureData.error) {
-      return new Response(JSON.stringify({ error: structureData.error.message }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    if (insightsData.error) {
-      return new Response(JSON.stringify({ error: insightsData.error.message }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (structureData.error) return metaErrorResponse(structureData.error);
+    if (insightsData.error) return metaErrorResponse(insightsData.error);
 
     const idField = level === "adset" ? "adset_id" : "ad_id";
     const insightsByNodeId = new Map<string, Record<string, unknown>>();

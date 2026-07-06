@@ -84,19 +84,27 @@ export type OptimizationHistoryEntry = {
 // campanha já mantida/desligada, reavaliada ao vivo). `actions` são TODAS as ações do gestor; a
 // função deduplica pra a mais recente por campanha (por createdAt). `currentRangeKey` = período
 // atual da tela — "piorou" só é calculado quando o snapshot foi tirado nesse mesmo período.
+// Chave de ação = campanha + MÉTRICA do snapshot. Uma ação trata UMA métrica, não a campanha
+// inteira: se a campanha estoura CPC e o gestor mantém, um estouro NOVO de CTR depois continua
+// aparecendo em Pendentes (antes sumia junto, sem volta).
+const actionKey = (campaignId: string, metric?: string) => `${campaignId}::${metric ?? ""}`;
+
 export function buildOptimizationView(
   found: OptimizationViolation[],
   actions: OptimizationActionRecord[],
   currentRangeKey: string,
 ): { pendentes: OptimizationViolation[]; history: OptimizationHistoryEntry[] } {
-  // Última ação por campanha (robusto à ordem de entrada — compara createdAt, não posição).
+  // Última ação por (campanha, métrica) (robusto à ordem de entrada — compara createdAt, não posição).
   const latest = new Map<string, OptimizationActionRecord>();
   for (const a of actions) {
-    const prev = latest.get(a.campaignId);
-    if (!prev || a.createdAt > prev.createdAt) latest.set(a.campaignId, a);
+    const k = actionKey(a.campaignId, a.snapshot?.metric);
+    const prev = latest.get(k);
+    if (!prev || a.createdAt > prev.createdAt) latest.set(k, a);
   }
+  const actionedPairs = new Set(latest.keys());
 
-  const pendentes = found.filter((v) => !latest.has(v.campaignId));
+  // Pendente = violação (campanha, métrica) que nunca foi tratada nessa métrica específica.
+  const pendentes = found.filter((v) => !actionedPairs.has(actionKey(v.campaignId, v.metric)));
 
   // Uma campanha pode ter >1 métrica fora ao mesmo tempo — guardamos todas por campanha.
   const liveByCampaign = new Map<string, OptimizationViolation[]>();
@@ -107,11 +115,13 @@ export function buildOptimizationView(
   }
 
   const history: OptimizationHistoryEntry[] = [];
-  for (const [campaignId, action] of latest) {
-    const lvs = liveByCampaign.get(campaignId) ?? [];
+  for (const action of latest.values()) {
     const snap = action.snapshot ?? {};
-    // Compara maçã com maçã: prefere a violação da MESMA métrica do snapshot; senão a 1ª.
-    const live = lvs.find((v) => v.metric === snap.metric) ?? lvs[0] ?? null;
+    const lvs = liveByCampaign.get(action.campaignId) ?? [];
+    // SÓ a violação da MESMA métrica do snapshot — sem fallback pra outra métrica (comparar CPC
+    // com CPM daria "estava em 3 → agora 25" e um "Piorou" falso). Sem match = live null (métrica
+    // já dentro do limite / inativa).
+    const live = lvs.find((v) => v.metric === snap.metric) ?? null;
     const comparable =
       live != null && typeof snap.actual === "number" && snap.rangeKey != null && snap.rangeKey === currentRangeKey;
     const worsened = comparable ? hasWorsened(live!.operator, live!.actual, snap.actual as number) : false;
@@ -151,6 +161,9 @@ export function compareKpis(
       impressions: insight.impressions as string,
       clicks: insight.clicks as string,
       actions: insight.actions as InsightRow["actions"],
+      // Sem isso agg.vv95 fica 0 e a métrica cpv95 (CPV95%, KPI de FASE 2) devolve null sempre —
+      // regra jamais dispara. meta-campaign-insights já traz o campo em INSIGHTS_FIELDS.
+      video_p95_watched_actions: insight.video_p95_watched_actions as InsightRow["video_p95_watched_actions"],
     };
     const agg = aggregateByAccountBucket([row]).get(bucketKey(config.adAccountId, campaignBucket));
 

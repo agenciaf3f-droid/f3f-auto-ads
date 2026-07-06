@@ -172,11 +172,33 @@ describe("buildOptimizationView", () => {
     expect(history[0].worsened).toBe(false);
   });
 
-  it("snapshot legado (sem actual/rangeKey) não é comparável e não crasha", () => {
-    const { history } = buildOptimizationView([viol({ actual: 999 })], [act({ snapshot: {} })], RK);
+  it("snapshot legado (sem métrica/actual/rangeKey) não é comparável, não crasha, e não engole a violação viva", () => {
+    // Ação sem métrica não casa com nenhuma violação viva → a violação de cpc segue em Pendentes
+    // (não sumiu) e a entrada de histórico fica sem live.
+    const { pendentes, history } = buildOptimizationView([viol({ actual: 999 })], [act({ snapshot: {} })], RK);
+    expect(pendentes).toHaveLength(1);
     expect(history[0].comparable).toBe(false);
     expect(history[0].worsened).toBe(false);
-    expect(history[0].live).not.toBeNull();
+    expect(history[0].live).toBeNull();
+  });
+
+  it("2ª métrica que estoura depois NÃO é engolida: fica em Pendentes mesmo com a 1ª já tratada", () => {
+    const found = [viol({ metric: "cpc", actual: 3 }), viol({ metric: "ctr", operator: "<", actual: 0.5 })];
+    const actions = [act({ snapshot: { metric: "cpc", actual: 3, operator: ">", rangeKey: RK } })]; // manteve só cpc
+    const { pendentes, history } = buildOptimizationView(found, actions, RK);
+    expect(pendentes.map((v) => v.metric)).toEqual(["ctr"]); // ctr novo continua alertando
+    expect(history).toHaveLength(1);
+    expect(history[0].action.snapshot.metric).toBe("cpc");
+    expect(history[0].live?.metric).toBe("cpc");
+  });
+
+  it("não faz comparação cross-métrica: ação de cpc + violação viva só de cpm → live null, sem 'piorou' falso", () => {
+    const found = [viol({ metric: "cpm", actual: 25 })];
+    const actions = [act({ snapshot: { metric: "cpc", actual: 3, operator: ">", rangeKey: RK } })];
+    const { pendentes, history } = buildOptimizationView(found, actions, RK);
+    expect(pendentes.map((v) => v.metric)).toEqual(["cpm"]); // cpm nunca tratado → pendente
+    expect(history[0].live).toBeNull();                       // cpc sem violação viva → resolvido
+    expect(history[0].worsened).toBe(false);
   });
 
   it("campanha tratada que sarou/foi pausada (fora da avaliação ao vivo) fica no Histórico com live=null", () => {

@@ -10,6 +10,7 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import AppLayout from "@/components/AppLayout";
 const Index = lazy(() => import("./pages/Index"));
 const OtimizacoesPage = lazy(() => import("./pages/OtimizacoesPage"));
+const HistoricoPage = lazy(() => import("./pages/HistoricoPage"));
 const ClientesPage = lazy(() => import("./pages/ClientesPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const AdminPage = lazy(() => import("./pages/AdminPage"));
@@ -32,6 +33,7 @@ const App = () => (
                 <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
                   <Route path="/" element={<Index />} />
                   <Route path="/otimizacoes" element={<OtimizacoesPage />} />
+                  <Route path="/historico" element={<HistoricoPage />} />
                   <Route path="/clientes" element={<ClientesPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                   <Route path="/admin" element={<AdminPage />} />
