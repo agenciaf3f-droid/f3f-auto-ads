@@ -78,13 +78,22 @@ export async function deleteClient(id: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
-// Dashboards da base Agenciaf3f (client_dashboards) que já têm grupo de WhatsApp mapeado —
-// usado pelo ClientForm para auto-casar por nome e pré-preencher whatsapp_group_id na criação.
+// Grupos de WhatsApp conhecidos (tabela local, sincronizada de Agenciaf3f) — usado pelo
+// ClientForm para auto-casar por nome e pré-preencher whatsapp_group_id na criação/edição.
 export async function listClientDashboards(): Promise<{ nome: string; email: string | null; whatsapp_group_id: string }[]> {
   const { data, error } = await supabase.functions.invoke("list-client-dashboards", { body: {} });
   if (error) throw new Error(error.message);
   if (data?.error) throw new Error(data.error);
   return data.dashboards;
+}
+
+// Roda a sincronização pesada (Agenciaf3f: client_dashboards + log de mensagens) e grava na
+// tabela local whatsapp_groups. Chamado sob demanda (botão "Sincronizar" no ClientForm).
+export async function syncWhatsappGroups(): Promise<{ synced: number; from_dashboards: number; from_log: number }> {
+  const { data, error } = await supabase.functions.invoke("sync-whatsapp-groups", { body: {} });
+  if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(data.error);
+  return data;
 }
 
 // ── client_ad_accounts ───────────────────────────────────────────────────────

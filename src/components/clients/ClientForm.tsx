@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,6 +17,7 @@ import {
   unlinkAdAccount,
   listClientAdAccounts,
   listClientDashboards,
+  syncWhatsappGroups,
   type Client,
   type ClientAdAccount,
 } from "@/lib/clients";
@@ -80,6 +81,7 @@ export default function ClientForm({
   const [groupId, setGroupId] = useState("");
   const [groupTouched, setGroupTouched] = useState(false);
   const [groupSearch, setGroupSearch] = useState("");
+  const [syncingGroups, setSyncingGroups] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -98,13 +100,30 @@ export default function ClientForm({
     }
   }, [open, client, isEdit]);
 
-  // Dashboards da base Agenciaf3f (nome→grupo) — pro dropdown de grupo, na criação E na edição.
+  // Grupos conhecidos (tabela local, sincronizada de Agenciaf3f) — pro dropdown de grupo, na
+  // criação E na edição.
   useEffect(() => {
     if (!open) return;
     listClientDashboards()
       .then((rows) => setDashboards(rows))
       .catch(() => setDashboards([])); // sem integração configurada ainda → cai no fallback manual
   }, [open]);
+
+  // Re-sincroniza da base Agenciaf3f sob demanda (botão) — não roda sozinho, é pesado (~99k
+  // linhas do log de mensagens do lado de lá).
+  async function handleSyncGroups() {
+    setSyncingGroups(true);
+    try {
+      const res = await syncWhatsappGroups();
+      toast.success(`Grupos sincronizados: ${res.synced} (${res.from_dashboards} do dashboard, ${res.from_log} do log).`);
+      const rows = await listClientDashboards();
+      setDashboards(rows);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao sincronizar grupos");
+    } finally {
+      setSyncingGroups(false);
+    }
+  }
 
   // Auto-casa o grupo pelo nome normalizado enquanto o gestor não mexer manualmente no campo.
   useEffect(() => {
@@ -231,7 +250,24 @@ export default function ClientForm({
           </div>
 
           <div className="space-y-1.5">
-            <Label>Grupo do WhatsApp (cliente)</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label>Grupo do WhatsApp (cliente)</Label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs text-muted-foreground"
+                onClick={handleSyncGroups}
+                disabled={syncingGroups}
+              >
+                {syncingGroups ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : (
+                  <RefreshCw className="h-3 w-3 mr-1" />
+                )}
+                Sincronizar
+              </Button>
+            </div>
             {dashboards.length > 0 ? (
               <>
                 {/* Inline (input + lista scrollável), como o picker de contas — NÃO usa portal:
