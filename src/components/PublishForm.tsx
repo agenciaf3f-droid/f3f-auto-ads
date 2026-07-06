@@ -44,7 +44,7 @@ interface Audience { id: string; name: string; type: "custom" | "saved"; targeti
 interface Campaign { id: string; name: string; status: string; objective: string; effective_status?: string; daily_budget?: string; lifetime_budget?: string; bid_strategy?: string }
 interface WhatsAppNumber { id: string; display: string; phone: string; page_id: string; page_name: string; status?: string; waba_id?: string }
 interface MessageTemplate { id: string; name: string; greeting: string; ready_message: string }
-interface PublishResult { ok?: boolean; campaign_id?: string; adset_id?: string; ad_id?: string; creative_id?: string; error?: string; step?: string; error_message?: string; error_code?: number | null; error_subcode?: number | null; error_user_msg?: string; error_user_title?: string; raw_error?: any; logs?: { step: string; status: string; ts: string; detail?: string }[]; adsets_created?: number; ads_created?: number; warning?: boolean; creative_errors?: { name: string; error: string }[] }
+interface PublishResult { ok?: boolean; campaign_id?: string; campaign_ids?: string[]; adset_id?: string; ad_id?: string; creative_id?: string; error?: string; step?: string; error_message?: string; error_code?: number | null; error_subcode?: number | null; error_user_msg?: string; error_user_title?: string; raw_error?: any; logs?: { step: string; status: string; ts: string; detail?: string }[]; adsets_created?: number; ads_created?: number; warning?: boolean; creative_errors?: { name: string; error: string }[] }
 interface ErrorDetails { message?: string; error_user_title?: string; error_user_msg?: string; code?: number | null; error_subcode?: number | null; error_data?: any }
 interface ValidationResult { valid: boolean; checks?: { label: string; ok: boolean; detail: string }[]; error?: string; error_details?: ErrorDetails; min_budget?: number | null }
 
@@ -304,6 +304,15 @@ export default function PublishForm() {
     pending: number[];
   } | null>(null);
 
+  // FASE 2 COMPLETO multi-criativo: 1 campanha por criativo. Guarda as campanhas já
+  // publicadas com sucesso nesta sessão, indexadas por CHAVE DE CONTEÚDO do criativo
+  // (name+link) — não por identidade do payload, que a validação recria a cada clique.
+  // FASE 2 não tem dedupe lock no backend (é WhatsApp-only), então republicar um criativo
+  // já publicado criaria campanha DUPLICADA (gasto dobrado). Este ref evita isso.
+  const fase2MultiCampaignRef = useRef<{
+    campaigns: { name: string; key: string; campaignId: string; adsets: number; ads: number }[];
+  } | null>(null);
+
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [metaName, setMetaName] = useState("");
   const [metaLoading, setMetaLoading] = useState(true);
@@ -387,6 +396,10 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const [fase2AgeMin, setFase2AgeMin] = useState("18");
   const [fase2AgeMax, setFase2AgeMax] = useState("65");
   const [fase2Gender, setFase2Gender] = useState<"all" | "male" | "female">("all");
+  // COMPLETO multi-criativo (1 campanha por criativo): como distribuir o orçamento entre
+  // as N campanhas. "per_campaign" = cada campanha recebe o budget cheio (gasto N×).
+  // "split" = budget dividido por N (mantém o gasto total de 1 criativo só).
+  const [fase2BudgetSplitMode, setFase2BudgetSplitMode] = useState<"per_campaign" | "split">("per_campaign");
   // L.T (FASE 3 LP) — público Advantage + sugestões de idade/gênero
   const [ltAdvantage, setLtAdvantage] = useState(true);
   // Transparência (DSA): beneficiário/pagador — puxado da conta, fixo, não editável pelo usuário.
@@ -524,7 +537,10 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   }, [selectedAccount, selectedAudience, budget, preset, campaignStructure, distributionStructure,
       selectedCampaign, selectedWhatsappId, greetingText, readyMessage, selectedTemplateId,
       useCustomMessage, scheduleEnabled, scheduleDate, scheduleTime,
-      includedLocations, excludedLocations, campaignNameInput, adsetNameInput]);
+      includedLocations, excludedLocations, campaignNameInput, adsetNameInput,
+      // Mudar a distribuição de orçamento (FASE 2 COMPLETO) muda o gasto → re-validar obrigatório
+      // (senão handlePublish leria o modo antigo do payload validado e publicaria o gasto errado).
+      fase2BudgetSplitMode]);
 
   // Reset validação quando o user MUDA algo visível em criativos (link/type/name/count).
   // NÃO inclui `validation` em si — então gravar resultado de validação não dispara reset.
@@ -1029,6 +1045,12 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const isFase3VendasZap = selectedPreset.id === "fase3-vendas-zap";
   const isFase2 = selectedPreset.fase === "FASE 2";
   const isFase2Adaptado = selectedPreset.id === "fase2-polones-adaptado";
+  // COMPLETO com N>1 criativos → 1 campanha por criativo (único caso que expõe a escolha
+  // de divisão de orçamento). ADAPTADO nunca tem N>1.
+  const fase2MultiCreative = isFase2 && !isFase2Adaptado && creatives.length > 1;
+  const fase2PerCampaignBudget = fase2MultiCreative && fase2BudgetSplitMode === "split"
+    ? Number(budget || 0) / creatives.length
+    : Number(budget || 0);
   const selectedWhatsapp = whatsappNumbers.find(n => n.id === selectedWhatsappId);
 
   // Multi-público: FASE 1 (perfil IG) + FASE 3 ZAP (Leads/Vendas). NÃO inclui LP/website (Advantage+).
@@ -1110,7 +1132,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const structureDescription = isFase2
     ? isFase2Adaptado
       ? `1 Campanha → 1 Conjunto (${fase2Audiences.length || "N"} públicos combinados) → 1 Anúncio (criativo compartilhado)`
-      : `1 Campanha → ${fase2Audiences.length || "N"} Conjunto(s) → 1 Ad/conjunto (criativo compartilhado)`
+      : creatives.length > 1
+        ? `${creatives.length} Campanhas (1 por criativo) → ${fase2Audiences.length || "N"} Conjunto(s) cada — ${fase2BudgetSplitMode === "split" ? `R$${fase2PerCampaignBudget.toFixed(2)}/dia por campanha (orçamento dividido)` : `R$${budget || "0"}/dia por campanha (gasto ${creatives.length}×)`}`
+        : `1 Campanha → ${fase2Audiences.length || "N"} Conjunto(s) → 1 Ad/conjunto (criativo compartilhado)`
     : distributionStructure === "CBO"
       ? `1 Campanha → 1 Conjunto → ${creatives.length} Anúncio(s)`
       : `1 Campanha → ${creatives.length} Conjunto(s) → 1 Anúncio/conjunto`;
@@ -1160,7 +1184,27 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     // num único conjunto; COMPLETO cria 1 conjunto por público), não na quantidade permitida.
     if (fase2Audiences.length < 2) errors.push("FASE 2 requer no mínimo 2 públicos selecionados.");
     if (fase2Audiences.length > 10) errors.push("FASE 2 aceita no máximo 10 públicos.");
-    if (creatives.length !== 1) errors.push("FASE 2 exige exatamente 1 criativo (vídeo).");
+    // ADAPTADO: exatamente 1 criativo (1 conjunto combinado, criativo compartilhado).
+    // COMPLETO: N≥1 criativos — cada criativo vira 1 campanha própria (1 campanha por criativo).
+    if (isFase2Adaptado) {
+      if (creatives.length !== 1) errors.push("FASE 2 exige exatamente 1 criativo (vídeo).");
+    } else if (creatives.length < 1) {
+      errors.push("FASE 2 exige ao menos 1 criativo (vídeo).");
+    }
+    // COMPLETO + "dividir orçamento": cada campanha recebe budget/N. Se cair abaixo do mínimo
+    // da Meta, bloqueia aqui (senão a Meta rejeita o adset com daily_budget inválido).
+    if (!isFase2Adaptado && fase2BudgetSplitMode === "split" && creatives.length > 1) {
+      const per = Number(budget || 0) / creatives.length;
+      if (minBudget && per < minBudget) {
+        errors.push(`Orçamento dividido (R$${per.toFixed(2)}/campanha) fica abaixo do mínimo da Meta (R$${minBudget}). Aumente o orçamento ou use "Orçamento por campanha".`);
+      }
+    }
+    // COMPLETO multi-criativo cria SEMPRE campanhas novas (1 por criativo) — impossível
+    // empilhar N campanhas numa existente. Bloqueia (senão a escolha "campanha existente"
+    // seria descartada em silêncio e N campanhas novas subiriam mesmo assim).
+    if (!isFase2Adaptado && creatives.length > 1 && campaignStructure === "existing") {
+      errors.push('FASE 2 com múltiplos criativos sempre cria campanhas novas (1 por criativo). Desmarque "usar campanha existente" ou reduza para 1 criativo.');
+    }
     return { valid: errors.length === 0, errors };
   };
 
@@ -1442,6 +1486,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         // preset.objective/optimization_goal/etc são idênticos ao Completo — sem esta flag o backend
         // não tem como distinguir os dois presets.
         fase2_combined_adset: isFase2 ? isFase2Adaptado : undefined,
+        // Divisão de orçamento entre criativos (COMPLETO N>1). Backend NÃO usa este campo — a
+        // divisão é feita no frontend por chamada; viaja no payload só p/ handlePublish ler o modo.
+        fase2_budget_split_mode: fase2MultiCreative ? fase2BudgetSplitMode : undefined,
         lt_advantage: isFase3Lp ? ltAdvantage : undefined,
         schedule,
         utm_template: utmTemplate.trim() || UTM_DEFAULT,
@@ -1520,11 +1567,127 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       const vp = validatedPayload as Record<string, unknown>;
       const allCreatives = (Array.isArray(vp.creatives) ? vp.creatives : []) as Array<{ type: string; link: string; name: string }>;
 
+      // Modo lido do PAYLOAD VALIDADO (não do estado do form, que pode ter mudado).
+      const isVpFase2 = Array.isArray(vp.fase2_audiences) && (vp.fase2_audiences as string[]).length > 0;
+      const isVpFase2Adaptado = vp.fase2_combined_adset === true;
+
+      // === FASE 2 COMPLETO, N>1 criativos → 1 CAMPANHA POR CRIATIVO ===
+      // Cada criativo vira sua própria campanha auto-contida: seu vídeo, sua VV50%, seu
+      // Balde e seus M conjuntos (um por público). NÃO reusa campanha (ao contrário do
+      // loop genérico abaixo, que empilha criativos numa mesma campanha). 1 chamada por
+      // criativo porque resolver N vídeos numa única chamada estoura o teto de 150s da
+      // edge. ADAPTADO nunca cai aqui (exige exatamente 1 criativo).
+      if (isVpFase2 && !isVpFase2Adaptado && allCreatives.length > 1) {
+        const total = allCreatives.length;
+        const baseName = String(vp.campaign_name || vp.generated_name || "Campaign");
+        const nameFor = (i: number) => `${baseName} - ${allCreatives[i].name}`;
+        // Orçamento por campanha: "split" divide o budget do form por N (mantém o gasto total
+        // de 1 criativo); "per_campaign" manda o budget cheio pra cada campanha (gasto N×).
+        // budget é o mesmo knob do backend (ABO: daily_budget por adset; CBO: da campanha).
+        const splitBudget = vp.fase2_budget_split_mode === "split";
+        const perCampaignBudget = splitBudget && total > 0 ? Number(vp.budget) / total : Number(vp.budget);
+        const callFor = (i: number) => {
+          const c = allCreatives[i];
+          return publishAd({
+            ...vp,
+            creatives: [c],
+            creative_link: c.link, creative_type: c.type, creative_name: c.name, ad_name: c.name,
+            campaign_name: nameFor(i),
+            generated_name: nameFor(i),
+            budget: perCampaignBudget, // override do vp.budget (divide no modo split)
+            existing_campaign_id: undefined, // cada chamada cria a SUA campanha
+          });
+        };
+
+        // SERIAL (concorrência 1): cada chamada faz read-modify-write no público "Balde"
+        // (recurso compartilhado por conta, sem lock — dedupe é WhatsApp-only). Em paralelo,
+        // updates simultâneos se perdem (lost update) e o Balde ganharia MENOS de N vídeos.
+        addLog(`🚀 [publish] FASE 2 COMPLETO — ${total} criativos → ${total} campanhas (1 por criativo, serial p/ não corromper o Balde) — orçamento: ${splitBudget ? `dividido, R$${perCampaignBudget.toFixed(2)}/campanha` : `R$${perCampaignBudget.toFixed(2)}/campanha (gasto ${total}×)`}`);
+
+        let rateLimitTripped = false;
+        const publishWithRetry = async (thunk: () => Promise<any>, label: string): Promise<any> => {
+          let attempt = 0;
+          for (;;) {
+            let ri: any, threw = false;
+            try { ri = await thunk(); }
+            catch (e) { threw = true; ri = { ok: false, _transport: true, error_message: e instanceof Error ? e.message : "erro de transporte" }; }
+            if (ri?.ok) return ri;
+            if (ri?.warning || ri?.step === "idempotency") return ri;
+            const cls = classifyRetry(ri, threw);
+            if (cls === "rate_limit") { rateLimitTripped = true; return ri; }
+            if (cls === "fast" && attempt < PUBLISH_BACKOFF.length) {
+              const wait = PUBLISH_BACKOFF[attempt] + Math.floor(Math.random() * 800);
+              addLog(`⏳ [publish] ${label} transiente — retry em ${Math.round(wait / 1000)}s`);
+              attempt++;
+              await sleep(wait);
+              continue;
+            }
+            return ri;
+          }
+        };
+
+        // Retomada por CHAVE DE CONTEÚDO do criativo (name+link), NÃO por identidade do objeto
+        // vp: a validação recria vp a cada clique, então comparar por referência perderia o
+        // rastro das campanhas já publicadas e as recriaria DUPLICADAS (backend não tem dedupe
+        // p/ FASE 2). Regra: nunca republicar um criativo já publicado com sucesso nesta sessão.
+        const creativeKey = (c: { name: string; link: string }) => `${c.name} ${c.link}`;
+        const prevDone = fase2MultiCampaignRef.current?.campaigns ?? [];
+        // chave name+link é única por criativo: o link (URL/shortcode) nunca contém espaço,
+        // então o separador " " não gera colisão entre criativos distintos.
+        const currentKeys = new Set(allCreatives.map(creativeKey));
+        // Só reaproveita campanhas cujo criativo pertence AO batch atual — evita vazar campanhas
+        // de um publish anterior não-relacionado pro resultado/contagem deste.
+        const done = prevDone.filter(d => currentKeys.has(d.key));
+        const publishedKeys = new Set(done.map(d => d.key));
+        const pending: number[] = allCreatives.map((_, i) => i).filter(i => !publishedKeys.has(creativeKey(allCreatives[i])));
+        if (done.length > 0) addLog(`↻ [publish] ${done.length} campanha(s) já publicada(s) nesta sessão — pulando; ${pending.length}/${total} pendente(s)`);
+
+        const failNames: string[] = [];
+        const creativeErrors: { name: string; error: string }[] = [];
+        const stillPending: number[] = [];
+        await runPool(pending, 1, async (i) => {
+          if (rateLimitTripped) { stillPending.push(i); return; }
+          addLog(`📦 [publish] criativo ${i + 1}/${total} — "${allCreatives[i].name}" (nova campanha)`);
+          const ri = await publishWithRetry(() => callFor(i), `${i + 1}/${total}`);
+          if (ri?.ok && ri.campaign_id) {
+            done.push({ name: allCreatives[i].name, key: creativeKey(allCreatives[i]), campaignId: ri.campaign_id, adsets: ri.adsets_created ?? 0, ads: ri.ads_created ?? 0 });
+            addLog(`✅ criativo ${i + 1}/${total} ok — campanha ${ri.campaign_id}`);
+          } else {
+            const errMsg = ri?.error_user_msg || ri?.error_message || ri?.error || "erro desconhecido";
+            failNames.push(allCreatives[i].name);
+            creativeErrors.push({ name: allCreatives[i].name, error: errMsg });
+            stillPending.push(i);
+            if (ri?.logs) for (const l of ri.logs) addLog(`  [${l.step}] ${l.status}${l.detail ? ` — ${l.detail}` : ""}`);
+            addLog(`❌ criativo ${i + 1}/${total} falhou: ${errMsg}`);
+          }
+        }, 400);
+        if (rateLimitTripped) addLog(`🛑 [publish] Rate limit da Meta — parei de despachar. Aguarde ~15 min e clique Publicar pra retomar os pendentes.`);
+
+        const campaignIds = done.map(d => d.campaignId);
+        const totalAdsets = done.reduce((s, d) => s + d.adsets, 0);
+        const totalAds = done.reduce((s, d) => s + d.ads, 0);
+
+        if (stillPending.length === 0) {
+          fase2MultiCampaignRef.current = null;
+          setPublishResult({ ok: true, campaign_id: campaignIds[0], campaign_ids: campaignIds, adsets_created: totalAdsets, ads_created: totalAds });
+          logRef.current?.clear();
+          toast.success(`${total} campanhas publicadas (1 por criativo)!`);
+          setValidatedPayload(null);
+        } else {
+          fase2MultiCampaignRef.current = { campaigns: done };
+          addLog(`⚠️ Parcial: ${done.length}/${total} campanhas criadas. Falharam: ${failNames.join(", ")}`);
+          setPublishResult({ ok: false, step: "partial", campaign_id: campaignIds[0], campaign_ids: campaignIds, adsets_created: totalAdsets, ads_created: totalAds, error_message: `${failNames.length}/${total} criativos falharam`, creative_errors: creativeErrors });
+          toast.error(`${failNames.length}/${total} criativos falharam — clique Publicar pra retomar os pendentes.`, { duration: 8000 });
+        }
+        return;
+      }
+
       // === ORQUESTRAÇÃO: N>1 criativos → 1 chamada por criativo ===
       // Edge function tem teto de 150s + memória limitada; resolver N vídeos numa
       // chamada estoura (OOM/timeout). Quebramos em chamadas pequenas reusando a
       // campanha da 1ª (CBO reusa o adset; ABO cria adset novo por chamada — backend decide).
-      if (allCreatives.length > 1) {
+      // FASE 2 é tratada acima (1 campanha por criativo, sem reuso) — excluída aqui.
+      if (allCreatives.length > 1 && !isVpFase2) {
         const total = allCreatives.length;
         const callFor = (idx: number, extra: Record<string, unknown>) => {
           const c = allCreatives[idx];
@@ -2280,10 +2443,46 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 Mínimo permitido pelo Meta: R$ {minBudget}
               </p>
             )}
-            {distributionStructure === "ABO" && creatives.length > 1 && (
+            {!isFase2 && distributionStructure === "ABO" && creatives.length > 1 && (
               <p className="text-[10px] text-muted-foreground">
                 Cada conjunto terá R$ {budget || "0"}/dia × {creatives.length} conjuntos = R$ {(Number(budget || 0) * creatives.length).toFixed(2)}/dia total
               </p>
+            )}
+            {/* FASE 2 COMPLETO N>1: 1 campanha por criativo → escolha de distribuição do orçamento */}
+            {fase2MultiCreative && (
+              <div className="space-y-2 pt-1 border-t border-border/40">
+                <Label className="text-xs font-medium">Orçamento entre os {creatives.length} criativos</Label>
+                <RadioGroup
+                  value={fase2BudgetSplitMode}
+                  onValueChange={(v) => setFase2BudgetSplitMode(v as "per_campaign" | "split")}
+                  className="gap-2"
+                >
+                  <div className="flex items-start space-x-2">
+                    <RadioGroupItem value="per_campaign" id="f2budget-per" className="mt-0.5" disabled={loading} />
+                    <Label htmlFor="f2budget-per" className="text-xs cursor-pointer leading-tight font-normal">
+                      <span className="font-medium">Orçamento por campanha</span>{" "}
+                      <span className="text-muted-foreground">(recomendado)</span>
+                      <span className="block text-[10px] text-muted-foreground">
+                        Cada criativo recebe R$ {budget || "0"}/dia — gasto total {creatives.length}×.
+                      </span>
+                    </Label>
+                  </div>
+                  <div className="flex items-start space-x-2">
+                    <RadioGroupItem value="split" id="f2budget-split" className="mt-0.5" disabled={loading} />
+                    <Label htmlFor="f2budget-split" className="text-xs cursor-pointer leading-tight font-normal">
+                      <span className="font-medium">Dividir orçamento entre criativos</span>
+                      <span className="block text-[10px] text-muted-foreground">
+                        R$ {budget || "0"}/dia ÷ {creatives.length} = R$ {(Number(budget || 0) / creatives.length).toFixed(2)}/dia por campanha.
+                      </span>
+                    </Label>
+                  </div>
+                </RadioGroup>
+                {fase2BudgetSplitMode === "split" && minBudget && (Number(budget || 0) / creatives.length) < minBudget && (
+                  <p className="text-[10px] text-warning font-medium">
+                    R$ {(Number(budget || 0) / creatives.length).toFixed(2)}/campanha fica abaixo do mínimo da Meta (R$ {minBudget}). Aumente o orçamento.
+                  </p>
+                )}
+              </div>
             )}
           </Card>
 
@@ -2698,7 +2897,16 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
             <Card className="glass-card p-4 border-success/30 glow-primary space-y-2">
               <p className="text-sm font-display font-semibold text-success">✅ Publicado com sucesso!</p>
               <div className="space-y-1 text-xs font-mono">
-                <p>Campaign ID: {publishResult.campaign_id}</p>
+                {publishResult.campaign_ids && publishResult.campaign_ids.length > 1 ? (
+                  <>
+                    <p>Campanhas criadas: {publishResult.campaign_ids.length} (1 por criativo)</p>
+                    {publishResult.campaign_ids.map((cid, i) => (
+                      <p key={cid}>Campaign {i + 1} ID: {cid}</p>
+                    ))}
+                  </>
+                ) : (
+                  <p>Campaign ID: {publishResult.campaign_id}</p>
+                )}
                 {publishResult.adsets_created && <p>AdSets criados: {publishResult.adsets_created}</p>}
                 {publishResult.ads_created && <p>Ads criados: {publishResult.ads_created}</p>}
               </div>
@@ -2726,9 +2934,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                   ))}
                 </div>
               )}
-              {(publishResult.campaign_id || publishResult.adset_id) && (
+              {(publishResult.campaign_id || publishResult.adset_id || (publishResult.campaign_ids && publishResult.campaign_ids.length > 0)) && (
                 <div className="space-y-1">
-                  {publishResult.campaign_id && <IDDisplay id={publishResult.campaign_id} label="Campaign" />}
+                  {publishResult.campaign_ids && publishResult.campaign_ids.length > 0
+                    ? publishResult.campaign_ids.map((cid, i) => <IDDisplay key={cid} id={cid} label={`Campaign ${i + 1}`} />)
+                    : (publishResult.campaign_id && <IDDisplay id={publishResult.campaign_id} label="Campaign" />)}
                   {publishResult.adset_id && <IDDisplay id={publishResult.adset_id} label="AdSet" />}
                 </div>
               )}
