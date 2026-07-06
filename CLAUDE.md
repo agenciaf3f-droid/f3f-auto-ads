@@ -73,7 +73,7 @@ supabase/functions/   # 21 functions + _shared/
 ```
 1. Validar identidade (page_id + instagram_actor_id)
 2. Resolver mídia por criativo → buildOne() mapeado em paralelo (1 chamada cada)
-3. Criar Campaign (PAUSED)
+3. Criar Campaign (ACTIVE) — checkpoint manual removido (2026-07-06); entrega imediata ao publicar
 4. Criar Adset (ACTIVE) — com promoted_object correto por preset
    (FASE 2: 1 criativo + N adsets, um por audiência)
 5. Criar Adcreative
