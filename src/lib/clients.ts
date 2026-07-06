@@ -8,6 +8,7 @@ export interface Client {
   user_id: string;
   name: string;
   notes: string | null;
+  whatsapp_group_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -56,11 +57,11 @@ export async function listClients(): Promise<Client[]> {
   return (data || []) as Client[];
 }
 
-export async function createClient(name: string, notes?: string): Promise<Client> {
+export async function createClient(name: string, notes?: string, whatsappGroupId?: string): Promise<Client> {
   const user_id = await currentUserId();
   const { data, error } = await supabase
     .from("clients")
-    .insert({ user_id, name, notes: notes || null })
+    .insert({ user_id, name, notes: notes || null, whatsapp_group_id: whatsappGroupId || null })
     .select()
     .single();
   if (error) throw new Error(error.message);
@@ -75,6 +76,15 @@ export async function updateClient(id: string, fields: { name?: string; notes?: 
 export async function deleteClient(id: string): Promise<void> {
   const { error } = await supabase.from("clients").delete().eq("id", id);
   if (error) throw new Error(error.message);
+}
+
+// Dashboards da base Agenciaf3f (client_dashboards) que já têm grupo de WhatsApp mapeado —
+// usado pelo ClientForm para auto-casar por nome e pré-preencher whatsapp_group_id na criação.
+export async function listClientDashboards(): Promise<{ nome: string; email: string | null; whatsapp_group_id: string }[]> {
+  const { data, error } = await supabase.functions.invoke("list-client-dashboards", { body: {} });
+  if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(data.error);
+  return data.dashboards;
 }
 
 // ── client_ad_accounts ───────────────────────────────────────────────────────
