@@ -34,6 +34,7 @@ type NodeOut = {
   clicks: number;
   actionCounts: Record<string, number>;
   vv95: number;
+  adsetId?: string;
 };
 
 const num = (v?: string | number): number => {
@@ -110,6 +111,7 @@ Deno.serve(async (req) => {
         clicks: insight ? num(insight.clicks as string) : 0,
         actionCounts,
         vv95,
+        adsetId: n.adset_id as string | undefined,
       };
     });
 
