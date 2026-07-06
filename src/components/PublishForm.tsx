@@ -1309,6 +1309,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       checks.push({ label: isFase2Adaptado ? "Públicos (ADAPTADO)" : "Públicos (FASE 2)", ok: audOk, detail: `${fase2Audiences.length} público(s) selecionado(s)` });
     } else if (isFase3Lp && ltAdvantage) {
       checks.push({ label: "Público", ok: true, detail: "Advantage+ (Meta define automaticamente)" });
+    } else if (isMultiAud) {
+      // FASE 1 / FASE 3: público vem de audienceRows (multiAudIds), não de selectedAudience (state morto aqui).
+      checks.push({ label: "Público", ok: multiAudIds.length >= 1, detail: `${multiAudIds.length} público(s) selecionado(s)` });
     } else {
       checks.push({ label: "Público", ok: !!selectedAudience, detail: `${selectedAudience} (${selectedAud?.type || "unknown"})` });
     }
