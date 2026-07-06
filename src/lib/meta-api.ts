@@ -174,6 +174,9 @@ export type MetaNodeInsight = {
   clicks: number;
   actionCounts: Record<string, number>;
   vv95: number;
+  // Só presente no level "ad" — id do adset dono do criativo. Permite filtrar os criativos de
+  // um conjunto específico no drill-in do OptimizationBoard sem outra chamada.
+  adsetId?: string;
 };
 
 export async function fetchNodeInsights(
