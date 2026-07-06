@@ -9,7 +9,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fetchAdAccounts } from "@/lib/meta-api";
-import SearchableSelect from "@/components/SearchableSelect";
 import {
   createClient,
   updateClient,
@@ -80,6 +79,7 @@ export default function ClientForm({
   const [dashboards, setDashboards] = useState<ClientDashboard[]>([]);
   const [groupId, setGroupId] = useState("");
   const [groupTouched, setGroupTouched] = useState(false);
+  const [groupSearch, setGroupSearch] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -90,6 +90,7 @@ export default function ClientForm({
     // Edição: pré-preenche com o grupo já salvo. Criação: vazio (o auto-match preenche depois).
     setGroupId(client?.whatsapp_group_id || "");
     setGroupTouched(false);
+    setGroupSearch("");
     if (isEdit && client) {
       listClientAdAccounts(client.id)
         .then((links) => setSelected(new Set(links.map((l) => l.ad_account_id))))
@@ -137,13 +138,13 @@ export default function ClientForm({
     return map;
   }, [linksByClient, clients, isEdit, client]);
 
-  const groupOptions = useMemo(
-    () => [
-      { id: "", name: "— Sem grupo —" },
-      ...dashboards.map((d) => ({ id: d.whatsapp_group_id, name: d.nome })),
-    ],
-    [dashboards],
-  );
+  const filteredDashboards = useMemo(() => {
+    const q = groupSearch.trim().toLowerCase();
+    if (!q) return dashboards;
+    return dashboards.filter(
+      (d) => d.nome.toLowerCase().includes(q) || d.whatsapp_group_id.toLowerCase().includes(q),
+    );
+  }, [dashboards, groupSearch]);
   const matchedDashboard = dashboards.find((d) => d.whatsapp_group_id === groupId);
 
   const toggle = (id: string) => {
@@ -229,33 +230,60 @@ export default function ClientForm({
             <Input id="client-notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Observações internas" />
           </div>
 
-          {(
-            <div className="space-y-1.5">
-              <Label>Grupo do WhatsApp (cliente)</Label>
-              {dashboards.length > 0 ? (
-                <>
-                  <SearchableSelect
-                    options={groupOptions}
-                    value={groupId}
-                    onValueChange={(v) => { setGroupId(v); setGroupTouched(true); }}
-                    placeholder="Selecione o grupo…"
-                    searchPlaceholder="Buscar por dashboard…"
-                  />
-                  {matchedDashboard && (
-                    <p className="text-xs text-muted-foreground">
-                      Grupo casado com o dashboard "{matchedDashboard.nome}"
-                    </p>
-                  )}
-                </>
-              ) : (
+          <div className="space-y-1.5">
+            <Label>Grupo do WhatsApp (cliente)</Label>
+            {dashboards.length > 0 ? (
+              <>
+                {/* Inline (input + lista scrollável), como o picker de contas — NÃO usa portal:
+                    SearchableSelect portala pro body e o Radix Dialog (modal) bloqueia foco/scroll dele. */}
                 <Input
-                  value={groupId}
-                  onChange={(e) => { setGroupId(e.target.value); setGroupTouched(true); }}
-                  placeholder="ID do grupo (ex: 120363...@g.us)"
+                  value={groupSearch}
+                  onChange={(e) => setGroupSearch(e.target.value)}
+                  placeholder="Buscar dashboard por nome ou ID…"
+                  className="h-8"
                 />
-              )}
-            </div>
-          )}
+                <div className="h-40 overflow-y-auto rounded-md border p-2 space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => { setGroupId(""); setGroupTouched(true); }}
+                    className={cn(
+                      "w-full text-left rounded-md px-2 py-1.5 text-sm transition-colors",
+                      groupId === "" ? "bg-primary/10 text-primary" : "hover:bg-accent-soft",
+                    )}
+                  >
+                    — Sem grupo —
+                  </button>
+                  {filteredDashboards.length === 0 ? (
+                    <p className="text-sm text-muted-foreground px-2 py-1.5">Nenhum dashboard corresponde à busca.</p>
+                  ) : (
+                    filteredDashboards.map((d) => (
+                      <button
+                        key={d.whatsapp_group_id}
+                        type="button"
+                        onClick={() => { setGroupId(d.whatsapp_group_id); setGroupTouched(true); }}
+                        className={cn(
+                          "w-full text-left rounded-md px-2 py-1.5 transition-colors",
+                          groupId === d.whatsapp_group_id ? "bg-primary/10 text-primary" : "hover:bg-accent-soft",
+                        )}
+                      >
+                        <span className="text-sm block truncate">{d.nome}</span>
+                        <span className="text-[10px] text-muted-foreground font-mono">{d.whatsapp_group_id}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+                {matchedDashboard && (
+                  <p className="text-xs text-muted-foreground">Selecionado: "{matchedDashboard.nome}"</p>
+                )}
+              </>
+            ) : (
+              <Input
+                value={groupId}
+                onChange={(e) => { setGroupId(e.target.value); setGroupTouched(true); }}
+                placeholder="ID do grupo (ex: 120363...@g.us)"
+              />
+            )}
+          </div>
 
           <div className="space-y-1.5">
             <Label>Contas de anúncio</Label>
