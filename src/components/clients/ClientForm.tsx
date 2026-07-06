@@ -87,7 +87,8 @@ export default function ClientForm({
     setNotes(client?.notes || "");
     setAccountSearch("");
     setSelected(new Set());
-    setGroupId("");
+    // Edição: pré-preenche com o grupo já salvo. Criação: vazio (o auto-match preenche depois).
+    setGroupId(client?.whatsapp_group_id || "");
     setGroupTouched(false);
     if (isEdit && client) {
       listClientAdAccounts(client.id)
@@ -96,13 +97,13 @@ export default function ClientForm({
     }
   }, [open, client, isEdit]);
 
-  // Dashboards da base Agenciaf3f (nome→grupo) — só usados na criação, pra auto-match.
+  // Dashboards da base Agenciaf3f (nome→grupo) — pro dropdown de grupo, na criação E na edição.
   useEffect(() => {
-    if (!open || isEdit) return;
+    if (!open) return;
     listClientDashboards()
       .then((rows) => setDashboards(rows))
       .catch(() => setDashboards([])); // sem integração configurada ainda → cai no fallback manual
-  }, [open, isEdit]);
+  }, [open]);
 
   // Auto-casa o grupo pelo nome normalizado enquanto o gestor não mexer manualmente no campo.
   useEffect(() => {
@@ -170,7 +171,7 @@ export default function ClientForm({
     try {
       const nameById = new Map(accounts.map((a) => [a.id, a.name]));
       if (isEdit && client) {
-        await updateClient(client.id, { name: name.trim(), notes: notes.trim() || null });
+        await updateClient(client.id, { name: name.trim(), notes: notes.trim() || null, whatsapp_group_id: groupId || null });
         const existing = await listClientAdAccounts(client.id);
         const existingIds = new Set(existing.map((l) => l.ad_account_id));
         // linka novos
@@ -228,7 +229,7 @@ export default function ClientForm({
             <Input id="client-notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Observações internas" />
           </div>
 
-          {!isEdit && (
+          {(
             <div className="space-y-1.5">
               <Label>Grupo do WhatsApp (cliente)</Label>
               {dashboards.length > 0 ? (
