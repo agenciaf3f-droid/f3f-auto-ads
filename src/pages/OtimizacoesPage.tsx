@@ -1,34 +1,110 @@
 import { useEffect, useState } from "react";
-import { Gauge, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Gauge, Loader2, AlertTriangle, CheckCircle2, History } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { fetchMetaStatus, fetchCampaigns, fetchCampaignInsights, pauseCampaign } from "@/lib/meta-api";
+import { fetchMetaStatus, fetchCampaigns, fetchCampaignInsights, fetchNodeInsights, pauseCampaign, type MetaNodeInsight } from "@/lib/meta-api";
 import { fetchClientKpiConfigs } from "@/lib/client-kpi-contract";
-import { compareKpis, isDismissalActive, type OptimizationViolation } from "@/lib/optimization-engine";
-import { getMetricDef, type DateRangeSelection } from "@/lib/meta-insights";
+import {
+  compareKpis,
+  buildOptimizationView,
+  type MetricSnapshot,
+  type OptimizationViolation,
+  type OptimizationActionRecord,
+  type OptimizationHistoryEntry,
+} from "@/lib/optimization-engine";
+import { getMetricDef, rangeKey, type AggregatedBucket, type DateRangeSelection, type MetricDef } from "@/lib/meta-insights";
 import DateRangeSelector from "@/components/clients/DateRangeSelector";
+
+type NodeLevel = "adset" | "ad";
+type ActionKind = "dismissed" | "paused";
+
+// Linha crua de optimization_actions (snake_case, como vem do supabase). Mapeada pra
+// OptimizationActionRecord antes de entrar no engine. campaign_name/client_name ficam gravados na
+// ação pra o histórico exibir campanhas que já saíram da avaliação ao vivo (sararam/pausadas).
+type ActionRow = {
+  campaign_id: string;
+  campaign_name: string | null;
+  client_name: string | null;
+  action: ActionKind;
+  metric_snapshot: MetricSnapshot;
+  created_at: string;
+};
+
+const actionVerb = (a: ActionKind) => (a === "dismissed" ? "Mantida" : "Desligada");
+const fmtActionDate = (iso: string) =>
+  new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+
+// Reaproveita a MESMA fórmula de cada métrica (METRIC_REGISTRY) montando um AggregatedBucket
+// sintético de 1 nó só (adset ou ad) — não reinventa cálculo de CTR/CPM/CCP/CPV95%/etc.
+function computeNodeMetricValue(violation: OptimizationViolation, node: MetaNodeInsight): number | null {
+  const def = getMetricDef(violation.metric);
+  if (!def) return null;
+  const agg: AggregatedBucket = {
+    adAccountId: violation.adAccountId,
+    bucket: "Outros",
+    spend: node.spend,
+    impressions: node.impressions,
+    clicks: node.clicks,
+    vv95: node.vv95,
+    actionCounts: node.actionCounts,
+    campaignCount: 1,
+  };
+  return def.compute(agg);
+}
+
+function formatMetricValue(value: number | null, unit?: MetricDef["unit"]): string {
+  if (value === null || value === undefined) return "sem dados suficientes";
+  const formatted = value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (unit === "currency") return `R$ ${formatted}`;
+  if (unit === "percent") return `${formatted}%`;
+  return formatted;
+}
+
+// Cap de concorrência do fan-out por conta ao carregar otimizações. Antes era serial (1 conta por vez).
+// Baixo de propósito: cada conta ainda dispara N fetches paralelos na edge, no mesmo token compartilhado.
+const ACCOUNTS_CONCURRENCY = 5;
+
+// Pool de workers: roda `fn` sobre `items` com no máx `limit` execuções simultâneas.
+async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let cursor = 0;
+  async function worker() {
+    while (cursor < items.length) {
+      const i = cursor++;
+      await fn(items[i]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
+}
 
 export default function OtimizacoesPage() {
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [violations, setViolations] = useState<OptimizationViolation[]>([]);
+  const [history, setHistory] = useState<OptimizationHistoryEntry[]>([]);
   const [accountErrors, setAccountErrors] = useState<string[]>([]);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [pausingId, setPausingId] = useState<string | null>(null);
   const [confirmCampaign, setConfirmCampaign] = useState<OptimizationViolation | null>(null);
   const [range, setRange] = useState<DateRangeSelection>({ mode: "preset", preset: "last_7d" });
+
+  // Estado do dialog de "Desligar": qual granularidade foi decidida (adset pra ABO/CBO com
+  // >1 conjunto, ad pra CBO com exatamente 1 conjunto), os nós carregados e a seleção do gestor.
+  const [nodeLevel, setNodeLevel] = useState<NodeLevel>("adset");
+  const [nodes, setNodes] = useState<MetaNodeInsight[]>([]);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+  const [nodesLoading, setNodesLoading] = useState(false);
+  const [confirmingPause, setConfirmingPause] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,37 +114,43 @@ export default function OtimizacoesPage() {
       try {
         const status = await fetchMetaStatus();
         if (!status.connected || !status.access_token) {
-          if (!cancelled) setViolations([]);
+          if (!cancelled) { setViolations([]); setHistory([]); }
           return;
         }
         if (!cancelled) setAccessToken(status.access_token);
 
         const configs = await fetchClientKpiConfigs();
         if (configs.length === 0) {
-          if (!cancelled) setViolations([]);
+          if (!cancelled) { setViolations([]); setHistory([]); }
           return;
         }
 
         const { data: { user } } = await supabase.auth.getUser();
         const { data: actioned } = await supabase
           .from("optimization_actions")
-          .select("campaign_id, action, created_at")
-          .eq("user_id", user?.id ?? "");
-        // "paused" continua excluído pra sempre (evita flicker antes da Meta propagar a pausa).
-        // "dismissed" (Manter) só silencia por 3 dias a partir do created_at — depois disso a
-        // campanha volta a ficar elegível pra reaparecer se ainda estiver fora do KPI.
-        const actionedIds = new Set(
-          (actioned || [])
-            .filter((row) => row.action === "paused" || (row.action === "dismissed" && isDismissalActive(row.created_at)))
-            .map((row) => row.campaign_id)
-        );
+          .select("campaign_id, campaign_name, client_name, action, metric_snapshot, created_at")
+          .eq("user_id", user?.id ?? "")
+          .order("created_at", { ascending: false });
+        // Ações do gestor no shape do engine. NÃO escondem mais a campanha pra sempre: campanha já
+        // tratada vai pro Histórico, reavaliada ao vivo — se piorar, o gestor desliga direto de lá.
+        const actionRecords: OptimizationActionRecord[] = ((actioned ?? []) as ActionRow[]).map((r) => ({
+          campaignId: r.campaign_id,
+          campaignName: r.campaign_name,
+          clientName: r.client_name,
+          action: r.action,
+          snapshot: (r.metric_snapshot ?? {}) as MetricSnapshot,
+          createdAt: r.created_at,
+        }));
 
+        // Contas avaliadas em paralelo com teto de concorrência (antes: uma de cada vez). O try/catch
+        // é isolado por conta — uma conta que falha vai pra failedAccounts sem derrubar as outras.
+        // Ordem final de `found`/`failedAccounts` não é garantida (lista sem ordenação, como antes).
         const found: OptimizationViolation[] = [];
         const failedAccounts: string[] = [];
-        for (const config of configs) {
+        await mapWithConcurrency(configs, ACCOUNTS_CONCURRENCY, async (config) => {
           try {
             const campaigns = await fetchCampaigns(status.access_token, config.adAccountId);
-            if (campaigns.length === 0) continue;
+            if (campaigns.length === 0) return;
 
             const insights = await fetchCampaignInsights(status.access_token, campaigns.map((c: { id: string }) => c.id), range);
 
@@ -83,19 +165,23 @@ export default function OtimizacoesPage() {
             if (allErrored) {
               console.error(`Falha ao avaliar otimizações da conta ${config.adAccountId} (${config.clientName}): todas as campanhas retornaram erro`);
               failedAccounts.push(config.clientName);
-              continue;
+              return;
             }
 
-            const accountViolations = compareKpis(campaigns, insights, config);
-            found.push(...accountViolations.filter((v) => !actionedIds.has(v.campaignId)));
+            found.push(...compareKpis(campaigns, insights, config));
           } catch (e) {
             console.error(`Falha ao avaliar otimizações da conta ${config.adAccountId} (${config.clientName})`, e);
             failedAccounts.push(config.clientName);
           }
-        }
+        });
+
+        // Pendentes (nunca tratadas) vs Histórico (já mantidas/desligadas, reavaliadas ao vivo).
+        // "piorou" só é calculado quando o snapshot foi tirado no MESMO período da tela atual.
+        const { pendentes, history: historyEntries } = buildOptimizationView(found, actionRecords, rangeKey(range));
 
         if (!cancelled) {
-          setViolations(found);
+          setViolations(pendentes);
+          setHistory(historyEntries);
           setAccountErrors(failedAccounts);
         }
       } catch (e) {
@@ -111,17 +197,95 @@ export default function OtimizacoesPage() {
     return () => { cancelled = true; };
   }, [toast, range]);
 
-  async function recordAction(violation: OptimizationViolation, action: "dismissed" | "paused") {
+  // Ao abrir o dialog de "Desligar" (confirmCampaign setado pelo card), busca a estrutura real
+  // da campanha e decide a granularidade: ABO ou CBO com >1 adset -> pausa por CONJUNTO; CBO
+  // com exatamente 1 adset -> pausa por CRIATIVO (ads daquele conjunto único competindo pelo
+  // mesmo budget). Fechar o dialog (confirmCampaign = null) limpa tudo.
+  useEffect(() => {
+    if (!confirmCampaign || !accessToken) {
+      setNodes([]);
+      setSelectedNodeIds(new Set());
+      return;
+    }
+
+    let cancelled = false;
+    async function loadNodes() {
+      setNodesLoading(true);
+      setNodeLevel("adset");
+      setNodes([]);
+      setSelectedNodeIds(new Set());
+      try {
+        const adsetNodes = await fetchNodeInsights(accessToken!, confirmCampaign!.campaignId, "adset", range);
+        let level: NodeLevel = "adset";
+        let result = adsetNodes;
+        if (confirmCampaign!.isCbo && adsetNodes.length === 1) {
+          level = "ad";
+          result = await fetchNodeInsights(accessToken!, confirmCampaign!.campaignId, "ad", range);
+        }
+        if (!cancelled) {
+          setNodeLevel(level);
+          setNodes(result);
+        }
+      } catch (e) {
+        // Falha ao buscar a estrutura real (conjuntos/criativos) — sem isso não dá pra decidir o
+        // que pausar com segurança. Avisa e fecha o dialog em vez de deixar uma lista vazia/quebrada.
+        if (!cancelled) {
+          toast({ variant: "destructive", title: "Erro ao carregar estrutura da campanha", description: (e as Error).message });
+          setConfirmCampaign(null);
+        }
+      } finally {
+        if (!cancelled) setNodesLoading(false);
+      }
+    }
+
+    loadNodes();
+    return () => { cancelled = true; };
+  }, [confirmCampaign, accessToken, range, toast]);
+
+  function toggleNode(nodeId: string) {
+    setSelectedNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
+  }
+
+  async function recordAction(violation: OptimizationViolation, action: ActionKind) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
+    // rangeKey grava o período em que o snapshot foi tirado — o "piorou" no Histórico só compara
+    // valores do mesmo período (7d vs 30d seria maçã com laranja).
+    const snapshot: MetricSnapshot = {
+      metric: violation.metric, actual: violation.actual, limit: violation.limit, operator: violation.operator,
+      rangeKey: rangeKey(range),
+    };
     await supabase.from("optimization_actions").insert({
       user_id: user.id,
       campaign_id: violation.campaignId,
       ad_account_id: violation.adAccountId,
+      campaign_name: violation.campaignName,
+      client_name: violation.clientName,
       action,
-      metric_snapshot: { metric: violation.metric, actual: violation.actual, limit: violation.limit, operator: violation.operator },
+      metric_snapshot: snapshot,
     });
+    // Sai de Pendentes e entra/atualiza no Histórico (última ação por campanha vence). Re-baselina
+    // contra o valor atual → worsened=false; se piorar depois, o próximo load marca "piorou".
     setViolations((prev) => prev.filter((v) => v.campaignId !== violation.campaignId));
+    const entry: OptimizationHistoryEntry = {
+      action: {
+        campaignId: violation.campaignId,
+        campaignName: violation.campaignName,
+        clientName: violation.clientName,
+        action,
+        snapshot,
+        createdAt: new Date().toISOString(),
+      },
+      live: violation,
+      comparable: true,
+      worsened: false,
+    };
+    setHistory((prev) => [entry, ...prev.filter((h) => h.action.campaignId !== violation.campaignId)]);
   }
 
   async function handleManter(violation: OptimizationViolation) {
@@ -129,30 +293,117 @@ export default function OtimizacoesPage() {
     toast({ title: "Campanha mantida", description: violation.campaignName });
   }
 
-  async function handleDesligar(violation: OptimizationViolation) {
-    if (!accessToken) return;
+  // Pausa só os nós SELECIONADOS (conjuntos ou criativos, conforme nodeLevel) — nunca a campanha
+  // inteira. pauseCampaign aceita qualquer node id (Graph API: POST /{id}?status=PAUSED é
+  // idêntico pra campaign/adset/ad), então serve sem alteração pra esse fluxo.
+  async function handleDesligar() {
+    if (!accessToken || !confirmCampaign || selectedNodeIds.size === 0) return;
+    const violation = confirmCampaign;
+    const idsToPause = Array.from(selectedNodeIds);
     setPausingId(violation.campaignId);
+    setConfirmingPause(true);
     try {
-      await pauseCampaign(accessToken, violation.campaignId);
+      await Promise.all(idsToPause.map((id) => pauseCampaign(accessToken, id)));
     } catch (e) {
-      toast({ variant: "destructive", title: "Erro ao pausar campanha", description: (e as Error).message });
+      toast({ variant: "destructive", title: "Erro ao pausar", description: (e as Error).message });
       setPausingId(null);
-      setConfirmCampaign(null);
+      setConfirmingPause(false);
       return;
     }
 
-    // A campanha já foi pausada de verdade na Meta neste ponto — o resto é só bookkeeping local.
-    // Uma falha aqui não pode virar um falso "erro ao pausar" pro usuário.
-    toast({ title: "Campanha pausada", description: violation.campaignName });
+    // Os nós selecionados já foram pausados de verdade na Meta neste ponto — o resto é só
+    // bookkeeping local. Uma falha aqui não pode virar um falso "erro ao pausar" pro usuário.
+    toast({
+      title: nodeLevel === "adset" ? "Conjunto(s) pausado(s)" : "Criativo(s) pausado(s)",
+      description: violation.campaignName,
+    });
     setPausingId(null);
+    setConfirmingPause(false);
     setConfirmCampaign(null);
 
     try {
       await recordAction(violation, "paused");
     } catch (e) {
-      console.error("Falha ao registrar pausa em optimization_actions (campanha já pausada na Meta)", e);
+      console.error("Falha ao registrar pausa em optimization_actions (nós já pausados na Meta)", e);
     }
   }
+
+  // Card de violação, reusado por Pendentes e Histórico. `meta` presente = card do Histórico:
+  // acrescenta a linha "Mantida/Desligada em <data> · estava em X → agora Y" + badge "Piorou".
+  const renderViolationCard = (
+    v: OptimizationViolation,
+    i: number,
+    meta?: { action: OptimizationActionRecord; comparable: boolean; worsened: boolean },
+  ) => {
+    const isYellow = v.severity === "yellow";
+    const emphasizeRed = meta?.worsened || !isYellow; // piorou sempre em vermelho, independente da severidade
+    const snapActual = meta?.action.snapshot?.actual;
+    return (
+      <Card
+        key={`${v.campaignId}:${v.metric}`}
+        className={`border-l-[3px] fade-in-up ${
+          emphasizeRed ? "border-l-destructive/70 bg-destructive/[0.015]" : "border-l-warning/70 bg-warning/[0.03]"
+        }`}
+        style={{ animationDelay: `${i * 60}ms` }}
+      >
+        <CardHeader className="p-4 pb-2">
+          <div className="flex items-center gap-2.5">
+            <div
+              className={`w-7 h-7 rounded-md border flex items-center justify-center shrink-0 ${
+                emphasizeRed ? "bg-destructive/10 border-destructive/20" : "bg-warning/10 border-warning/20"
+              }`}
+            >
+              <AlertTriangle className={`w-3.5 h-3.5 ${emphasizeRed ? "text-destructive" : "text-warning"}`} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <CardTitle className="text-sm truncate">{v.campaignName}</CardTitle>
+              <p className="text-xs text-muted-foreground truncate">{v.clientName}</p>
+            </div>
+            {meta && (
+              <span
+                className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border ${
+                  meta.worsened ? "border-destructive/30 text-destructive" : "border-border text-muted-foreground"
+                }`}
+              >
+                {meta.worsened ? "Piorou" : actionVerb(meta.action.action)}
+              </span>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="p-4 pt-0">
+          {meta && (
+            <p className="text-[11px] text-muted-foreground mb-2">
+              {actionVerb(meta.action.action)} em {fmtActionDate(meta.action.createdAt)}
+              {meta.comparable && typeof snapActual === "number" && (
+                <> · estava em <strong className="text-foreground">{snapActual.toFixed(2)}</strong> → agora{" "}
+                  <strong className="text-foreground">{v.actual.toFixed(2)}</strong></>
+              )}
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground mb-3">
+            <strong className="text-foreground">{getMetricDef(v.metric)?.label ?? v.metric}</strong> em{" "}
+            <strong className="text-foreground">{v.actual.toFixed(2)}</strong>,{" "}
+            {v.operator === ">" ? "acima" : "abaixo"} do limite de{" "}
+            <strong className="text-foreground">{v.limit}</strong>
+            {isYellow ? " — em atenção, dentro de uma margem pequena." : " — performando fora do esperado."}
+          </p>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => handleManter(v)}>
+              {meta ? "Manter mais" : "Manter"}
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={pausingId === v.campaignId}
+              onClick={() => setConfirmCampaign(v)}
+            >
+              {pausingId === v.campaignId ? "Desligando..." : "Desligar"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-10">
@@ -190,7 +441,7 @@ export default function OtimizacoesPage() {
         </div>
       )}
 
-      {!loading && violations.length === 0 && accountErrors.length === 0 && (
+      {!loading && violations.length === 0 && history.length === 0 && accountErrors.length === 0 && (
         <div className="text-center py-16 fade-in-up">
           <div className="w-12 h-12 rounded-xl bg-success/10 border border-success/20 flex items-center justify-center mx-auto mb-4">
             <CheckCircle2 className="w-6 h-6 text-success" />
@@ -203,65 +454,130 @@ export default function OtimizacoesPage() {
         </div>
       )}
 
-      <div className="space-y-3">
-        {violations.map((v, i) => (
-          <Card
-            key={v.campaignId}
-            className="border-l-[3px] border-l-destructive/70 bg-destructive/[0.015] fade-in-up"
-            style={{ animationDelay: `${i * 60}ms` }}
-          >
-            <CardHeader>
-              <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-md bg-destructive/10 border border-destructive/20 flex items-center justify-center shrink-0">
-                  <AlertTriangle className="w-3.5 h-3.5 text-destructive" />
-                </div>
-                <div className="min-w-0">
-                  <CardTitle className="text-base truncate">{v.campaignName}</CardTitle>
-                  <p className="text-xs text-muted-foreground truncate">{v.clientName}</p>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm mb-4">
-                O KPI <strong>{getMetricDef(v.metric)?.label ?? v.metric}</strong> está em{" "}
-                <strong>{v.actual.toFixed(2)}</strong> —{" "}
-                {v.operator === ">" ? "acima" : "abaixo"} do limite de <strong>{v.limit}</strong>{" "}
-                definido para este cliente. Essa campanha está performando fora do esperado.
-              </p>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => handleManter(v)}>
-                  Manter
-                </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  disabled={pausingId === v.campaignId}
-                  onClick={() => setConfirmCampaign(v)}
-                >
-                  {pausingId === v.campaignId ? "Desligando..." : "Desligar"}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+      {!loading && violations.length === 0 && history.length > 0 && accountErrors.length === 0 && (
+        <div className="rounded-md border border-success/20 bg-success/[0.04] px-4 py-3 text-sm text-muted-foreground fade-in-up">
+          <CheckCircle2 className="w-4 h-4 text-success inline-block mr-1.5 -mt-0.5" />
+          Nenhum alerta novo pendente. Veja abaixo as campanhas que você já tratou.
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {violations.map((v, i) => renderViolationCard(v, i))}
       </div>
 
-      <AlertDialog open={!!confirmCampaign} onOpenChange={(open) => !open && setConfirmCampaign(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Pausar campanha?</AlertDialogTitle>
-            <AlertDialogDescription>
-              "{confirmCampaign?.campaignName}" vai ser pausada de verdade na Meta e para de veicular imediatamente.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={() => confirmCampaign && handleDesligar(confirmCampaign)}>
-              Pausar campanha
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {!loading && history.length > 0 && (
+        <div className="mt-8 fade-in-up">
+          <div className="flex items-center gap-2 mb-2">
+            <History className="w-3.5 h-3.5 text-muted-foreground" />
+            <span className="text-xs font-medium text-muted-foreground tracking-wide uppercase">Histórico</span>
+          </div>
+          <p className="text-xs text-muted-foreground mb-3">
+            Campanhas que você já manteve ou desligou. Continuam sendo reavaliadas — se uma voltar a piorar,
+            aparece marcada e você pode desligar aqui mesmo.
+          </p>
+          <div className="space-y-2">
+            {history.map((h, i) =>
+              h.live ? (
+                renderViolationCard(h.live, i, { action: h.action, comparable: h.comparable, worsened: h.worsened })
+              ) : (
+                <Card
+                  key={h.action.campaignId}
+                  className="border-l-[3px] border-l-muted-foreground/25 fade-in-up opacity-80"
+                  style={{ animationDelay: `${i * 60}ms` }}
+                >
+                  <CardContent className="p-4">
+                    <p className="text-sm truncate">{h.action.campaignName ?? h.action.campaignId}</p>
+                    {h.action.clientName && (
+                      <p className="text-xs text-muted-foreground truncate">{h.action.clientName}</p>
+                    )}
+                    <p className="text-[11px] text-muted-foreground mt-1.5">
+                      {actionVerb(h.action.action)} em {fmtActionDate(h.action.createdAt)} · dentro do limite ou inativa agora
+                    </p>
+                  </CardContent>
+                </Card>
+              )
+            )}
+          </div>
+        </div>
+      )}
+
+      <Dialog open={!!confirmCampaign} onOpenChange={(open) => !open && setConfirmCampaign(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Pausar {nodeLevel === "adset" ? "conjunto(s)" : "criativo(s)"}
+            </DialogTitle>
+            <DialogDescription>
+              "{confirmCampaign?.campaignName}" continua ativa — só o que você marcar abaixo é pausado de
+              verdade na Meta.{" "}
+              {confirmCampaign?.isCbo
+                ? "CBO com mais de um conjunto pausa por conjunto; com um conjunto só, pausa por criativo."
+                : "ABO pausa por conjunto."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="min-w-0">
+            {nodesLoading && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Carregando {nodeLevel === "adset" ? "conjuntos" : "criativos"}...
+              </div>
+            )}
+
+            {!nodesLoading && nodes.length === 0 && (
+              <p className="text-sm text-muted-foreground py-2">
+                Nenhum {nodeLevel === "adset" ? "conjunto" : "criativo"} encontrado nessa campanha.
+              </p>
+            )}
+
+            {!nodesLoading && nodes.length > 0 && (
+              <div className="max-h-72 overflow-y-auto space-y-1 pr-1">
+                {nodes.map((node) => {
+                  const isPaused = node.effective_status === "PAUSED";
+                  const def = confirmCampaign ? getMetricDef(confirmCampaign.metric) : undefined;
+                  const value = confirmCampaign ? computeNodeMetricValue(confirmCampaign, node) : null;
+                  return (
+                    <label
+                      key={node.id}
+                      className={`flex items-center gap-2.5 rounded-md border px-3 py-2 text-sm ${
+                        isPaused ? "opacity-50" : "cursor-pointer hover:bg-muted/50"
+                      }`}
+                    >
+                      <Checkbox
+                        checked={selectedNodeIds.has(node.id)}
+                        disabled={isPaused}
+                        onCheckedChange={() => toggleNode(node.id)}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate">{node.name}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {isPaused ? "Já pausado" : node.effective_status} ·{" "}
+                          {def?.label ?? confirmCampaign?.metric}: {formatMetricValue(value, def?.unit)}
+                        </p>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmCampaign(null)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={selectedNodeIds.size === 0 || confirmingPause || nodesLoading}
+              onClick={handleDesligar}
+            >
+              {confirmingPause
+                ? "Pausando..."
+                : `Pausar ${selectedNodeIds.size > 0 ? selectedNodeIds.size : ""} selecionado(s)`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

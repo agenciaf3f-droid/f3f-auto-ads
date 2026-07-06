@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { compareKpis, isDismissalActive } from "./optimization-engine";
+import {
+  compareKpis,
+  hasWorsened,
+  buildOptimizationView,
+  type OptimizationViolation,
+  type OptimizationActionRecord,
+} from "./optimization-engine";
 import type { ClientKpiConfig } from "./client-kpi-contract";
 
 // extractPresetBucket itself is exercised by meta-insights.test.ts — compareKpis now delegates
@@ -120,24 +126,88 @@ describe("compareKpis", () => {
   });
 });
 
-describe("isDismissalActive", () => {
-  const now = new Date("2026-07-02T12:00:00Z");
-
-  it("is active right after the dismissal", () => {
-    expect(isDismissalActive("2026-07-02T11:00:00Z", now)).toBe(true);
+describe("buildOptimizationView", () => {
+  const RK = "preset:last_7d"; // rangeKey atual em todos os testes salvo indicação
+  const viol = (over: Partial<OptimizationViolation> = {}): OptimizationViolation => ({
+    campaignId: "c1", campaignName: "Camp 1", clientName: "Cli", adAccountId: "act_1",
+    metric: "cpc", operator: ">", actual: 3, limit: 2, severity: "red", isCbo: false, ...over,
+  });
+  const act = (over: Partial<OptimizationActionRecord> = {}): OptimizationActionRecord => ({
+    campaignId: "c1", campaignName: "Camp 1", clientName: "Cli", action: "dismissed",
+    snapshot: { metric: "cpc", actual: 3, limit: 2, operator: ">", rangeKey: RK },
+    createdAt: "2026-07-05T10:00:00Z", ...over,
   });
 
-  it("is still active just under 3 days later", () => {
-    const almostThreeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000 + 1000).toISOString();
-    expect(isDismissalActive(almostThreeDaysAgo, now)).toBe(true);
+  it("campanha nunca tratada vai pra Pendentes, não pro Histórico", () => {
+    const { pendentes, history } = buildOptimizationView([viol()], [], RK);
+    expect(pendentes).toHaveLength(1);
+    expect(history).toHaveLength(0);
   });
 
-  it("expires exactly 3 days after the dismissal", () => {
-    const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000).toISOString();
-    expect(isDismissalActive(threeDaysAgo, now)).toBe(false);
+  it("campanha tratada sai de Pendentes e vai pro Histórico (reavaliada ao vivo)", () => {
+    const { pendentes, history } = buildOptimizationView([viol()], [act()], RK);
+    expect(pendentes).toHaveLength(0);
+    expect(history).toHaveLength(1);
+    expect(history[0].live).not.toBeNull();
   });
 
-  it("expires well past 3 days", () => {
-    expect(isDismissalActive("2026-06-20T12:00:00Z", now)).toBe(false);
+  it("deduplica pra a ação mais recente por campanha (por createdAt)", () => {
+    const older = act({ action: "dismissed", createdAt: "2026-07-01T00:00:00Z" });
+    const newer = act({ action: "paused", createdAt: "2026-07-05T00:00:00Z" });
+    const { history } = buildOptimizationView([viol()], [older, newer], RK);
+    expect(history).toHaveLength(1);
+    expect(history[0].action.action).toBe("paused");
+  });
+
+  it("marca 'piorou' quando o valor atual degrada vs o snapshot (mesmo período)", () => {
+    const { history } = buildOptimizationView([viol({ actual: 4 })], [act({ snapshot: { metric: "cpc", actual: 3, operator: ">", rangeKey: RK } })], RK);
+    expect(history[0].comparable).toBe(true);
+    expect(history[0].worsened).toBe(true);
+  });
+
+  it("NÃO marca 'piorou' quando o snapshot foi tirado em período diferente do atual", () => {
+    const snap = { metric: "cpc", actual: 3, operator: ">" as const, rangeKey: "preset:last_30d" };
+    const { history } = buildOptimizationView([viol({ actual: 999 })], [act({ snapshot: snap })], RK);
+    expect(history[0].comparable).toBe(false);
+    expect(history[0].worsened).toBe(false);
+  });
+
+  it("snapshot legado (sem actual/rangeKey) não é comparável e não crasha", () => {
+    const { history } = buildOptimizationView([viol({ actual: 999 })], [act({ snapshot: {} })], RK);
+    expect(history[0].comparable).toBe(false);
+    expect(history[0].worsened).toBe(false);
+    expect(history[0].live).not.toBeNull();
+  });
+
+  it("campanha tratada que sarou/foi pausada (fora da avaliação ao vivo) fica no Histórico com live=null", () => {
+    const { pendentes, history } = buildOptimizationView([], [act()], RK);
+    expect(pendentes).toHaveLength(0);
+    expect(history).toHaveLength(1);
+    expect(history[0].live).toBeNull();
+  });
+
+  it("ordena: piorou → ainda-fora → resolvida", () => {
+    const found = [viol({ campaignId: "worse", actual: 5 }), viol({ campaignId: "same", actual: 3 })];
+    const actions = [
+      act({ campaignId: "worse", snapshot: { metric: "cpc", actual: 3, operator: ">", rangeKey: RK } }),   // piorou
+      act({ campaignId: "same", snapshot: { metric: "cpc", actual: 3, operator: ">", rangeKey: RK } }),    // ainda-fora, igual
+      act({ campaignId: "healed" }),                                                                        // resolvida (não está em found)
+    ];
+    const { history } = buildOptimizationView(found, actions, RK);
+    expect(history.map((h) => h.action.campaignId)).toEqual(["worse", "same", "healed"]);
+  });
+});
+
+describe("hasWorsened", () => {
+  it("'>' (limite máximo): pior quando o valor atual sobe acima do snapshot", () => {
+    expect(hasWorsened(">", 3.5, 3.0)).toBe(true);
+    expect(hasWorsened(">", 2.5, 3.0)).toBe(false); // melhorou
+    expect(hasWorsened(">", 3.0, 3.0)).toBe(false); // igual não é piorar
+  });
+
+  it("'<' (limite mínimo): pior quando o valor atual cai abaixo do snapshot", () => {
+    expect(hasWorsened("<", 0.4, 0.8)).toBe(true);
+    expect(hasWorsened("<", 1.2, 0.8)).toBe(false); // melhorou
+    expect(hasWorsened("<", 0.8, 0.8)).toBe(false); // igual não é piorar
   });
 });

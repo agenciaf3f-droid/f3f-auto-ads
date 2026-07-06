@@ -165,6 +165,38 @@ export async function fetchCampaignInsights(
   return data?.insights || {};
 }
 
+export type MetaNodeInsight = {
+  id: string;
+  name: string;
+  effective_status: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  actionCounts: Record<string, number>;
+  vv95: number;
+};
+
+export async function fetchNodeInsights(
+  accessToken: string,
+  campaignId: string,
+  level: "adset" | "ad",
+  range?: DateRangeSelection,
+): Promise<MetaNodeInsight[]> {
+  const body: Record<string, unknown> = { access_token: accessToken, campaign_id: campaignId, level };
+  if (range) {
+    if (range.mode === "custom") {
+      body.since = range.since;
+      body.until = range.until;
+    } else {
+      body.date_preset = range.preset;
+    }
+  }
+  const { data, error } = await supabase.functions.invoke("meta-node-insights", { body });
+  if (error && data) throw new Error(data.error || error.message);
+  if (error) throw new Error(error.message);
+  return (data?.nodes || []) as MetaNodeInsight[];
+}
+
 export async function pauseCampaign(accessToken: string, campaignId: string) {
   const { data, error } = await supabase.functions.invoke("meta-campaign-pause", {
     body: { access_token: accessToken, campaign_id: campaignId },

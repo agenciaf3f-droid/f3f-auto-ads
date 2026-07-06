@@ -1,12 +1,18 @@
 import type { ClientKpiConfig } from "./client-kpi-contract";
 import { extractPresetBucket, aggregateByAccountBucket, evaluateRule, bucketKey, type InsightRow } from "./meta-insights";
 
-export type Campaign = { id: string; name: string };
+export type Campaign = { id: string; name: string; daily_budget?: string; lifetime_budget?: string };
 
 // Insight cru da Meta pra uma campanha, ou null quando ainda não há veiculação suficiente
 // pra avaliar. `error` aparece quando a Meta recusou aquele campaign_id específico.
 export type CampaignInsight = Record<string, unknown> & { error?: string };
 export type InsightsMap = Record<string, CampaignInsight | null>;
+
+// Margem de erro: violação até 3% acima (ou abaixo, se operator "<") do limite cai em "atenção"
+// (amarelo), não "ruim" (vermelho) — 1 real a mais no CPA não é a mesma urgência que 30% acima.
+export const YELLOW_ZONE_MARGIN = 0.03;
+
+export type ViolationSeverity = "yellow" | "red";
 
 export type OptimizationViolation = {
   campaignId: string;
@@ -17,14 +23,107 @@ export type OptimizationViolation = {
   operator: ">" | "<";
   actual: number;
   limit: number;
+  severity: ViolationSeverity;
+  // CBO (orçamento na campanha) tem N adsets/criativos competindo pelo mesmo budget — pausar
+  // deve mirar o adset ou o criativo específico, não a campanha inteira. ABO (orçamento por
+  // adset) idem: só o conjunto ruim deve ser pausado. Ver handleDesligar em OtimizacoesPage.tsx.
+  isCbo: boolean;
 };
 
-const DISMISSAL_WINDOW_MS = 3 * 24 * 60 * 60 * 1000; // 3 dias
+// Mesma regra de PublishForm.tsx: campanha com daily_budget/lifetime_budget = CBO (orçamento no
+// nível da campanha); sem nenhum dos dois = ABO (orçamento no nível do adset).
+export function isCboCampaign(campaign: Pick<Campaign, "daily_budget" | "lifetime_budget">): boolean {
+  return !!(campaign.daily_budget || campaign.lifetime_budget);
+}
 
-// Um "Manter" (dismissed) só silencia a violação por 3 dias a partir do created_at — depois
-// disso a campanha volta a ficar elegível pra reaparecer se ainda (ou de novo) estiver fora do KPI.
-export function isDismissalActive(createdAt: string, now: Date = new Date()): boolean {
-  return now.getTime() - new Date(createdAt).getTime() < DISMISSAL_WINDOW_MS;
+function computeSeverity(operator: ">" | "<", actual: number, limit: number): ViolationSeverity {
+  if (limit === 0) return "red"; // sem base pra calcular desvio percentual — trata como pior caso
+  const deviation = operator === ">" ? (actual - limit) / limit : (limit - actual) / limit;
+  return deviation <= YELLOW_ZONE_MARGIN ? "yellow" : "red";
+}
+
+// Snapshot da métrica no momento em que o gestor agiu (manter/desligar), guardado em
+// optimization_actions.metric_snapshot. Tudo opcional: linhas legadas têm `{}` (sem baseline).
+// rangeKey = período em que o snapshot foi capturado (ver rangeKey() em meta-insights); ausente
+// em linhas legadas → comparação com o valor atual não é confiável e é marcada como não-comparável.
+export type MetricSnapshot = {
+  metric?: string;
+  actual?: number;
+  limit?: number;
+  operator?: ">" | "<";
+  rangeKey?: string;
+};
+
+// "Piorou?" desde que o gestor agiu: direção-consciente. Pra operator ">" (limite máximo) pior =
+// valor MAIOR; pra "<" (limite mínimo) pior = valor MENOR. Sem baseline (snapshot legado) -> chamador
+// trata como não-piorou (não dá pra afirmar). Usado no Histórico pra sinalizar campanha mantida que
+// voltou a degradar — aí o gestor pode desligar direto dali.
+export function hasWorsened(operator: ">" | "<", current: number, snapshot: number): boolean {
+  return operator === ">" ? current > snapshot : current < snapshot;
+}
+
+// Ação registrada pelo gestor sobre uma campanha (última por campanha), no shape do engine
+// (camelCase). A página mapeia a linha de optimization_actions pra isto.
+export type OptimizationActionRecord = {
+  campaignId: string;
+  campaignName: string | null;
+  clientName: string | null;
+  action: "dismissed" | "paused";
+  snapshot: MetricSnapshot;
+  createdAt: string; // ISO — comparável por ordenação de string
+};
+
+export type OptimizationHistoryEntry = {
+  action: OptimizationActionRecord;
+  live: OptimizationViolation | null; // violação ao vivo da mesma campanha, se ainda fora do KPI
+  comparable: boolean;                // snapshot capturado no MESMO período da avaliação atual
+  worsened: boolean;                  // só true quando comparable && piorou vs o snapshot
+};
+
+// Divide as violações ao vivo (`found`) em Pendentes (campanhas NUNCA tratadas) e Histórico (toda
+// campanha já mantida/desligada, reavaliada ao vivo). `actions` são TODAS as ações do gestor; a
+// função deduplica pra a mais recente por campanha (por createdAt). `currentRangeKey` = período
+// atual da tela — "piorou" só é calculado quando o snapshot foi tirado nesse mesmo período.
+export function buildOptimizationView(
+  found: OptimizationViolation[],
+  actions: OptimizationActionRecord[],
+  currentRangeKey: string,
+): { pendentes: OptimizationViolation[]; history: OptimizationHistoryEntry[] } {
+  // Última ação por campanha (robusto à ordem de entrada — compara createdAt, não posição).
+  const latest = new Map<string, OptimizationActionRecord>();
+  for (const a of actions) {
+    const prev = latest.get(a.campaignId);
+    if (!prev || a.createdAt > prev.createdAt) latest.set(a.campaignId, a);
+  }
+
+  const pendentes = found.filter((v) => !latest.has(v.campaignId));
+
+  // Uma campanha pode ter >1 métrica fora ao mesmo tempo — guardamos todas por campanha.
+  const liveByCampaign = new Map<string, OptimizationViolation[]>();
+  for (const v of found) {
+    const arr = liveByCampaign.get(v.campaignId);
+    if (arr) arr.push(v);
+    else liveByCampaign.set(v.campaignId, [v]);
+  }
+
+  const history: OptimizationHistoryEntry[] = [];
+  for (const [campaignId, action] of latest) {
+    const lvs = liveByCampaign.get(campaignId) ?? [];
+    const snap = action.snapshot ?? {};
+    // Compara maçã com maçã: prefere a violação da MESMA métrica do snapshot; senão a 1ª.
+    const live = lvs.find((v) => v.metric === snap.metric) ?? lvs[0] ?? null;
+    const comparable =
+      live != null && typeof snap.actual === "number" && snap.rangeKey != null && snap.rangeKey === currentRangeKey;
+    const worsened = comparable ? hasWorsened(live!.operator, live!.actual, snap.actual as number) : false;
+    history.push({ action, live, comparable, worsened });
+  }
+  // Piorou primeiro (mais urgente), depois ainda-fora, depois resolvidas; cada grupo por data desc.
+  history.sort((a, b) => {
+    const rank = (h: OptimizationHistoryEntry) => (h.worsened ? 0 : h.live ? 1 : 2);
+    return rank(a) - rank(b) || b.action.createdAt.localeCompare(a.action.createdAt);
+  });
+
+  return { pendentes, history };
 }
 
 export function compareKpis(
@@ -87,6 +186,8 @@ export function compareKpis(
         operator: kpi.operator,
         actual: evalResult.value as number,
         limit: kpi.value,
+        severity: computeSeverity(kpi.operator, evalResult.value as number, kpi.value),
+        isCbo: isCboCampaign(campaign),
       });
     }
   }
