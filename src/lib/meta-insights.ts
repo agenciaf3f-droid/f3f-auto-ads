@@ -9,15 +9,18 @@ export type BucketKey = PresetBucket | typeof OTHER_BUCKET;
 // Extrai o preset do nome da campanha. A posição do colchete NÃO é fixa:
 //   FASE 1/2/3 (generateCampaignName):  [FASE N] [GERENCIADOR] ...  -> preset no 1º colchete
 //   L.T (generateLtCampaignName):       [PRODUTO] [L.T] [dd/mm] ... -> preset no 2º colchete
-// Por isso varremos TODOS os grupos [...] e pegamos o 1º que bate um bucket conhecido,
-// normalizando "FASE 2 ADAPTADO" -> "FASE 2". Usar posição fixa jogaria toda L.T em "Outros".
+// Por isso varremos TODOS os grupos [...] e pegamos o 1º que bate um bucket conhecido.
+// Normaliza pelo PREFIXO ("FASE 1 - TRÁFEGO", "FASE 3 - LEADS | ZAP", "FASE 2 ADAPTADO" -> "FASE N"):
+// campanhas nomeadas com o label descritivo do preset (em vez do `.fase` limpo) senão caem
+// em "Outros" e nunca disparam violação — mesmo bug do L.T, só que pras 3 fases. Usar posição
+// fixa jogaria toda L.T em "Outros".
 // (Mesma lógica de extractPresetBucket() do branch de Otimizações — manter em sincronia.)
 export function extractPresetBucket(campaignName?: string | null): BucketKey {
   if (!campaignName) return OTHER_BUCKET;
   const groups = campaignName.match(/\[([^\]]+)\]/g) || [];
   for (const g of groups) {
     const inner = g.slice(1, -1).trim().toUpperCase();
-    const normalized = inner.startsWith("FASE 2") ? "FASE 2" : inner;
+    const normalized = ["FASE 1", "FASE 2", "FASE 3"].find((p) => inner.startsWith(p)) || inner;
     if ((PRESET_BUCKETS as string[]).includes(normalized)) return normalized as PresetBucket;
   }
   return OTHER_BUCKET;
@@ -228,6 +231,12 @@ export function evaluateRule(rule: KpiRule, agg: AggregatedBucket | undefined): 
 export type DateRangeSelection =
   | { mode: "preset"; preset: string }
   | { mode: "custom"; since: string; until: string };
+
+// Chave estável do período pra guardar junto do snapshot de KPI. Comparar "estava em X → agora Y"
+// só faz sentido dentro do MESMO período — snapshot 7d vs valor atual 30d é maçã com laranja.
+export function rangeKey(range: DateRangeSelection): string {
+  return range.mode === "custom" ? `custom:${range.since}:${range.until}` : `preset:${range.preset}`;
+}
 
 export const DATE_PRESETS: { value: string; label: string }[] = [
   { value: "today", label: "Hoje" },

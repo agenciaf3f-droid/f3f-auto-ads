@@ -257,6 +257,8 @@ export type Database = {
           action: string
           ad_account_id: string
           campaign_id: string
+          campaign_name: string | null
+          client_name: string | null
           created_at: string
           id: string
           metric_snapshot: Json
@@ -266,6 +268,8 @@ export type Database = {
           action: string
           ad_account_id: string
           campaign_id: string
+          campaign_name?: string | null
+          client_name?: string | null
           created_at?: string
           id?: string
           metric_snapshot?: Json
@@ -275,6 +279,8 @@ export type Database = {
           action?: string
           ad_account_id?: string
           campaign_id?: string
+          campaign_name?: string | null
+          client_name?: string | null
           created_at?: string
           id?: string
           metric_snapshot?: Json

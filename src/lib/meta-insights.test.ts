@@ -23,6 +23,14 @@ describe("extractPresetBucket", () => {
     expect(extractPresetBucket("[FASE 2 ADAPTADO] [GERENCIADOR] [2026-07-01] [pub] [R$50]")).toBe("FASE 2");
   });
 
+  it("label descritivo (preset.label, não preset.fase) normaliza pro bucket certo", () => {
+    // Campanhas reais nomeadas com o label completo do preset (ex.: publicadas antes do
+    // campo `.fase` existir) não podem cair em Outros — mesmo bug do L.T, agora pra FASE 1/3.
+    expect(extractPresetBucket("[FASE 1 - TRÁFEGO] [GERENCIADOR] [2026-07-01] [pub] [R$50]")).toBe("FASE 1");
+    expect(extractPresetBucket("[FASE 3 - LEADS | ZAP] [GERENCIADOR] [2026-07-01] [pub] [R$50]")).toBe("FASE 3");
+    expect(extractPresetBucket("[FASE 3 - VENDAS | ZAP] [GERENCIADOR] [2026-07-01] [pub] [R$50]")).toBe("FASE 3");
+  });
+
   it("campanha sem preset conhecido cai em Outros", () => {
     expect(extractPresetBucket("[Campanha manual do Gerenciador]")).toBe("Outros");
     expect(extractPresetBucket("Sem colchete nenhum")).toBe("Outros");

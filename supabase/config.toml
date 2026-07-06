@@ -47,3 +47,6 @@ verify_jwt = false
 
 [functions.meta-campaign-pause]
 verify_jwt = false
+
+[functions.meta-node-insights]
+verify_jwt = false
