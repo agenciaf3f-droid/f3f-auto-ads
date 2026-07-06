@@ -388,9 +388,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const [fase2Gender, setFase2Gender] = useState<"all" | "male" | "female">("all");
   // L.T (FASE 3 LP) — público Advantage + sugestões de idade/gênero
   const [ltAdvantage, setLtAdvantage] = useState(true);
-  // Transparência (DSA): beneficiário/pagador. Vazio = usa o nome da página.
-  const [dsaBeneficiary, setDsaBeneficiary] = useState("");
-  const [suggestedBeneficiary, setSuggestedBeneficiary] = useState(""); // puxado da conta — só sugestão, NÃO enviado automático
+  // Transparência (DSA): beneficiário/pagador — puxado da conta, fixo, não editável pelo usuário.
+  const [suggestedBeneficiary, setSuggestedBeneficiary] = useState("");
 
   // Scheduling
   const [utmTemplate, setUtmTemplate] = useState(UTM_DEFAULT);
@@ -555,7 +554,6 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     setWhatsappNumbers([]);
     setSelectedWhatsappId("");
     setWhatsappError(null);
-    setDsaBeneficiary("");
     setSuggestedBeneficiary("");
     setSelectedTemplateId("");
     // Reset audiences
@@ -583,7 +581,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           setIdentityIgUsername(c.igUsername ?? null);
           setIdentityWhatsappId(c.whatsappId ?? null);
           setIdentityWhatsappPhone(c.whatsappPhone ?? null);
-          if (c.dsaBeneficiary) { setSuggestedBeneficiary(c.dsaBeneficiary); setDsaBeneficiary(prev => prev || c.dsaBeneficiary); }
+          if (c.dsaBeneficiary) { setSuggestedBeneficiary(c.dsaBeneficiary); }
           setIdentityLoaded(true);
           setIdentityLoading(false);
           resolvedPageId = c.pageId ?? null;
@@ -602,7 +600,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     if (!identityFromCache) {
     try {
       const { ig_accounts: igAccounts, diagnostic, dsa_beneficiary } = await igFetchPromise!;
-      if (dsa_beneficiary) { setSuggestedBeneficiary(dsa_beneficiary); setDsaBeneficiary(prev => prev || dsa_beneficiary); addLog(`🏷️ [pipeline] Beneficiário da conta (auto-preenchido): ${dsa_beneficiary}`); }
+      if (dsa_beneficiary) { setSuggestedBeneficiary(dsa_beneficiary); addLog(`🏷️ [pipeline] Beneficiário da conta (auto-preenchido): ${dsa_beneficiary}`); }
       addLog(`📄 [pipeline] contas IG autorizadas: ${igAccounts.length}`);
       for (const d of diagnostic) {
         addLog(`   🔎 ${d.endpoint} → ${d.status}${d.count !== undefined ? ` (${d.count})` : ""}${d.detail ? ` | ${d.detail}` : ""}`);
@@ -1443,9 +1441,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         lt_advantage: isFase3Lp ? ltAdvantage : undefined,
         schedule,
         utm_template: utmTemplate.trim() || UTM_DEFAULT,
-        // auto-preenchido com o beneficiário da conta serve só pra UI; só envia se o gestor EDITOU (difere da sugestão).
-        // Untouched → undefined → backend não manda DSA em BR e usa a recomendação da conta quando atinge a Europa.
-        dsa_beneficiary: (dsaBeneficiary.trim() && dsaBeneficiary.trim() !== suggestedBeneficiary.trim()) ? dsaBeneficiary.trim() : undefined,
+        // Beneficiário não é editável pelo usuário — backend resolve sozinho via /dsa_recommendations da conta.
       };
       setValidatedPayload(payload);
       addLog("✅ [validate] Payload completo construído e armazenado para publicação");
@@ -2539,16 +2535,12 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
             <Separator className="opacity-20" />
             <div className="space-y-1">
               <Label className="text-xs font-medium text-muted-foreground">Beneficiário e pagador (transparência)</Label>
-              <Input
-                value={dsaBeneficiary}
-                onChange={(e) => setDsaBeneficiary(e.target.value)}
-                placeholder={suggestedBeneficiary || identityPageName || "Ex: MARIANA EIRAS LTDA"}
-                disabled={loading}
-                className="text-sm"
-              />
+              <p className="text-sm bg-muted/30 rounded p-2">
+                {suggestedBeneficiary || identityPageName || "—"}
+              </p>
               <p className="text-[10px] text-muted-foreground">
                 {suggestedBeneficiary
-                  ? `Anunciante verificado da conta. Enviado automaticamente à Meta (exigido para os anúncios rodarem). Edite só para forçar outro.`
+                  ? "Anunciante verificado da conta. Enviado automaticamente à Meta (exigido para os anúncios rodarem). Fixo — não editável."
                   : "Quem aparece como anunciante na Biblioteca de Anúncios. Puxado automaticamente da conta quando disponível."}
               </p>
             </div>
