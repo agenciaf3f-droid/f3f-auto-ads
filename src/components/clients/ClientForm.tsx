@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw, ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -81,6 +81,7 @@ export default function ClientForm({
   const [groupId, setGroupId] = useState("");
   const [groupTouched, setGroupTouched] = useState(false);
   const [groupSearch, setGroupSearch] = useState("");
+  const [groupPickerOpen, setGroupPickerOpen] = useState(false);
   const [syncingGroups, setSyncingGroups] = useState(false);
 
   useEffect(() => {
@@ -93,6 +94,7 @@ export default function ClientForm({
     setGroupId(client?.whatsapp_group_id || "");
     setGroupTouched(false);
     setGroupSearch("");
+    setGroupPickerOpen(false);
     if (isEdit && client) {
       listClientAdAccounts(client.id)
         .then((links) => setSelected(new Set(links.map((l) => l.ad_account_id))))
@@ -270,46 +272,68 @@ export default function ClientForm({
             </div>
             {dashboards.length > 0 ? (
               <>
-                {/* Inline (input + lista scrollável), como o picker de contas — NÃO usa portal:
-                    SearchableSelect portala pro body e o Radix Dialog (modal) bloqueia foco/scroll dele. */}
-                <Input
-                  value={groupSearch}
-                  onChange={(e) => setGroupSearch(e.target.value)}
-                  placeholder="Buscar dashboard por nome ou ID…"
-                  className="h-8"
-                />
-                <div className="h-40 overflow-y-auto rounded-md border p-2 space-y-1">
-                  <button
-                    type="button"
-                    onClick={() => { setGroupId(""); setGroupTouched(true); }}
-                    className={cn(
-                      "w-full text-left rounded-md px-2 py-1.5 text-sm transition-colors",
-                      groupId === "" ? "bg-primary/10 text-primary" : "hover:bg-accent-soft",
+                {/* Trigger colapsado mostra o grupo selecionado (nome + ID). Clicar abre a lista;
+                    selecionar um item colapsa de volta. Inline (não usa portal): SearchableSelect
+                    portala pro body e o Radix Dialog (modal) bloqueia foco/scroll dele. */}
+                <button
+                  type="button"
+                  onClick={() => { setGroupPickerOpen((o) => !o); setGroupSearch(""); }}
+                  className="w-full flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-accent-soft"
+                >
+                  <span className="min-w-0 flex-1">
+                    {matchedDashboard ? (
+                      <>
+                        <span className="block truncate">{matchedDashboard.nome}</span>
+                        <span className="block truncate text-[10px] text-muted-foreground font-mono">{matchedDashboard.whatsapp_group_id}</span>
+                      </>
+                    ) : groupId ? (
+                      <span className="block truncate font-mono text-xs">{groupId}</span>
+                    ) : (
+                      <span className="text-muted-foreground">— Sem grupo —</span>
                     )}
-                  >
-                    — Sem grupo —
-                  </button>
-                  {filteredDashboards.length === 0 ? (
-                    <p className="text-sm text-muted-foreground px-2 py-1.5">Nenhum dashboard corresponde à busca.</p>
-                  ) : (
-                    filteredDashboards.map((d) => (
+                  </span>
+                  <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                </button>
+                {groupPickerOpen && (
+                  <>
+                    <Input
+                      autoFocus
+                      value={groupSearch}
+                      onChange={(e) => setGroupSearch(e.target.value)}
+                      placeholder="Buscar dashboard por nome ou ID…"
+                      className="h-8"
+                    />
+                    <div className="h-40 overflow-y-auto rounded-md border p-2 space-y-1">
                       <button
-                        key={d.whatsapp_group_id}
                         type="button"
-                        onClick={() => { setGroupId(d.whatsapp_group_id); setGroupTouched(true); }}
+                        onClick={() => { setGroupId(""); setGroupTouched(true); setGroupPickerOpen(false); }}
                         className={cn(
-                          "w-full text-left rounded-md px-2 py-1.5 transition-colors",
-                          groupId === d.whatsapp_group_id ? "bg-primary/10 text-primary" : "hover:bg-accent-soft",
+                          "w-full text-left rounded-md px-2 py-1.5 text-sm transition-colors",
+                          groupId === "" ? "bg-primary/10 text-primary" : "hover:bg-accent-soft",
                         )}
                       >
-                        <span className="text-sm block truncate">{d.nome}</span>
-                        <span className="text-[10px] text-muted-foreground font-mono">{d.whatsapp_group_id}</span>
+                        — Sem grupo —
                       </button>
-                    ))
-                  )}
-                </div>
-                {matchedDashboard && (
-                  <p className="text-xs text-muted-foreground">Selecionado: "{matchedDashboard.nome}"</p>
+                      {filteredDashboards.length === 0 ? (
+                        <p className="text-sm text-muted-foreground px-2 py-1.5">Nenhum dashboard corresponde à busca.</p>
+                      ) : (
+                        filteredDashboards.map((d) => (
+                          <button
+                            key={d.whatsapp_group_id}
+                            type="button"
+                            onClick={() => { setGroupId(d.whatsapp_group_id); setGroupTouched(true); setGroupPickerOpen(false); }}
+                            className={cn(
+                              "w-full text-left rounded-md px-2 py-1.5 transition-colors min-w-0",
+                              groupId === d.whatsapp_group_id ? "bg-primary/10 text-primary" : "hover:bg-accent-soft",
+                            )}
+                          >
+                            <span className="text-sm block truncate">{d.nome}</span>
+                            <span className="block truncate text-[10px] text-muted-foreground font-mono">{d.whatsapp_group_id}</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </>
                 )}
               </>
             ) : (

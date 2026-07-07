@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,10 +16,10 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Loader2, UserPlus, Mail, ShieldCheck, Users, Trash2, RefreshCw } from "lucide-react";
+import { Loader2, UserPlus, Mail, ShieldCheck, Users, Trash2, RefreshCw, Send, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
-import { isCurrentUserAdmin, inviteUser, listAppUsers, removeAppUser, type AppUser } from "@/lib/admin";
+import { isCurrentUserAdmin, inviteUser, listAppUsers, removeAppUser, sendWhatsappTest, type AppUser } from "@/lib/admin";
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
@@ -39,6 +40,9 @@ export default function AdminPage() {
   const [users, setUsers] = useState<AppUser[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [testGroupId, setTestGroupId] = useState("");
+  const [testMessage, setTestMessage] = useState("");
+  const [sendingTest, setSendingTest] = useState(false);
 
   useEffect(() => {
     isCurrentUserAdmin().then((ok) => {
@@ -90,6 +94,24 @@ export default function AdminPage() {
       toast.error(err instanceof Error ? err.message : "Erro ao remover gestor");
     } finally {
       setRemovingId(null);
+    }
+  };
+
+  const handleSendTest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSendingTest(true);
+    try {
+      const result = await sendWhatsappTest(testGroupId.trim(), testMessage.trim() || undefined);
+      if (result.ok) {
+        toast.success("Teste enviado! Confere o WhatsApp do grupo.");
+      } else {
+        // reason = motivo REAL da UAZAPI (token/instância/grupo) — é o que crava a causa se falhar.
+        toast.error(result.reason || "Falha no envio de teste");
+      }
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Erro ao enviar teste");
+    } finally {
+      setSendingTest(false);
     }
   };
 
@@ -277,6 +299,62 @@ export default function AdminPage() {
               })}
             </ul>
           )}
+        </div>
+
+        {/* ── Seção Teste de integração WhatsApp ── */}
+        <div className="mt-10 fade-in-up" style={{ animationDelay: "240ms" }}>
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-7 h-7 rounded-md bg-accent/10 border border-accent/20 flex items-center justify-center">
+              <MessageCircle className="w-3.5 h-3.5 text-accent" />
+            </div>
+            <span className="text-xs font-medium text-muted-foreground tracking-wide uppercase">
+              Teste de integração
+            </span>
+          </div>
+          <h2 className="font-display text-2xl font-bold tracking-tight mb-1.5">
+            Enviar teste <span className="text-gradient">WhatsApp</span>
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Dispara uma mensagem real via UAZAPI pra um grupo de teste — valida token, instância e
+            envio de ponta a ponta. Se falhar, o motivo real aparece no aviso.
+          </p>
+        </div>
+
+        <div className="glass-card p-6 mt-4 fade-in-up" style={{ animationDelay: "300ms" }}>
+          <form onSubmit={handleSendTest} className="space-y-5">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">ID do grupo de teste</Label>
+              <Input
+                value={testGroupId}
+                onChange={(e) => setTestGroupId(e.target.value)}
+                placeholder="120363...@g.us"
+                required
+                className="h-10 font-mono"
+              />
+              <p className="text-xs text-muted-foreground">
+                Cole o ID do grupo (com ou sem <code className="text-foreground/80">@g.us</code>).
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Mensagem (opcional)</Label>
+              <Textarea
+                value={testMessage}
+                onChange={(e) => setTestMessage(e.target.value)}
+                placeholder="Deixe em branco para usar a mensagem de teste padrão."
+                rows={3}
+              />
+            </div>
+
+            <Button
+              type="submit"
+              className="w-full h-10 gap-2 active:scale-[0.98] transition-transform"
+              disabled={sendingTest}
+            >
+              {sendingTest ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              Enviar teste WhatsApp
+            </Button>
+          </form>
         </div>
 
     </div>
