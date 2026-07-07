@@ -120,8 +120,11 @@ export async function fetchPixels(accessToken: string, adAccountId: string) {
 }
 
 export async function validatePublish(params: Record<string, unknown>) {
-  const { data, error } = await supabase.functions.invoke("meta-publish-validate", {
-    body: params,
+  // Pré-voo REAL: usa o meta-publish com dry_run — cria campanha + 1 adset REAL com o config
+  // do preset, valida na Meta e deleta os dois. Substitui o meta-publish-validate antigo (shell
+  // genérico LINK_CLICKS que não pegava erro de preset). Retorna { ok, dry_run, error_* }.
+  const { data, error } = await supabase.functions.invoke("meta-publish", {
+    body: { ...params, dry_run: true },
   });
   if (error && data) return data;
   if (error) throw new Error(error.message);

@@ -1478,6 +1478,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     addLog(`⏱️ [validate] Checagens completas: ${Math.round(performance.now() - tLocal)}ms`);
 
     // === BUILD AND STORE THE PUBLISH PAYLOAD ===
+    // Pré-voo REAL na Meta (dry_run): preenchido dentro do bloco allValid; erro real bloqueia publicar.
+    let preflightError: string | null = null;
     if (allValid) {
       const schedule = buildSchedule();
       const payload: Record<string, unknown> = {
@@ -1570,14 +1572,39 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         addLog(`📋 [validate] FASE 3 payload: whatsapp_number_id=${payload.whatsapp_number_id}, whatsapp_number=${payload.whatsapp_number}`);
         addLog(`📋 [validate] FASE 3 attribution: CLICK_THROUGH / 1 dia (será aplicado no backend)`);
       }
+
+      // Pré-voo REAL na Meta: cria + deleta 1 campanha + 1 conjunto de teste com o config do
+      // preset. Pega erro real (promoted_object WhatsApp, PROFILE_VISIT/INSTAGRAM_PROFILE, pixel
+      // L.T, placement) ANTES de publicar. Leva alguns segundos (chamadas à Meta).
+      addLog("🚀 [validate] Pré-voo na Meta (cria e deleta um teste — pode levar alguns segundos)…");
+      try {
+        const dry = await validatePublish(payload);
+        if (!dry?.ok) {
+          preflightError = dry?.error_user_msg || dry?.error_message || "Falha no pré-voo na Meta.";
+          setValidatedPayload(null); // bloqueia publicar
+          addLog(`❌ [validate] Pré-voo falhou: ${preflightError}`);
+        } else {
+          addLog("✅ [validate] Pré-voo OK — config validado na Meta (teste criado e deletado)");
+        }
+      } catch (e) {
+        preflightError = e instanceof Error ? e.message : "Erro de transporte no pré-voo.";
+        setValidatedPayload(null);
+        addLog(`❌ [validate] Pré-voo — erro: ${preflightError}`);
+      }
     } else {
       setValidatedPayload(null);
     }
 
-    setValidationResult({ valid: allValid, checks });
-    if (allValid) {
+    const finalValid = allValid && !preflightError;
+    const resultChecks = allValid
+      ? [...checks, { label: "Pré-voo na Meta", ok: !preflightError, detail: preflightError || "config validado (teste criado e deletado)" }]
+      : checks;
+    setValidationResult({ valid: finalValid, checks: resultChecks, error: preflightError || undefined });
+    if (finalValid) {
       addLog("✅ Validação OK — payload pronto para publicação");
       toast.success("Validação OK! Pronto para publicar.");
+    } else if (preflightError) {
+      toast.error(`Pré-voo na Meta falhou: ${preflightError}`);
     } else {
       const failedChecks = checks.filter(c => !c.ok).map(c => c.label).join(", ");
       addLog(`❌ Validação falhou: ${failedChecks}`);
