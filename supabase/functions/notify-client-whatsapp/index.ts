@@ -39,6 +39,19 @@ function pickLink(ad: {
   return null;
 }
 
+// Criativos idênticos compartilham o MESMO link — colapsa em 1 bullet por link único, preservando o
+// `name` da 1ª ocorrência. Entradas SEM link (dark post sem permalink) ficam individuais: não há link
+// pra identificar duplicata, então não dá pra afirmar que são o mesmo criativo.
+function dedupeByLink(ads: { name: string; link: string | null }[]): { name: string; link: string | null }[] {
+  const seen = new Set<string>();
+  return ads.filter((ad) => {
+    if (!ad.link) return true;
+    if (seen.has(ad.link)) return false;
+    seen.add(ad.link);
+    return true;
+  });
+}
+
 // Resolve o link único de um ad (level "ad"). Falha de Graph → null (não derruba o envio).
 async function resolveAdLink(nodeId: string, accessToken: string): Promise<string | null> {
   try {
@@ -222,7 +235,7 @@ Deno.serve(async (req) => {
         `Desativamos o criativo *${nodeName}* por conta de *${metricLabel}* fora do KPI.` +
         (adLink ? `\n🔗 ${adLink}` : `\n(sem link público disponível)`);
     } else if (level === "campaign") {
-      const ads = await resolveCampaignAds(campaignId, accessToken);
+      const ads = dedupeByLink(await resolveCampaignAds(campaignId, accessToken));
       links = ads;
       const lines = ads
         .map((ad) => `\n• ${ad.name}${ad.link ? ` — ${ad.link}` : " (sem link)"}`)
@@ -232,7 +245,7 @@ Deno.serve(async (req) => {
         `por conta de *${metricLabel}* fora do KPI.` +
         lines;
     } else {
-      const ads = await resolveAdsetAds(nodeId, accessToken);
+      const ads = dedupeByLink(await resolveAdsetAds(nodeId, accessToken));
       links = ads;
       const lines = ads
         .map((ad) => `\n• ${ad.name}${ad.link ? ` — ${ad.link}` : " (sem link)"}`)
