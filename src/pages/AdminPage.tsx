@@ -3,10 +3,32 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, UserPlus, Mail, ShieldCheck, Send, MessageCircle } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Loader2, UserPlus, Mail, ShieldCheck, Users, Trash2, RefreshCw, Send, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
-import { isCurrentUserAdmin, inviteUser, sendWhatsappTest } from "@/lib/admin";
+import { useAuth } from "@/contexts/AuthContext";
+import { isCurrentUserAdmin, inviteUser, listAppUsers, removeAppUser, sendWhatsappTest, type AppUser } from "@/lib/admin";
+
+function fmtDate(iso: string | null): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleDateString("pt-BR");
+  } catch {
+    return "—";
+  }
+}
 
 export default function AdminPage() {
   const navigate = useNavigate();
@@ -14,6 +36,10 @@ export default function AdminPage() {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const { user: currentUser } = useAuth();
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(true);
+  const [removingId, setRemovingId] = useState<string | null>(null);
   const [testGroupId, setTestGroupId] = useState("");
   const [testMessage, setTestMessage] = useState("");
   const [sendingTest, setSendingTest] = useState(false);
@@ -40,6 +66,34 @@ export default function AdminPage() {
       toast.error(err instanceof Error ? err.message : "Erro ao enviar convite");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const loadUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      setUsers(await listAppUsers());
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Erro ao carregar gestores");
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  // Carrega a lista assim que o acesso admin é confirmado.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (allowed) loadUsers(); }, [allowed]);
+
+  const handleRemove = async (id: string, label: string) => {
+    setRemovingId(id);
+    try {
+      await removeAppUser(id);
+      toast.success(`Gestor ${label} removido`);
+      setUsers((prev) => prev.filter((u) => u.id !== id));
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Erro ao remover gestor");
+    } finally {
+      setRemovingId(null);
     }
   };
 
@@ -147,7 +201,108 @@ export default function AdminPage() {
           </p>
         </div>
 
-        <div className="mt-10 fade-in-up" style={{ animationDelay: "180ms" }}>
+        {/* ── Seção Gestores: lista + remoção de membros ── */}
+        <div className="glass-card p-6 mt-6 fade-in-up" style={{ animationDelay: "180ms" }}>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-primary" />
+              <h2 className="font-display text-lg font-semibold tracking-tight">Gestores</h2>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={loadUsers}
+              disabled={loadingUsers}
+              className="gap-1.5 text-xs h-8"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingUsers ? "animate-spin" : ""}`} />
+              Atualizar
+            </Button>
+          </div>
+
+          {loadingUsers ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-6">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Carregando gestores...
+            </div>
+          ) : users.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-6">Nenhum gestor encontrado.</p>
+          ) : (
+            <ul className="divide-y divide-border/50">
+              {users.map((u) => {
+                const isSelf = currentUser?.id === u.id;
+                const label = u.name || u.email || "gestor";
+                return (
+                  <li key={u.id} className="flex items-center gap-3 py-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium truncate">{u.name || "—"}</span>
+                        {u.is_admin && (
+                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0 gap-1">
+                            <ShieldCheck className="w-2.5 h-2.5" />
+                            Admin
+                          </Badge>
+                        )}
+                        {isSelf && <span className="text-[10px] text-muted-foreground">(você)</span>}
+                      </div>
+                      <p className="text-xs text-muted-foreground truncate">{u.email || "—"}</p>
+                      <p className="text-[11px] text-muted-foreground/70 mt-0.5">
+                        Criado em {fmtDate(u.created_at)}
+                        {u.last_sign_in_at
+                          ? ` · último acesso ${fmtDate(u.last_sign_in_at)}`
+                          : " · nunca acessou"}
+                      </p>
+                    </div>
+
+                    {isSelf ? (
+                      <span className="text-[11px] text-muted-foreground shrink-0 px-2">—</span>
+                    ) : (
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            disabled={removingId === u.id}
+                            className="text-destructive hover:text-destructive gap-1.5 h-8 shrink-0"
+                          >
+                            {removingId === u.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-3.5 h-3.5" />
+                            )}
+                            Remover
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Remover gestor?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Remover <strong>{label}</strong>? Isso apaga o acesso dele à plataforma. Ação irreversível.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => handleRemove(u.id, label)}
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            >
+                              Remover
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        {/* ── Seção Teste de integração WhatsApp ── */}
+        <div className="mt-10 fade-in-up" style={{ animationDelay: "240ms" }}>
           <div className="flex items-center gap-2 mb-3">
             <div className="w-7 h-7 rounded-md bg-accent/10 border border-accent/20 flex items-center justify-center">
               <MessageCircle className="w-3.5 h-3.5 text-accent" />
@@ -165,7 +320,7 @@ export default function AdminPage() {
           </p>
         </div>
 
-        <div className="glass-card p-6 mt-4 fade-in-up" style={{ animationDelay: "240ms" }}>
+        <div className="glass-card p-6 mt-4 fade-in-up" style={{ animationDelay: "300ms" }}>
           <form onSubmit={handleSendTest} className="space-y-5">
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">ID do grupo de teste</Label>
