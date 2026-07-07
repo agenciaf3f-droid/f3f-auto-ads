@@ -304,10 +304,13 @@ export async function runAdsetDiff(params: { access_token: string; ad_account_id
 export type NotifyClientPauseParams = {
   access_token: string;
   ad_account_id: string;
-  level: "adset" | "ad";
-  node_id: string;
+  level: "adset" | "ad" | "campaign";
+  // adset/ad: nó pausado. campaign: campanha inteira desligada (usa campaign_id/campaign_name).
+  node_id?: string;
   adset_id?: string;
-  node_name: string;
+  node_name?: string;
+  campaign_id?: string;
+  campaign_name?: string;
   metric_label: string;
   dry_run: boolean;
 };

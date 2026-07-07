@@ -316,9 +316,9 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
   }
 
   // Desliga a CAMPANHA inteira (PAUSED) direto do card — fallback sempre disponível, sem depender
-  // do drill-in de conjuntos/criativos (que some se a edge de estrutura falhar). Não dispara aviso
-  // WhatsApp: a edge notify opera por nó (adset/ad) e campanha não tem nó único. Reusa `pausingId`
-  // como trava de clique (card da lista e nós do drill nunca aparecem juntos, sem colisão).
+  // do drill-in de conjuntos/criativos (que some se a edge de estrutura falhar). Reusa `pausingId`
+  // como trava de clique (card da lista e nós do drill nunca aparecem juntos, sem colisão). Depois
+  // da pausa, prepara o aviso WhatsApp do cliente (nível campanha), igual ao pausar-nó.
   async function handleDesligarCampanha(violation: OptimizationViolation) {
     if (!accessToken) return;
     setPausingId(violation.campaignId);
@@ -338,6 +338,29 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     }
     setPausingId(null);
     toast({ title: "Campanha desligada", description: violation.campaignName });
+
+    // Best-effort: prepara o aviso pro grupo de WhatsApp do cliente (nível campanha). A pausa já
+    // está feita acima — qualquer falha aqui (sem grupo, rede, edge fora) NUNCA desfaz/bloqueia.
+    try {
+      const previewParams: NotifyClientPauseParams = {
+        access_token: accessToken,
+        ad_account_id: violation.adAccountId,
+        level: "campaign",
+        campaign_id: violation.campaignId,
+        campaign_name: violation.campaignName,
+        metric_label: getMetricDef(violation.metric)?.label ?? violation.metric,
+        dry_run: true,
+      };
+      const result = await notifyClientPause(previewParams);
+      // `=== true`/`=== false`, não truthy: com `strict:false` o TS não estreita a união por booleano.
+      if (result.ok === true && "text" in result) {
+        setNotifyPreview({ text: result.text, groupId: result.group_id, clientName: result.client_name, params: { ...previewParams, dry_run: false } });
+      } else if (result.ok === false) {
+        toast({ title: "Cliente sem grupo de WhatsApp — não avisado." });
+      }
+    } catch (e) {
+      console.error("Falha ao preparar aviso ao cliente no WhatsApp (campanha já desligada)", e);
+    }
   }
 
   // Pausa só o NÓ clicado (conjunto ou criativo) — nunca a campanha inteira. pauseCampaign aceita

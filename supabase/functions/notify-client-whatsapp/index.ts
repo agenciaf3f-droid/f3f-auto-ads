@@ -1,5 +1,5 @@
 // Edge function: avisa o grupo de WhatsApp do cliente quando um gestor pausa um
-// conjunto (adset) ou criativo (ad) na aba Otimizações.
+// conjunto (adset), criativo (ad) ou a campanha inteira (campaign) na aba Otimizações.
 // Modelo privilegiado (espelha admin-invite-user): valida o JWT do caller via
 // anon client, depois usa service-role p/ resolver o grupo do cliente.
 // Envio real via UAZAPI (_shared/uazapi.ts). Link do criativo via Graph API v25.0.
@@ -92,6 +92,40 @@ async function resolveAdsetAds(
   }
 }
 
+// Resolve os ads que ESTAVAM ativos numa campanha inteira (level "campaign"), com seus links.
+// Falha de Graph → lista vazia (não derruba o envio).
+async function resolveCampaignAds(
+  campaignId: string,
+  accessToken: string,
+): Promise<{ name: string; link: string | null }[]> {
+  try {
+    // MESMO cuidado do resolveAdsetAds: filtra pelo `status` PRÓPRIO do ad, NÃO por `effective_status`.
+    // Este fetch roda DEPOIS de pausar a campanha, então o effective_status de TODOS os ads já virou
+    // CAMPAIGN_PAUSED — filtrar por effective_status=ACTIVE (server-side) devolveria lista vazia. O
+    // status próprio (o que o gestor tinha ligado) segue ACTIVE, então listamos os criativos que
+    // ESTAVAM ativos na campanha (o requisito).
+    const url =
+      `${GRAPH}/${encodeURIComponent(campaignId)}/ads` +
+      `?fields=name,status,preview_shareable_link,creative{instagram_permalink_url,effective_object_story_id}` +
+      `&limit=200&access_token=${encodeURIComponent(accessToken)}`;
+    const res = await fetch(url);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.error || !Array.isArray(data?.data)) {
+      console.log("[notify-client-whatsapp] Graph campaign ads error:", JSON.stringify(data?.error ?? res.status));
+      return [];
+    }
+    return data.data
+      .filter((ad: { status?: string }) => ad?.status === "ACTIVE")
+      .map((ad: { name?: string }) => ({
+        name: ad?.name ?? "(sem nome)",
+        link: pickLink(ad),
+      }));
+  } catch (e) {
+    console.log("[notify-client-whatsapp] Graph campaign ads exception:", e instanceof Error ? e.message : String(e));
+    return [];
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -118,9 +152,12 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const accessToken = typeof body.access_token === "string" ? body.access_token : "";
     const adAccountId = typeof body.ad_account_id === "string" ? body.ad_account_id : "";
-    const level = body.level === "adset" || body.level === "ad" ? body.level : "";
+    const level =
+      body.level === "adset" || body.level === "ad" || body.level === "campaign" ? body.level : "";
     const nodeId = typeof body.node_id === "string" ? body.node_id : "";
     const nodeName = typeof body.node_name === "string" ? body.node_name : "";
+    const campaignId = typeof body.campaign_id === "string" ? body.campaign_id : "";
+    const campaignName = typeof body.campaign_name === "string" ? body.campaign_name : "";
     const metricLabel = typeof body.metric_label === "string" ? body.metric_label : "";
     // Fail-safe: só envia quando dry_run é explicitamente false;
     // ausente/qualquer-outro-valor → preview (nunca dispara WhatsApp por acidente).
@@ -128,9 +165,15 @@ Deno.serve(async (req) => {
 
     if (!accessToken) return json({ error: "access_token obrigatório" }, 400);
     if (!adAccountId) return json({ error: "ad_account_id obrigatório" }, 400);
-    if (!level) return json({ error: 'level deve ser "adset" ou "ad"' }, 400);
-    if (!nodeId) return json({ error: "node_id obrigatório" }, 400);
-    if (!nodeName) return json({ error: "node_name obrigatório" }, 400);
+    if (!level) return json({ error: 'level deve ser "adset", "ad" ou "campaign"' }, 400);
+    // Alvo por nível: adset/ad usam node_id/node_name; campaign usa campaign_id/campaign_name.
+    if (level === "campaign") {
+      if (!campaignId) return json({ error: "campaign_id obrigatório" }, 400);
+      if (!campaignName) return json({ error: "campaign_name obrigatório" }, 400);
+    } else {
+      if (!nodeId) return json({ error: "node_id obrigatório" }, 400);
+      if (!nodeName) return json({ error: "node_name obrigatório" }, 400);
+    }
     if (!metricLabel) return json({ error: "metric_label obrigatório" }, 400);
 
     // 3. Resolver o grupo de WhatsApp do cliente (service-role, escopado ao caller).
@@ -178,6 +221,16 @@ Deno.serve(async (req) => {
       text =
         `Desativamos o criativo *${nodeName}* por conta de *${metricLabel}* fora do KPI.` +
         (adLink ? `\n🔗 ${adLink}` : `\n(sem link público disponível)`);
+    } else if (level === "campaign") {
+      const ads = await resolveCampaignAds(campaignId, accessToken);
+      links = ads;
+      const lines = ads
+        .map((ad) => `\n• ${ad.name}${ad.link ? ` — ${ad.link}` : " (sem link)"}`)
+        .join("");
+      text =
+        `Desativamos a campanha *${campaignName}* e os criativos ativos dela, ` +
+        `por conta de *${metricLabel}* fora do KPI.` +
+        lines;
     } else {
       const ads = await resolveAdsetAds(nodeId, accessToken);
       links = ads;
