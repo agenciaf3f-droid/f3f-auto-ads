@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Gauge, Loader2, AlertTriangle, CheckCircle2, History, ChevronRight, ChevronLeft } from "lucide-react";
+import { Gauge, Loader2, AlertTriangle, CheckCircle2, History, ChevronRight, ChevronLeft, Copy } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -304,6 +304,17 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     toast({ title: "Campanha mantida", description: violation.campaignName });
   }
 
+  // Copia o ID COMPLETO da campanha pro clipboard — o gestor cola no Gerenciador da Meta pra achar
+  // a campanha. try/catch porque navigator.clipboard pode não existir (contexto não-seguro/negado).
+  async function handleCopyId(campaignId: string) {
+    try {
+      await navigator.clipboard.writeText(campaignId);
+      toast({ title: "ID da campanha copiado" });
+    } catch {
+      toast({ variant: "destructive", title: "Não foi possível copiar o ID" });
+    }
+  }
+
   // Desliga a CAMPANHA inteira (PAUSED) direto do card — fallback sempre disponível, sem depender
   // do drill-in de conjuntos/criativos (que some se a edge de estrutura falhar). Não dispara aviso
   // WhatsApp: a edge notify opera por nó (adset/ad) e campanha não tem nó único. Reusa `pausingId`
@@ -456,6 +467,23 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
                   {meta.worsened ? "Piorou" : actionVerb(meta.action.action)}
                 </span>
               )}
+              {/* Copiar ID da campanha. stopPropagation (click E keydown) pra não disparar o drill-in
+                  do card ao clicar/teclar no botão. */}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0 shrink-0 text-muted-foreground hover:text-foreground"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleCopyId(v.campaignId);
+                }}
+                onKeyDown={(e) => e.stopPropagation()}
+                aria-label="Copiar ID da campanha"
+                title="Copiar ID da campanha"
+              >
+                <Copy className="w-3.5 h-3.5" />
+              </Button>
               <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
             </div>
           </CardHeader>
