@@ -11,9 +11,12 @@ const INSIGHTS_FIELDS = "spend,impressions,clicks,actions,video_p95_watched_acti
 // Rate-limit / transiente da Meta (mesmos códigos de meta-campaign-insights). Sem traduzir, o dialog
 // fecharia mostrando "(#17) User request limit reached" cru; com tradução dá mensagem acionável.
 const TRANSIENT_META_CODES = [1, 2, 4, 17, 32, 341, 613];
-const metaErrorResponse = (err: { code?: number; is_transient?: boolean; message?: string }) => {
-  const transient = !!err && (err.is_transient === true || TRANSIENT_META_CODES.includes(Number(err.code)));
-  const message = transient
+type MetaError = { code?: number; is_transient?: boolean; message?: string };
+const isTransientMeta = (err?: MetaError | null): boolean =>
+  !!err && (err.is_transient === true || TRANSIENT_META_CODES.includes(Number(err.code)));
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const metaErrorResponse = (err: MetaError) => {
+  const message = isTransientMeta(err)
     ? "Limite de requisições da Meta atingido, tente novamente mais tarde."
     : (err?.message ?? "Erro desconhecido da Meta");
   return new Response(JSON.stringify({ error: message }), {
@@ -77,8 +80,26 @@ Deno.serve(async (req) => {
     // resto renderiza "sem dados" — gestor pausaria o nó errado.
     const insightsUrl = `https://graph.facebook.com/v25.0/${campaign_id}/insights?level=${level}&fields=${INSIGHTS_FIELDS}&${rangeParam}&limit=200&access_token=${access_token}`;
 
-    const [structureRes, insightsRes] = await Promise.all([fetch(structureUrl), fetch(insightsUrl)]);
-    const [structureData, insightsData] = await Promise.all([structureRes.json(), insightsRes.json()]);
+    // Retry com backoff em erro transiente/rate-limit da Meta (code 17/613/…). O drill-in dispara as
+    // 2 chamadas Graph logo depois do board já ter queimado insights de todas as campanhas — pico que
+    // pode tropeçar no code 17 e devolver 400 (a msg PT amigável é preservada no final). Só re-tenta em
+    // erro transiente; erro real (campanha inválida, token) falha na hora.
+    // Backoff CURTO (1s/3s, ~4s máx): o drill-in é interativo. Retry curto recupera blip momentâneo
+    // (code 1/2); rate-limit sustentado (17) só limpa em minutos — não adianta esperar, falha rápido e
+    // a msg PT ("aguarde ~15 min") orienta o usuário. Melhor UX que travar a tela por dezenas de seg.
+    const RETRY_BACKOFF_MS = [1000, 3000];
+    let structureData: { error?: MetaError; data?: unknown[] } = {};
+    let insightsData: { error?: MetaError; data?: unknown[] } = {};
+    for (let attempt = 0; ; attempt++) {
+      const [structureRes, insightsRes] = await Promise.all([fetch(structureUrl), fetch(insightsUrl)]);
+      [structureData, insightsData] = await Promise.all([structureRes.json(), insightsRes.json()]);
+      const transientErr = [structureData.error, insightsData.error].find(isTransientMeta);
+      if (transientErr && attempt < RETRY_BACKOFF_MS.length) {
+        await sleep(RETRY_BACKOFF_MS[attempt]);
+        continue;
+      }
+      break;
+    }
 
     if (structureData.error) return metaErrorResponse(structureData.error);
     if (insightsData.error) return metaErrorResponse(insightsData.error);

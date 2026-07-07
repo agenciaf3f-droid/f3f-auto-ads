@@ -48,9 +48,13 @@ export async function sendWhatsAppText({
   }
 
   if (!res.ok) {
-    const detail = await res.text().catch(() => "");
+    const detail = (await res.text().catch(() => "")).trim();
     console.error(`[uazapi] HTTP ${res.status}: ${detail.slice(0, 500)}`);
-    return { ok: false, reason: `UAZAPI HTTP ${res.status}` };
+    // Devolve o corpo REAL da resposta da UAZAPI no reason (não só o status). O toast do gestor
+    // passa a mostrar a causa exata (token inválido, grupo inexistente, instância desconectada)
+    // sem depender de acesso aos logs da edge. Limita a 300 chars pra não estourar o toast.
+    const snippet = detail.slice(0, 300);
+    return { ok: false, reason: snippet ? `UAZAPI HTTP ${res.status}: ${snippet}` : `UAZAPI HTTP ${res.status}` };
   }
 
   return { ok: true };

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Megaphone, Users, Settings, Gauge, History } from "lucide-react";
+import { Megaphone, Users, Settings, Gauge, History, ShieldCheck } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -11,6 +11,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { fetchMetaStatus } from "@/lib/meta-api";
+import { isCurrentUserAdmin } from "@/lib/admin";
 
 type NavItem = {
   label: string;
@@ -25,6 +26,9 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Clientes", to: "/clientes", icon: Users },
   { label: "Config", to: "/settings", icon: Settings },
 ];
+
+// Só aparece p/ quem está em app_admins (gate via isCurrentUserAdmin).
+const ADMIN_ITEM: NavItem = { label: "Admin", to: "/admin", icon: ShieldCheck };
 
 function MetaStatusDot() {
   const [connected, setConnected] = useState<boolean | null>(null);
@@ -64,6 +68,13 @@ function MetaStatusDot() {
 
 export default function AppSidebar() {
   const location = useLocation();
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    isCurrentUserAdmin().then(setIsAdmin).catch(() => setIsAdmin(false));
+  }, []);
+
+  const navItems = isAdmin ? [...NAV_ITEMS, ADMIN_ITEM] : NAV_ITEMS;
 
   return (
     <Sidebar collapsible="icon">
@@ -75,7 +86,7 @@ export default function AppSidebar() {
       <SidebarContent>
         <SidebarGroup>
           <SidebarMenu>
-            {NAV_ITEMS.map((item) => {
+            {navItems.map((item) => {
               const isActive = location.pathname === item.to;
               return (
                 <SidebarMenuItem key={item.to}>

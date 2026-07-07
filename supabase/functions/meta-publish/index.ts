@@ -1527,10 +1527,12 @@ Deno.serve(async (req) => {
       const campaignPayload: Record<string, any> = {
         name: finalCampaignName,
         objective: resolvedCampaignObjective,
-        // PAUSED: rollout pra outros gestores exige checkpoint manual antes do
-        // gasto começar. Adsets+ads seguem ACTIVE — assim que o gestor conferir
-        // e ativar a campanha na Meta, tudo abaixo já está pronto pra rodar.
-        status: "PAUSED",
+        // ACTIVE: campanha nasce ligada — checkpoint manual removido (confirmado com o
+        // usuário 2026-07-06). Adsets+ads já são ACTIVE, então ao publicar tudo entrega
+        // IMEDIATAMENTE, sem passo manual de ativação no Gerenciador. Agendamento continua
+        // respeitado via start_time (campanha+adset): com start_time futuro a Meta segura
+        // a entrega até a hora marcada (estado "Agendada"), não dispara antes.
+        status: "ACTIVE",
         special_ad_categories: [],
         buying_type: "AUCTION",
         smart_promotion_type: "GUIDED_CREATION",
