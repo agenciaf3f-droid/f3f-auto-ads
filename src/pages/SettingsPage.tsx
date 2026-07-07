@@ -1,9 +1,11 @@
 import { useState, useEffect } from "react";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { CheckCircle2, AlertCircle, Loader2, LogIn, Unplug, RefreshCw, AlertTriangle, Plug } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { CheckCircle2, AlertCircle, Loader2, LogIn, Unplug, RefreshCw, AlertTriangle, Plug, KeyRound, ArrowRight } from "lucide-react";
 import { fetchMetaStatus, getMetaLoginUrl, disconnectMeta } from "@/lib/meta-api";
 import { isCurrentUserAdmin } from "@/lib/admin";
+import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 
@@ -17,6 +19,9 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [disconnecting, setDisconnecting] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [changingPassword, setChangingPassword] = useState(false);
 
   useEffect(() => {
     isCurrentUserAdmin().then(setIsAdmin).catch(() => setIsAdmin(false));
@@ -50,6 +55,30 @@ export default function SettingsPage() {
       toast.error("Erro ao desconectar conta Meta");
     } finally {
       setDisconnecting(false);
+    }
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPassword !== confirmPassword) {
+      toast.error("As senhas não conferem");
+      return;
+    }
+    if (newPassword.length < 6) {
+      toast.error("A senha precisa ter pelo menos 6 caracteres");
+      return;
+    }
+    setChangingPassword(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      setNewPassword("");
+      setConfirmPassword("");
+      toast.success("Senha alterada com sucesso");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Erro ao alterar senha");
+    } finally {
+      setChangingPassword(false);
     }
   };
 
@@ -163,6 +192,54 @@ export default function SettingsPage() {
                 )}
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Trocar senha */}
+        <div className="fade-in-up mt-10" style={{ animationDelay: "120ms" }}>
+          <div className="flex items-center gap-2 mb-4">
+            <div className="w-7 h-7 rounded-md bg-primary/10 border border-primary/20 flex items-center justify-center">
+              <KeyRound className="w-3.5 h-3.5 text-primary" />
+            </div>
+            <Label className="font-display font-semibold text-sm">Trocar senha</Label>
+          </div>
+
+          <div className="glass-card p-6">
+            <form onSubmit={handleChangePassword} className="space-y-4 max-w-sm">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Nova senha</Label>
+                <Input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Mínimo 6 caracteres"
+                  required
+                  minLength={6}
+                  className="h-10"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Confirmar senha</Label>
+                <Input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Repita a senha"
+                  required
+                  minLength={6}
+                  className="h-10"
+                />
+              </div>
+              <Button
+                type="submit"
+                size="sm"
+                className="gap-2 h-9 active:scale-[0.98] transition-transform"
+                disabled={changingPassword}
+              >
+                {changingPassword ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowRight className="w-3.5 h-3.5" />}
+                Salvar nova senha
+              </Button>
+            </form>
           </div>
         </div>
 

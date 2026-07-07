@@ -1,5 +1,6 @@
 import { useAuth } from "@/contexts/AuthContext";
 import LoginPage from "@/pages/LoginPage";
+import FirstLoginPassword from "@/pages/FirstLoginPassword";
 import { Loader2 } from "lucide-react";
 
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -14,6 +15,9 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   }
 
   if (!user) return <LoginPage />;
+
+  // Gestor convidado com senha provisória: força criar nova senha antes de usar o app.
+  if (user.user_metadata?.must_change_password) return <FirstLoginPassword />;
 
   return <>{children}</>;
 }
