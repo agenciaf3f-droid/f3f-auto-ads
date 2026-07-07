@@ -26,7 +26,7 @@ import {
   type OptimizationActionRecord,
   type OptimizationHistoryEntry,
 } from "@/lib/optimization-engine";
-import { getMetricDef, rangeKey, type AggregatedBucket, type DateRangeSelection, type MetricDef } from "@/lib/meta-insights";
+import { getMetricDef, formatMetricValue, rangeKey, type AggregatedBucket, type DateRangeSelection } from "@/lib/meta-insights";
 import DateRangeSelector from "@/components/clients/DateRangeSelector";
 
 type ActionKind = "dismissed" | "paused";
@@ -85,14 +85,6 @@ function computeNodeMetricValue(violation: OptimizationViolation, node: MetaNode
     campaignCount: 1,
   };
   return def.compute(agg);
-}
-
-function formatMetricValue(value: number | null, unit?: MetricDef["unit"]): string {
-  if (value === null || value === undefined) return "sem dados suficientes";
-  const formatted = value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  if (unit === "currency") return `R$ ${formatted}`;
-  if (unit === "percent") return `${formatted}%`;
-  return formatted;
 }
 
 // Cap de concorrência do fan-out por conta ao carregar otimizações. Antes era serial (1 conta por vez).
