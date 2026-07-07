@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Lock, ArrowRight } from "lucide-react";
+import { Loader2, Lock, ArrowRight, LogOut } from "lucide-react";
 import { toast } from "sonner";
 
 // Tela de troca de senha forçada no primeiro login (gestor convidado com senha
 // provisória). Ao salvar, limpa a flag must_change_password no user_metadata; o
 // AuthContext reage ao USER_UPDATED e o ProtectedRoute libera o app.
 export default function FirstLoginPassword() {
+  const { signOut } = useAuth();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
@@ -31,6 +33,15 @@ export default function FirstLoginPassword() {
         data: { must_change_password: false },
       });
       if (error) throw error;
+      // Rede de segurança: força a re-hidratação do AuthContext em vez de depender só do evento
+      // reativo USER_UPDATED. refreshSession traz o user já sem a flag → ProtectedRoute libera o app.
+      const { error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError) {
+        // Senha JÁ foi salva e a flag limpa no servidor — não trava o gestor. Avisa pra recarregar
+        // (um reload lê a sessão persistida sem a flag); o botão "Sair" continua como escape.
+        toast.error("Senha salva, mas a sessão não atualizou. Recarregue a página para entrar.");
+        return;
+      }
       toast.success("Senha criada! Bem-vindo(a).");
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Erro ao criar senha");
@@ -89,6 +100,18 @@ export default function FirstLoginPassword() {
             Salvar senha
           </Button>
         </form>
+
+        {/* Escape hatch: se algo travar, o gestor consegue sair e logar de novo — nunca fica preso. */}
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => signOut()}
+          disabled={loading}
+          className="w-full h-9 mt-3 gap-2 text-xs text-muted-foreground"
+        >
+          <LogOut className="w-3.5 h-3.5" />
+          Sair
+        </Button>
       </div>
     </div>
   );
