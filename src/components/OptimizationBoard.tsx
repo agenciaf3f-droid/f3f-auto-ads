@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Gauge, Loader2, AlertTriangle, CheckCircle2, History, ChevronRight, ChevronLeft, Copy } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -126,6 +126,10 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
   // preenchido quando o Graph resolve os links — sem dead time. Ver NotifyPreviewState.
   const [notifyPreview, setNotifyPreview] = useState<NotifyPreviewState | null>(null);
   const [sendingNotify, setSendingNotify] = useState(false);
+  // Invalida um preview em voo: bumpa a cada nova pausa E ao fechar o dialog. Se o await do
+  // notifyClientPause resolver com reqId != atual, o resultado é dropado — não reabre um dialog
+  // que o gestor já dispensou (a janela do loading = latência do Graph, dá tempo de fechar).
+  const notifyReqRef = useRef(0);
 
   // Drill-in: null = cards de campanha; { campaign } = conjuntos da campanha; { campaign, adset } =
   // criativos do conjunto. Sem rota nova — navegação é só estado local do board.
@@ -368,8 +372,12 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
         dry_run: true,
       };
       // Abre o dialog JÁ, com spinner — resolve os links (round-trips no Graph) em background.
+      const reqId = ++notifyReqRef.current;
       setNotifyPreview({ loading: true, params: { ...previewParams, dry_run: false } });
       const result = await notifyClientPause(previewParams);
+      // Fechou o dialog (ou disparou outro preview) durante o loading? O ref mudou → dropa este
+      // resultado em voo pra NÃO reabrir o dialog que o gestor acabou de dispensar.
+      if (notifyReqRef.current !== reqId) return;
       // `=== true`/`=== false`, não truthy: com `strict:false` o TS não estreita a união por booleano.
       if (result.ok === true && "text" in result) {
         setNotifyPreview({ loading: false, text: result.text, groupId: result.group_id, clientName: result.client_name, params: { ...previewParams, dry_run: false } });
@@ -463,8 +471,12 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
         dry_run: true,
       };
       // Abre o dialog JÁ, com spinner — resolve os links (round-trips no Graph) em background.
+      const reqId = ++notifyReqRef.current;
       setNotifyPreview({ loading: true, params: { ...previewParams, dry_run: false } });
       const result = await notifyClientPause(previewParams);
+      // Fechou o dialog (ou disparou outro preview) durante o loading? O ref mudou → dropa este
+      // resultado em voo pra NÃO reabrir o dialog que o gestor acabou de dispensar.
+      if (notifyReqRef.current !== reqId) return;
       // `=== true`/`=== false`, não truthy: com `strict:false` (tsconfig.app.json) o TS não estreita
       // essa união discriminada por booleano em `if (result.ok)` — vira erro de tsc no `else`.
       if (result.ok === true && "text" in result) {
@@ -476,6 +488,14 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
       console.error("Falha ao preparar aviso ao cliente no WhatsApp (pausa já concluída)", e);
       setNotifyPreview(null); // fecha o spinner em vez de deixá-lo girando pra sempre.
     }
+  }
+
+  // Fecha o dialog de aviso E invalida qualquer preview em voo (senão um await tardio reabriria o
+  // dialog dispensado). TODOS os caminhos de fechar passam por aqui: Escape/click-fora, "Agora não"
+  // e "Fechar" — o botão "Agora não" também fica visível durante o loading, então tem a mesma corrida.
+  function dismissNotify() {
+    notifyReqRef.current++;
+    setNotifyPreview(null);
   }
 
   // Envio real do aviso (dry_run:false) a partir do preview aberto. Best-effort: falha aqui é só
@@ -881,7 +901,7 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
 
       {drill && renderDrillView()}
 
-      <Dialog open={!!notifyPreview} onOpenChange={(o) => !o && setNotifyPreview(null)}>
+      <Dialog open={!!notifyPreview} onOpenChange={(o) => { if (!o) dismissNotify(); }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Avisar o cliente no grupo?</DialogTitle>
@@ -908,12 +928,12 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
           )}
           <DialogFooter>
             {notifyPreview?.noGroup ? (
-              <Button variant="outline" onClick={() => setNotifyPreview(null)}>
+              <Button variant="outline" onClick={dismissNotify}>
                 Fechar
               </Button>
             ) : (
               <>
-                <Button variant="outline" onClick={() => setNotifyPreview(null)}>
+                <Button variant="outline" onClick={dismissNotify}>
                   Agora não
                 </Button>
                 <Button onClick={handleEnviarAviso} disabled={sendingNotify || notifyPreview?.loading || !notifyPreview?.text}>
