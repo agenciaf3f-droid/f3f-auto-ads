@@ -192,6 +192,9 @@ const UTM_DEFAULT = "utm_source=FB&utm_campaign={{campaign.name}}|{{campaign.id}
 
 let creativeCounter = 0;
 function nextCreativeId() { return `cr_${++creativeCounter}_${Date.now()}`; }
+function blankCreative(): CreativeItem {
+  return { id: nextCreativeId(), type: "instagram", link: "", name: "", validation: null };
+}
 
 let audienceRowCounter = 0;
 function nextAudienceRowId() { return `aud_${++audienceRowCounter}_${Date.now()}`; }
@@ -355,9 +358,9 @@ export default function PublishForm() {
   const [validatingCreative, setValidatingCreative] = useState(false);
 
   // Multi-creative
-  const [creatives, setCreatives] = useState<CreativeItem[]>([
-    { id: nextCreativeId(), type: "instagram", link: "", name: "", validation: null },
-  ]);
+  const [creatives, setCreatives] = useState<CreativeItem[]>([blankCreative()]);
+  // Bulk: quantidade de slots a gerar de uma vez.
+  const [bulkCount, setBulkCount] = useState("");
 
   // FASE 3 fields
   const [whatsappNumbers, setWhatsappNumbers] = useState<WhatsAppNumber[]>([]);
@@ -829,7 +832,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       setIdentityError(null);
       setValidationResult(null);
       setPublishResult(null);
-      setCreatives([{ id: nextCreativeId(), type: "instagram", link: "", name: "", validation: null }]);
+      setCreatives([blankCreative()]);
       addLog("✅ Conta Meta desconectada com sucesso");
       addLog("🧹 Token removido, identidade limpa, estado = desconectado");
       toast.success("Conta Meta desconectada");
@@ -1041,7 +1044,15 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
   // Creative management
   const addCreative = () => {
-    setCreatives(prev => [...prev, { id: nextCreativeId(), type: "instagram", link: "", name: "", validation: null }]);
+    setCreatives(prev => [...prev, blankCreative()]);
+  };
+  // Bulk: gera N slots de uma vez (cap 1..20; ignora vazio/inválido).
+  const addCreativesBulk = () => {
+    const raw = Math.floor(Number(bulkCount));
+    if (!Number.isFinite(raw) || raw < 1) return;
+    const n = Math.min(20, raw);
+    setCreatives(prev => [...prev, ...Array.from({ length: n }, () => blankCreative())]);
+    setBulkCount("");
   };
   const removeCreative = (id: string) => {
     setCreatives(prev => prev.length <= 1 ? prev : prev.filter(c => c.id !== id));
@@ -2219,13 +2230,33 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
           {/* Creatives - Multi */}
           <Card className="glass-card p-6 space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <Label className="font-display font-semibold text-sm">
                 Criativos ({creatives.length})
               </Label>
-              <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={addCreative}>
-                <PlusCircle className="w-3.5 h-3.5" /> Adicionar criativo
-              </Button>
+              <div className="flex items-center gap-2">
+                {!isFase2Adaptado && (
+                  <div className="flex items-center gap-1">
+                    <Label htmlFor="bulk-count" className="text-[10px] text-muted-foreground shrink-0">Quantos?</Label>
+                    <Input
+                      id="bulk-count"
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={bulkCount}
+                      onChange={(e) => setBulkCount(e.target.value)}
+                      placeholder="N"
+                      className="h-8 w-16 text-xs"
+                    />
+                    <Button variant="outline" size="sm" className="gap-1 text-xs h-8" onClick={addCreativesBulk}>
+                      <PlusCircle className="w-3.5 h-3.5" /> Gerar
+                    </Button>
+                  </div>
+                )}
+                <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={addCreative}>
+                  <PlusCircle className="w-3.5 h-3.5" /> Adicionar criativo
+                </Button>
+              </div>
             </div>
 
             {creatives.map((cr, idx) => {
