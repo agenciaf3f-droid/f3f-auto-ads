@@ -224,6 +224,17 @@ export async function pauseCampaign(accessToken: string, campaignId: string) {
   return data;
 }
 
+// Religa (status ACTIVE) uma campanha desligada — usado pelo botão "Religar" do Histórico. Mesma
+// edge da pausa, só muda o `status`.
+export async function activateCampaign(accessToken: string, campaignId: string) {
+  const { data, error } = await supabase.functions.invoke("meta-campaign-pause", {
+    body: { access_token: accessToken, campaign_id: campaignId, status: "ACTIVE" },
+  });
+  if (error && data) return data;
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 export async function fetchWhatsAppNumbers(accessToken: string, adAccountId?: string, pageId?: string) {
   const { data, error } = await supabase.functions.invoke("meta-whatsapp-numbers", {
     body: { access_token: accessToken, ad_account_id: adAccountId, page_id: pageId },

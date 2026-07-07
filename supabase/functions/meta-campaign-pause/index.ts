@@ -9,18 +9,21 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { access_token, campaign_id } = await req.json();
+    const { access_token, campaign_id, status } = await req.json();
     if (!access_token || !campaign_id) {
       return new Response(JSON.stringify({ error: "access_token and campaign_id required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    // status opcional: default "PAUSED" (mantém os callers de pausa inalterados). "ACTIVE" religa
+    // uma campanha desligada a partir do Histórico. Qualquer outro valor cai no default seguro.
+    const nextStatus = status === "ACTIVE" ? "ACTIVE" : "PAUSED";
 
     const url = `https://graph.facebook.com/v25.0/${campaign_id}?access_token=${access_token}`;
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ status: "PAUSED" }),
+      body: new URLSearchParams({ status: nextStatus }),
     });
     const data = await res.json();
 
