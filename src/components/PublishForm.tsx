@@ -22,7 +22,7 @@ import { toast } from "sonner";
 import {
   LogIn, Settings2, Send, CheckCircle2, Loader2, Copy, AlertTriangle, Unplug,
   Instagram, HardDrive, ArrowRight, FolderOpen, Plus, Calendar, Clock, MessageCircle, MapPin, Phone, Save, Trash2,
-  Layers, PlusCircle, X, Pencil, Search,
+  Layers, PlusCircle, X, Pencil, Search, ChevronDown,
 } from "lucide-react";
 import {
   getMetaLoginUrl, fetchMetaStatus, fetchAdAccounts, fetchAudiences,
@@ -32,6 +32,9 @@ import {
   fetchPixels, type AdPixel,
 } from "@/lib/meta-api";
 import { generateCampaignName, generateLtCampaignName, generateAdsetName, generateAdName_v2 } from "@/lib/naming";
+import {
+  placementKindFor, placementGroupsFor, allPlacementKeys, placementKey, buildPlacementsObject,
+} from "@/lib/placements";
 import { listClientAdAccounts, listClientLtProducts } from "@/lib/clients";
 import SearchableSelect from "@/components/SearchableSelect";
 import IDDisplay from "@/components/IDDisplay";
@@ -402,6 +405,10 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   const [fase2BudgetSplitMode, setFase2BudgetSplitMode] = useState<"per_campaign" | "split">("per_campaign");
   // L.T (FASE 3 LP) — público Advantage + sugestões de idade/gênero
   const [ltAdvantage, setLtAdvantage] = useState(true);
+  // Posicionamentos (placements) — Set de "platform:position" LIGADOS. Default (via useEffect)
+  // = todos os válidos do preset = AUTOMÁTICO. Gestor desliga → envia subconjunto explícito.
+  const [placementSelected, setPlacementSelected] = useState<Set<string>>(new Set());
+  const [placementsExpanded, setPlacementsExpanded] = useState(false);
   // Transparência (DSA): beneficiário/pagador — puxado da conta, fixo, não editável pelo usuário.
   const [suggestedBeneficiary, setSuggestedBeneficiary] = useState("");
 
@@ -540,7 +547,18 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       includedLocations, excludedLocations, campaignNameInput, adsetNameInput,
       // Mudar a distribuição de orçamento (FASE 2 COMPLETO) muda o gasto → re-validar obrigatório
       // (senão handlePublish leria o modo antigo do payload validado e publicaria o gasto errado).
-      fase2BudgetSplitMode]);
+      fase2BudgetSplitMode,
+      // Mudar posicionamentos muda o adset → re-validar (placementSelected é Set novo a cada toggle).
+      placementSelected]);
+
+  // Posicionamentos: ao trocar de preset, reseta pra TODOS os válidos ligados (= automático).
+  // Cada preset tem um conjunto válido diferente; não faz sentido carregar seleção do preset anterior.
+  useEffect(() => {
+    const p = PRESETS.find((x) => x.id === preset);
+    if (!p) return;
+    const kind = placementKindFor(p.destination_type, p.optimization_goal);
+    setPlacementSelected(new Set(allPlacementKeys(placementGroupsFor(kind))));
+  }, [preset]);
 
   // Reset validação quando o user MUDA algo visível em criativos (link/type/name/count).
   // NÃO inclui `validation` em si — então gravar resultado de validação não dispara reset.
@@ -1055,6 +1073,28 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
   // Multi-público: FASE 1 (perfil IG) + FASE 3 ZAP (Leads/Vendas). NÃO inclui LP/website (Advantage+).
   const isMultiAud = selectedPreset.destination_type === "INSTAGRAM_PROFILE" || isFase3;
+
+  // ── Posicionamentos (placements) ──
+  const placementKind = placementKindFor(selectedPreset.destination_type, selectedPreset.optimization_goal);
+  const placementGroups = placementGroupsFor(placementKind);
+  const placementAllKeys = allPlacementKeys(placementGroups);
+  const placementSelectedCount = placementAllKeys.filter((k) => placementSelected.has(k)).length;
+  // L.T com Advantage+ ON → só automático (o backend reconstrói o targeting puro; manual quebraria).
+  const placementManualAvailable = !(isFase3Lp && ltAdvantage);
+  const togglePlacement = (key: string) => {
+    setPlacementSelected((prev) => {
+      const next = new Set(prev); // fresh ref: dispara o useEffect de invalidação
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+  const setPlacementGroup = (keys: string[], on: boolean) => {
+    setPlacementSelected((prev) => {
+      const next = new Set(prev);
+      if (on) keys.forEach((k) => next.add(k)); else keys.forEach((k) => next.delete(k));
+      return next;
+    });
+  };
   const multiAudIds = [...new Set(audienceRows.map(r => r.audienceId).filter(Boolean))];
   const multiAudNamesList = multiAudIds.map(id => audiences.find(a => a.id === id)?.name || id);
   const multiSingleAud = audiences.find(a => a.id === multiAudIds[0]);
@@ -1412,6 +1452,17 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       addLog(`🔍 [validate] ═══ FIM VALIDAÇÃO ESTRUTURAL ═══`);
     }
 
+    // Posicionamentos: se manual disponível, exige ao menos 1 ligado (senão adset sem placement).
+    if (placementManualAvailable) {
+      checks.push({
+        label: "Posicionamentos",
+        ok: placementSelectedCount > 0,
+        detail: placementSelectedCount === placementAllKeys.length
+          ? "Automático (todos ligados)"
+          : `Manual: ${placementSelectedCount}/${placementAllKeys.length} posições`,
+      });
+    }
+
     const allValid = checks.every(c => c.ok);
     addLog(`⏱️ [validate] Checagens completas: ${Math.round(performance.now() - tLocal)}ms`);
 
@@ -1490,6 +1541,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         // divisão é feita no frontend por chamada; viaja no payload só p/ handlePublish ler o modo.
         fase2_budget_split_mode: fase2MultiCreative ? fase2BudgetSplitMode : undefined,
         lt_advantage: isFase3Lp ? ltAdvantage : undefined,
+        // Posicionamentos: só envia quando MANUAL (subconjunto). Automático (todos ligados) ou
+        // L.T Advantage+ ON → undefined = Advantage+ Placements no backend.
+        placements: placementManualAvailable ? buildPlacementsObject(placementGroups, placementSelected) : undefined,
         schedule,
         utm_template: utmTemplate.trim() || UTM_DEFAULT,
         // Beneficiário não é editável pelo usuário — backend resolve sozinho via /dsa_recommendations da conta.
@@ -2706,6 +2760,85 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                   </div>
                 </div>
               </div>
+            )}
+          </Card>
+
+          {/* ============ Posicionamentos ============ */}
+          <Card className="glass-card p-6 space-y-3">
+            <button
+              type="button"
+              onClick={() => setPlacementsExpanded((v) => !v)}
+              className="w-full flex items-center justify-between gap-3"
+            >
+              <div className="text-left">
+                <Label className="font-display font-semibold text-sm cursor-pointer">Posicionamentos</Label>
+                <p className="text-[10px] text-muted-foreground">
+                  {!placementManualAvailable
+                    ? "Advantage+ ligado — posicionamentos automáticos (Meta define)"
+                    : placementSelectedCount === placementAllKeys.length
+                      ? "Automático (Advantage+) — todos ligados, melhor entrega"
+                      : `Manual — ${placementSelectedCount} de ${placementAllKeys.length} posições`}
+                </p>
+              </div>
+              <ChevronDown className={`w-4 h-4 text-muted-foreground shrink-0 transition-transform ${placementsExpanded ? "rotate-180" : ""}`} />
+            </button>
+
+            {placementsExpanded && (
+              !placementManualAvailable ? (
+                <p className="text-xs text-muted-foreground">
+                  Com o Advantage+ ligado no L.T, a Meta escolhe os posicionamentos automaticamente.
+                  Desligue o Advantage+ (na seção de público) para selecionar posicionamentos manualmente.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {placementSelectedCount < placementAllKeys.length && (
+                    <p className="text-[10px] text-warning flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3 shrink-0" />
+                      Posicionamentos manuais podem reduzir a entrega. Deixe todos ligados (automático) se não tiver certeza.
+                    </p>
+                  )}
+                  {placementSelectedCount === 0 && (
+                    <p className="text-[10px] text-destructive">Selecione ao menos um posicionamento (ou ligue todos = automático).</p>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => setPlacementSelected(new Set(placementAllKeys))}
+                    disabled={loading || placementSelectedCount === placementAllKeys.length}
+                  >
+                    Ligar todos (automático)
+                  </Button>
+                  {placementGroups.map((g) => {
+                    const groupKeys = g.positions.map((p) => placementKey(g.platform, p.key));
+                    const allOn = groupKeys.every((k) => placementSelected.has(k));
+                    return (
+                      <div key={g.platform} className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <Checkbox
+                            id={`plc-grp-${g.platform}`}
+                            checked={allOn}
+                            onCheckedChange={() => setPlacementGroup(groupKeys, !allOn)}
+                            disabled={loading}
+                          />
+                          <Label htmlFor={`plc-grp-${g.platform}`} className="text-xs font-semibold cursor-pointer">{g.label}</Label>
+                        </div>
+                        <div className="grid grid-cols-2 gap-1.5 pl-6">
+                          {g.positions.map((p) => {
+                            const k = placementKey(g.platform, p.key);
+                            return (
+                              <label key={k} className="flex items-center gap-2 cursor-pointer">
+                                <Checkbox checked={placementSelected.has(k)} onCheckedChange={() => togglePlacement(k)} disabled={loading} />
+                                <span className="text-xs">{p.label}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )
             )}
           </Card>
 

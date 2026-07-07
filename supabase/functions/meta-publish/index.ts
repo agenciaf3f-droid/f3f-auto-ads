@@ -294,6 +294,86 @@ function cleanTargeting(t: Record<string, any>): Record<string, any> {
   return clean;
 }
 
+// ══════════════════════════════════════════════════════════════════════
+//  POSICIONAMENTOS (Meta placements) — re-validação server-side por preset
+//
+//  ⚠ ESPELHO de src/lib/placements.ts (front). Lógica idêntica, testada lá em
+//  src/lib/placements.test.ts. Manter os conjuntos de posições e tokens em sincronia.
+//
+//  Regra: front manda `placements` só quando o gestor DESLIGA algum posicionamento
+//  (subconjunto explícito). Ausente = AUTOMÁTICO (Advantage+ Placements, igual ao gabarito).
+//  Aqui: sempre limpa placements herdados (form vence público salvo); se manual, valida
+//  cada posição contra o conjunto válido do preset (placement inválido pro objetivo entrega
+//  mal SEM erro — a lição FASE 1) e recomputa publisher_platforms.
+// ══════════════════════════════════════════════════════════════════════
+type PlacementPlatform = "facebook" | "instagram" | "audience_network" | "messenger";
+const PLACEMENT_POSITION_FIELD: Record<PlacementPlatform, string> = {
+  facebook: "facebook_positions",
+  instagram: "instagram_positions",
+  audience_network: "audience_network_positions",
+  messenger: "messenger_positions",
+};
+// Tokens de TARGETING (input), NÃO de reporting. IG Feed="stream", IG Stories="story".
+const PLACEMENTS_VALID_BY_KIND: Record<string, Partial<Record<PlacementPlatform, string[]>>> = {
+  FASE1: { instagram: ["stream", "story", "reels", "explore"] },
+  FASE2: {
+    facebook: ["feed", "story", "facebook_reels", "instream_video", "video_feeds"],
+    instagram: ["stream", "story", "reels", "explore"],
+  },
+  FASE3: {
+    facebook: ["feed", "marketplace", "story", "facebook_reels", "video_feeds"],
+    instagram: ["stream", "story", "reels", "explore"],
+  },
+  LT: {
+    facebook: ["feed", "marketplace", "story", "facebook_reels", "instream_video", "video_feeds"],
+    instagram: ["stream", "story", "reels", "explore"],
+    audience_network: ["classic", "rewarded_video"],
+    messenger: ["messenger_home", "story"],
+  },
+};
+
+function placementKindForEdge(destinationType?: string, optimizationGoal?: string): string {
+  if (destinationType === "INSTAGRAM_PROFILE") return "FASE1";
+  if (destinationType === "WHATSAPP") return "FASE3";
+  if (destinationType === "WEBSITE") return "LT";
+  if (destinationType === "ON_VIDEO" || optimizationGoal === "THRUPLAY") return "FASE2";
+  return "LT";
+}
+
+function stripPlacementFields(t: Record<string, any>) {
+  delete t.publisher_platforms;
+  delete t.facebook_positions;
+  delete t.instagram_positions;
+  delete t.audience_network_positions;
+  delete t.messenger_positions;
+}
+
+// Mutação in-place em `targeting`. Retorna { ok } | { ok:false, error }.
+function applyPlacements(targeting: Record<string, any>, placements: any, kind: string): { ok: boolean; error?: string } {
+  stripPlacementFields(targeting); // form vence saved audience; auto vira 100% automático
+  if (!placements) return { ok: true }; // AUTOMÁTICO
+
+  const valid = PLACEMENTS_VALID_BY_KIND[kind] || {};
+  const applied: Partial<Record<PlacementPlatform, string[]>> = {};
+  const errors: string[] = [];
+  for (const platform of Object.keys(PLACEMENT_POSITION_FIELD) as PlacementPlatform[]) {
+    const arr = placements[PLACEMENT_POSITION_FIELD[platform]];
+    if (!Array.isArray(arr) || arr.length === 0) continue;
+    const validPositions = valid[platform];
+    if (!validPositions) { errors.push(`plataforma "${platform}" inválida para o preset`); continue; }
+    const invalid = arr.filter((p: string) => !validPositions.includes(p));
+    if (invalid.length) errors.push(`posições inválidas em ${platform}: ${invalid.join(", ")}`);
+    applied[platform] = arr;
+  }
+  if (errors.length) return { ok: false, error: errors.join("; ") };
+  const platforms = Object.keys(applied) as PlacementPlatform[];
+  if (platforms.length === 0) return { ok: false, error: "nenhum posicionamento válido selecionado" };
+
+  targeting.publisher_platforms = platforms;
+  for (const platform of platforms) targeting[PLACEMENT_POSITION_FIELD[platform]] = applied[platform];
+  return { ok: true };
+}
+
 function validateFase3PromotedObject(promotedObject: Record<string, any>) {
   // Meta v25: promoted_object FASE 3 aceita { page_id, smart_pse_enabled, whatsapp_phone_number }.
   // NÃO incluir whats_app_business_phone_number_id (Meta rejeita com 2446886).
@@ -1314,6 +1394,11 @@ Deno.serve(async (req) => {
     const isVideoEngagementPreset = preset?.destination_type === "ON_VIDEO" || preset?.optimization_goal === "THRUPLAY";
     // VENDAS via WhatsApp = WhatsApp destination + objective OUTCOME_SALES + pixel/PURCHASE no promoted_object
     const isFase3VendasZap = isWhatsAppPreset && preset?.objective === "OUTCOME_SALES";
+
+    // Posicionamentos (placements) — kind do preset + toggle Advantage+ do L.T.
+    // body.placements presente = manual (subconjunto); ausente = automático (Advantage+ Placements).
+    const placementKind = placementKindForEdge(preset?.destination_type, preset?.optimization_goal);
+    const ltAdvantageOn = isWebsitePreset && (body.lt_advantage === true || body.lt_advantage === "true");
     const fase3CampaignObjective = isFase3VendasZap ? "OUTCOME_SALES" : (preset?.objective || "OUTCOME_LEADS");
 
     // FASE 2 — multiple audience IDs (one adset per audience)
@@ -2121,6 +2206,37 @@ Deno.serve(async (req) => {
 
     // ── Standard adset creation (used by ALL presets now) ──
     const createAdset = async (adsetPayload: Record<string, any>, stepLabel: string): Promise<{ id?: string; error?: any; warning?: string }> => {
+      // ── POSICIONAMENTOS (placements) — antes do fingerprint p/ dedupe distinguir variantes ──
+      // L.T + Advantage+ ON: placement manual é incompatível (targeting é reconstruído puro,
+      // só geo + advantage_audience:1). Bloqueia com erro claro (o front já esconde a opção).
+      if (body.placements && ltAdvantageOn) {
+        console.log(`[${stepLabel}] ❌ placements manuais + Advantage+ ON no L.T (incompatível)`);
+        return { error: {
+          message: "Posicionamentos manuais não são compatíveis com Advantage+ ligado no L.T.",
+          code: "LOCAL_VALIDATION",
+          error_subcode: "PLACEMENTS_LT_ADVANTAGE",
+          error_user_title: "Posicionamentos manuais indisponíveis",
+          error_user_msg: "Advantage+ ligado no L.T usa posicionamentos automáticos. Desligue o Advantage+ ou deixe os posicionamentos no automático.",
+        } };
+      }
+      const plc = applyPlacements(adsetPayload.targeting, body.placements, placementKind);
+      if (!plc.ok) {
+        console.log(`[${stepLabel}] ❌ placements inválidos: ${plc.error}`);
+        logs.push({ step: stepLabel, status: "error", ts: ts(), detail: `placements inválidos: ${plc.error}` });
+        return { error: {
+          message: `Posicionamentos inválidos: ${plc.error}`,
+          code: "LOCAL_VALIDATION",
+          error_subcode: "PLACEMENTS_INVALID",
+          error_user_title: "Posicionamentos inválidos",
+          error_user_msg: plc.error,
+        } };
+      }
+      if (body.placements) {
+        console.log(`[${stepLabel}] placements MANUAIS: platforms=${JSON.stringify(adsetPayload.targeting.publisher_platforms)} | fb=${JSON.stringify(adsetPayload.targeting.facebook_positions)} | ig=${JSON.stringify(adsetPayload.targeting.instagram_positions)} | an=${JSON.stringify(adsetPayload.targeting.audience_network_positions)} | msgr=${JSON.stringify(adsetPayload.targeting.messenger_positions)}`);
+      } else {
+        console.log(`[${stepLabel}] placements: AUTOMÁTICO (Advantage+ Placements)`);
+      }
+
       let dedupeLockId: string | undefined;
 
       if (isWhatsAppPreset) {
