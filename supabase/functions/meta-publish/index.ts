@@ -1652,6 +1652,10 @@ Deno.serve(async (req) => {
 
       if (schedule?.start_time) campaignPayload.start_time = schedule.start_time;
 
+      // Pré-voo (dry_run): força a campanha de teste PAUSED (a real nasce ACTIVE — ver acima).
+      // Se o DELETE do cleanup falhar (rede), o órfão fica TOTALMENTE inerte (PAUSED + sem ads).
+      if (isDryRun) campaignPayload.status = "PAUSED";
+
       // Validação: bloquear se qualquer campo proibido existir na campaign
       // (is_adset_budget_sharing_enabled NÃO é proibido — Meta exige no ABO)
       const forbiddenCampaignKeys = ["promoted_object", "page_id", "whatsapp_phone_number", "whats_app_business_phone_number_id", "destination_type", "optimization_goal", "billing_event", "targeting", "attribution_spec"];
@@ -2533,10 +2537,10 @@ Deno.serve(async (req) => {
 
     // ══════════════════════════════════════════════════════════════════
     //  DRY RUN (pré-voo): valida o config REAL do preset na Meta.
-    //  Campanha já foi criada (PAUSED) acima. Aqui: monta 1 adset REAL pelo MESMO builder
-    //  do preset, cria PAUSED, e deleta adset + campanha. Sem mídia/creative/ad, sem dedupe.
-    //  Adset é onde moram os erros de preset (promoted_object WhatsApp, PROFILE_VISIT, pixel L.T,
-    //  placement inválido) — se passar aqui, a publicação real não cria campanha órfã por esses.
+    //  Campanha já foi criada acima (forçada PAUSED no dry_run). Aqui: monta 1 adset REAL pelo
+    //  MESMO builder do preset, cria PAUSED, e deleta adset + campanha. Sem mídia/creative/ad,
+    //  sem dedupe. Adset é onde moram os erros de preset (promoted_object WhatsApp, PROFILE_VISIT,
+    //  pixel L.T, placement inválido) — se passar aqui, a publicação real não cria órfão por esses.
     // ══════════════════════════════════════════════════════════════════
     if (isDryRun) {
       const dryName = adset_name || generated_name || "__preflight__";
@@ -2546,6 +2550,11 @@ Deno.serve(async (req) => {
         // com o 1º público. Exclusão VV50% é derivada de mídia (pulada) → null no pré-voo.
         const firstAud = fase2AudienceIds[0];
         if (!firstAud) return respond({ ok: false, dry_run: true, step: "validate", error_message: "FASE 2 requer ao menos 1 público." });
+        // ADAPTADO: espelha o guard 2..10 do fluxo real (:2608) — senão dry_run passa (o builder
+        // combinado só checa <2) e o real barra → falso-verde. Mesma mensagem que o real.
+        if (fase2CombinedAdset && (fase2AudienceIds.length < 2 || fase2AudienceIds.length > 10)) {
+          return respond({ ok: false, dry_run: true, step: "validate", error_message: "FASE 2 ADAPTADO exige de 2 a 10 públicos combinados." });
+        }
         dryBuild = fase2CombinedAdset
           ? buildFase2AdsetCombined(dryName, fase2AudienceIds, null)
           : buildFase2Adset(dryName, firstAud, null);
