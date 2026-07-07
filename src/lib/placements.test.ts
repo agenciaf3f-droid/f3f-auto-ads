@@ -20,9 +20,10 @@ describe("placementKindFor", () => {
 });
 
 describe("guardrails por preset", () => {
-  it("FASE 1 só oferece Instagram", () => {
+  it("FASE 1 só oferece Instagram, corte conservador feed/stories/reels (sem explore)", () => {
     const groups = placementGroupsFor("FASE1");
     expect(groups.map((g) => g.platform)).toEqual(["instagram"]);
+    expect(groups[0].positions.map((p) => p.key)).toEqual(["stream", "story", "reels"]);
   });
   it("FASE 3 não oferece Audience Network nem Messenger", () => {
     const platforms = placementGroupsFor("FASE3").map((g) => g.platform);
@@ -30,6 +31,16 @@ describe("guardrails por preset", () => {
     expect(platforms).not.toContain("messenger");
     expect(platforms).toContain("facebook");
     expect(platforms).toContain("instagram");
+  });
+  it("FASE 3 corte conservador: só feed/stories/reels (sem marketplace/video_feeds/explore)", () => {
+    const groups = placementGroupsFor("FASE3");
+    const fb = groups.find((g) => g.platform === "facebook")!.positions.map((p) => p.key);
+    const ig = groups.find((g) => g.platform === "instagram")!.positions.map((p) => p.key);
+    expect(fb).toEqual(["feed", "story", "facebook_reels"]);
+    expect(fb).not.toContain("marketplace");
+    expect(fb).not.toContain("video_feeds");
+    expect(ig).toEqual(["stream", "story", "reels"]);
+    expect(ig).not.toContain("explore");
   });
   it("FASE 2 não oferece Audience Network", () => {
     expect(placementGroupsFor("FASE2").map((g) => g.platform)).not.toContain("audience_network");

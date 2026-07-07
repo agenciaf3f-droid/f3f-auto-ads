@@ -28,15 +28,16 @@ export const PLATFORM_POSITION_FIELD: Record<PlacementPlatform, string> = {
   messenger: "messenger_positions",
 };
 
-// Instagram — mesmas posições válidas em todos os presets que aceitam IG.
-const IG_GROUP = (): PlacementGroup => ({
+// Instagram — Feed/Stories/Reels sempre; Explorar só onde confirmado no gabarito.
+// (Corte conservador — lição FASE 1: não sobe token não-confirmado. FASE 1/FASE 3 sem explore.)
+const IG_GROUP = (withExplore = true): PlacementGroup => ({
   platform: "instagram",
   label: "Instagram",
   positions: [
     { key: "stream", label: "Feed" },
     { key: "story", label: "Stories" },
     { key: "reels", label: "Reels" },
-    { key: "explore", label: "Explorar" },
+    ...(withExplore ? [{ key: "explore", label: "Explorar" }] : []),
   ],
 });
 
@@ -44,8 +45,8 @@ const IG_GROUP = (): PlacementGroup => ({
 // nunca vê um que quebra/silencia a entrega).
 export const PLACEMENTS_BY_KIND: Record<PlacementPresetKind, PlacementGroup[]> = {
   // FASE 1 (PROFILE_VISIT / INSTAGRAM_PROFILE): destino é o perfil IG → SÓ Instagram.
-  // Oferecer Facebook aqui degrada a entrega SEM erro (a lição FASE 1).
-  FASE1: [IG_GROUP()],
+  // Oferecer Facebook aqui degrada a entrega SEM erro (a lição FASE 1). Sem explore (não confirmado).
+  FASE1: [IG_GROUP(false)],
 
   // FASE 2 (THRUPLAY / ON_VIDEO): só posições com vídeo. SEM Audience Network
   // (VV de baixa qualidade contamina o público VV50%).
@@ -61,16 +62,15 @@ export const PLACEMENTS_BY_KIND: Record<PlacementPresetKind, PlacementGroup[]> =
   ],
 
   // FASE 3 (CONVERSATIONS / WHATSAPP CTWA): FB + IG. SEM Audience Network e SEM Messenger
-  // (CTWA inelegível nesses → entrega furada).
+  // (CTWA inelegível nesses → entrega furada). Corte conservador: só feed/stories/reels
+  // (gabarito real entregou só nesses; marketplace/video_feeds/explore não confirmados).
   FASE3: [
     { platform: "facebook", label: "Facebook", positions: [
       { key: "feed", label: "Feed" },
-      { key: "marketplace", label: "Marketplace" },
       { key: "story", label: "Stories" },
       { key: "facebook_reels", label: "Reels" },
-      { key: "video_feeds", label: "Feeds de vídeo" },
     ] },
-    IG_GROUP(),
+    IG_GROUP(false),
   ],
 
   // L.T (OFFSITE_CONVERSIONS / WEBSITE): FB + IG + Audience Network + Messenger.

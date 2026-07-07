@@ -315,14 +315,16 @@ const PLACEMENT_POSITION_FIELD: Record<PlacementPlatform, string> = {
 };
 // Tokens de TARGETING (input), NÃO de reporting. IG Feed="stream", IG Stories="story".
 const PLACEMENTS_VALID_BY_KIND: Record<string, Partial<Record<PlacementPlatform, string[]>>> = {
-  FASE1: { instagram: ["stream", "story", "reels", "explore"] },
+  // Corte conservador (lição FASE 1): só tokens confirmados no gabarito. FASE 1/FASE 3 sem explore;
+  // FASE 3 FB só feed/stories/reels (marketplace/video_feeds não confirmados). Ver src/lib/placements.ts.
+  FASE1: { instagram: ["stream", "story", "reels"] },
   FASE2: {
     facebook: ["feed", "story", "facebook_reels", "instream_video", "video_feeds"],
     instagram: ["stream", "story", "reels", "explore"],
   },
   FASE3: {
-    facebook: ["feed", "marketplace", "story", "facebook_reels", "video_feeds"],
-    instagram: ["stream", "story", "reels", "explore"],
+    facebook: ["feed", "story", "facebook_reels"],
+    instagram: ["stream", "story", "reels"],
   },
   LT: {
     facebook: ["feed", "marketplace", "story", "facebook_reels", "instream_video", "video_feeds"],
