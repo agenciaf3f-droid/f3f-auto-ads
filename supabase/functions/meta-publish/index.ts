@@ -1397,6 +1397,10 @@ Deno.serve(async (req) => {
     // VENDAS via WhatsApp = WhatsApp destination + objective OUTCOME_SALES + pixel/PURCHASE no promoted_object
     const isFase3VendasZap = isWhatsAppPreset && preset?.objective === "OUTCOME_SALES";
 
+    // PRÉ-VOO (dry_run): cria campanha (PAUSED) + 1 adset REAL (PAUSED) com o config do preset,
+    // valida na Meta e DELETA os dois. Pula mídia/creative/ad e o dedupe lock. Ver bloco DRY RUN.
+    const isDryRun = body.dry_run === true;
+
     // Posicionamentos (placements) — kind do preset + toggle Advantage+ do L.T.
     // body.placements presente = manual (subconjunto); ausente = automático (Advantage+ Placements).
     const placementKind = placementKindForEdge(preset?.destination_type, preset?.optimization_goal);
@@ -1540,37 +1544,43 @@ Deno.serve(async (req) => {
     };
 
     // --- Resolve ALL creatives using preset-specific builder ---
-    logs.push({ step: "resolve_creatives", status: "start", ts: ts(), detail: `${creativesList.length} creative(s), builder=${presetLabel} (parallel)` });
+    // Pré-voo (dry_run) PULA a resolução de mídia/creative: o upload do Drive é lento e os
+    // erros de criativo já são cobertos pelo validate-creative por-criativo. O pré-voo valida
+    // só o ADSET (config do preset), que é onde moram os erros de promoted_object/goal/pixel.
+    let resolvedCreatives: { spec: Record<string, any>; name: string }[] = [];
+    if (!isDryRun) {
+      logs.push({ step: "resolve_creatives", status: "start", ts: ts(), detail: `${creativesList.length} creative(s), builder=${presetLabel} (parallel)` });
 
-    // Paraleliza resolve dos criativos (cada um pode incluir upload Drive de até 30s).
-    // Sequencial fura timeout 150s da edge function com 5+ Drive uploads.
-    const buildOne = async (cr: typeof creativesList[number], ci: number): Promise<{ spec?: Record<string, any>; error?: string }> => {
-      console.log(`[publish] creative ${ci + 1}/${creativesList.length}: type=${cr.type}, name=${cr.name}, builder=${presetLabel}`);
-      if (isVideoEngagementPreset) {
-        return buildFase2Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, logs);
-      } else if (isWebsitePreset) {
-        return buildFase3LpCreative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, lp_url || "", logs);
-      } else if (isWhatsAppPreset) {
-        return buildFase3Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, whatsapp_number || "", greeting_text, ready_message, imported_template_json, logs);
-      } else {
-        // FASE 1 OR generic fallback (mesmo builder)
-        return buildFase1Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, identity?.instagram_username || undefined, logs);
+      // Paraleliza resolve dos criativos (cada um pode incluir upload Drive de até 30s).
+      // Sequencial fura timeout 150s da edge function com 5+ Drive uploads.
+      const buildOne = async (cr: typeof creativesList[number], ci: number): Promise<{ spec?: Record<string, any>; error?: string }> => {
+        console.log(`[publish] creative ${ci + 1}/${creativesList.length}: type=${cr.type}, name=${cr.name}, builder=${presetLabel}`);
+        if (isVideoEngagementPreset) {
+          return buildFase2Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, logs);
+        } else if (isWebsitePreset) {
+          return buildFase3LpCreative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, lp_url || "", logs);
+        } else if (isWhatsAppPreset) {
+          return buildFase3Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, whatsapp_number || "", greeting_text, ready_message, imported_template_json, logs);
+        } else {
+          // FASE 1 OR generic fallback (mesmo builder)
+          return buildFase1Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, identity?.instagram_username || undefined, logs);
+        }
+      };
+
+      const settled = await Promise.all(creativesList.map((cr, ci) => buildOne(cr, ci)));
+      const firstError = settled.findIndex((r) => r.error);
+      if (firstError !== -1) {
+        const cr = creativesList[firstError];
+        const err = settled[firstError].error!;
+        logs.push({ step: "resolve_creatives", status: "error", ts: ts(), detail: `creative ${firstError + 1} "${cr.name}": ${err}` });
+        return respond({ ok: false, step: "resolve_creative", error_message: err });
       }
-    };
-
-    const settled = await Promise.all(creativesList.map((cr, ci) => buildOne(cr, ci)));
-    const firstError = settled.findIndex((r) => r.error);
-    if (firstError !== -1) {
-      const cr = creativesList[firstError];
-      const err = settled[firstError].error!;
-      logs.push({ step: "resolve_creatives", status: "error", ts: ts(), detail: `creative ${firstError + 1} "${cr.name}": ${err}` });
-      return respond({ ok: false, step: "resolve_creative", error_message: err });
+      resolvedCreatives = settled.map((r, ci) => ({
+        spec: r.spec!,
+        name: creativesList[ci].name,
+      }));
+      logs.push({ step: "resolve_creatives", status: "success", ts: ts(), detail: `${resolvedCreatives.length} resolved` });
     }
-    const resolvedCreatives: { spec: Record<string, any>; name: string }[] = settled.map((r, ci) => ({
-      spec: r.spec!,
-      name: creativesList[ci].name,
-    }));
-    logs.push({ step: "resolve_creatives", status: "success", ts: ts(), detail: `${resolvedCreatives.length} resolved` });
 
     const targeting = buildTargeting(audience_type || "custom", audienceIdsArr, targeting_spec, location_targeting);
     const finalCampaignName = campaign_name || generated_name || "Campaign";
@@ -1641,6 +1651,10 @@ Deno.serve(async (req) => {
       }
 
       if (schedule?.start_time) campaignPayload.start_time = schedule.start_time;
+
+      // Pré-voo (dry_run): força a campanha de teste PAUSED (a real nasce ACTIVE — ver acima).
+      // Se o DELETE do cleanup falhar (rede), o órfão fica TOTALMENTE inerte (PAUSED + sem ads).
+      if (isDryRun) campaignPayload.status = "PAUSED";
 
       // Validação: bloquear se qualquer campo proibido existir na campaign
       // (is_adset_budget_sharing_enabled NÃO é proibido — Meta exige no ABO)
@@ -2276,36 +2290,41 @@ Deno.serve(async (req) => {
         const fingerprint = await sha256Hex(JSON.stringify(fingerprintInput));
         console.log(`[${stepLabel}] fingerprint: ${fingerprint}`);
 
-        const dedupe = await acquireAdsetDedupeLock({
-          db: adminClient,
-          userId: publishUserId,
-          fingerprint,
-          windowMinutes: adsetDedupeWindowMinutes,
-          requestPayload: sanitizePayload(adsetPayload),
-          stepLabel,
-          presetLabel,
-        });
-
-        if (!dedupe.allowed) {
-          logs.push({
-            step: "idempotency",
-            status: "error",
-            ts: ts(),
-            detail: `${dedupe.warningMessage} | step=${stepLabel} | fingerprint=${fingerprint}`,
+        // Pré-voo (dry_run) NÃO adquire o lock de dedupe: senão gravaria um publish_job que
+        // bloquearia a publicação REAL seguinte (mesmo fingerprint dentro da janela de 10min).
+        // dedupeLockId fica undefined → finalizeAdsetDedupeLock no-op (checa !lockId).
+        if (!isDryRun) {
+          const dedupe = await acquireAdsetDedupeLock({
+            db: adminClient,
+            userId: publishUserId,
+            fingerprint,
+            windowMinutes: adsetDedupeWindowMinutes,
+            requestPayload: sanitizePayload(adsetPayload),
+            stepLabel,
+            presetLabel,
           });
-          return {
-            warning: dedupe.warningMessage,
-            error: {
-              message: dedupe.warningMessage,
-              code: "IDEMPOTENCY_BLOCKED",
-              error_subcode: null,
-              error_user_title: "Publicação duplicada bloqueada",
-              error_user_msg: dedupe.warningMessage,
-            },
-          };
-        }
 
-        dedupeLockId = dedupe.lockId;
+          if (!dedupe.allowed) {
+            logs.push({
+              step: "idempotency",
+              status: "error",
+              ts: ts(),
+              detail: `${dedupe.warningMessage} | step=${stepLabel} | fingerprint=${fingerprint}`,
+            });
+            return {
+              warning: dedupe.warningMessage,
+              error: {
+                message: dedupe.warningMessage,
+                code: "IDEMPOTENCY_BLOCKED",
+                error_subcode: null,
+                error_user_title: "Publicação duplicada bloqueada",
+                error_user_msg: dedupe.warningMessage,
+              },
+            };
+          }
+
+          dedupeLockId = dedupe.lockId;
+        }
 
         const promotedObject = adsetPayload.promoted_object || {};
         // whatsapp_number_id (interno) ainda usado p/ sanity, mas NÃO entra no promoted_object.
@@ -2515,6 +2534,67 @@ Deno.serve(async (req) => {
         },
       };
     };
+
+    // ══════════════════════════════════════════════════════════════════
+    //  DRY RUN (pré-voo): valida o config REAL do preset na Meta.
+    //  Campanha já foi criada acima (forçada PAUSED no dry_run). Aqui: monta 1 adset REAL pelo
+    //  MESMO builder do preset, cria PAUSED, e deleta adset + campanha. Sem mídia/creative/ad,
+    //  sem dedupe. Adset é onde moram os erros de preset (promoted_object WhatsApp, PROFILE_VISIT,
+    //  pixel L.T, placement inválido) — se passar aqui, a publicação real não cria órfão por esses.
+    // ══════════════════════════════════════════════════════════════════
+    if (isDryRun) {
+      const dryName = adset_name || generated_name || "__preflight__";
+      let dryBuild: { payload?: Record<string, any>; error?: string };
+      if (isVideoEngagementPreset) {
+        // FASE 2: config do adset é igual por público (só muda audience_id) → valida 1 representativo
+        // com o 1º público. Exclusão VV50% é derivada de mídia (pulada) → null no pré-voo.
+        const firstAud = fase2AudienceIds[0];
+        if (!firstAud) return respond({ ok: false, dry_run: true, step: "validate", error_message: "FASE 2 requer ao menos 1 público." });
+        // ADAPTADO: espelha o guard 2..10 do fluxo real (:2608) — senão dry_run passa (o builder
+        // combinado só checa <2) e o real barra → falso-verde. Mesma mensagem que o real.
+        if (fase2CombinedAdset && (fase2AudienceIds.length < 2 || fase2AudienceIds.length > 10)) {
+          return respond({ ok: false, dry_run: true, step: "validate", error_message: "FASE 2 ADAPTADO exige de 2 a 10 públicos combinados." });
+        }
+        dryBuild = fase2CombinedAdset
+          ? buildFase2AdsetCombined(dryName, fase2AudienceIds, null)
+          : buildFase2Adset(dryName, firstAud, null);
+      } else {
+        dryBuild = buildAdsetPayload(dryName);
+      }
+      if (dryBuild.error || !dryBuild.payload) {
+        return respond({ ok: false, dry_run: true, step: "validate", error_message: dryBuild.error || "Falha ao montar o adset de validação." });
+      }
+      dryBuild.payload.status = "PAUSED"; // pré-voo nunca fica ativo
+
+      const dryResult = await createAdset(dryBuild.payload, "dry_run_adset");
+      if (dryResult.error) {
+        // Erro REAL do preset. respond({ok:false}) deleta a campanha que criamos (createdCampaignId).
+        logs.push({ step: "validate", status: "error", ts: ts(), detail: `dry_run falhou: ${JSON.stringify(dryResult.error)}` });
+        return respond({ ok: false, dry_run: true, step: "validate", ...formatMetaError(dryResult.error) });
+      }
+
+      // Adset OK → deleta adset + campanha (pré-voo não deixa NADA na conta). Cleanup robusto:
+      // adset sempre; campanha só se NÓS a criamos (createdCampaignId; não deleta campanha existente).
+      const dryAdsetId = dryResult.id;
+      if (dryAdsetId) {
+        try {
+          await fetch(`https://graph.facebook.com/v25.0/${dryAdsetId}?access_token=${access_token}`, { method: "DELETE" });
+          logs.push({ step: "validate", status: "success", ts: ts(), detail: `dry_run adset ${dryAdsetId} deletado` });
+        } catch (e) {
+          logs.push({ step: "validate", status: "warning", ts: ts(), detail: `falha ao deletar adset ${dryAdsetId}: ${(e as Error).message}` });
+        }
+      }
+      if (createdCampaignId) {
+        try {
+          await fetch(`https://graph.facebook.com/v25.0/${createdCampaignId}?access_token=${access_token}`, { method: "DELETE" });
+          logs.push({ step: "validate", status: "success", ts: ts(), detail: `dry_run campanha ${createdCampaignId} deletada` });
+          createdCampaignId = null; // já limpo → respond() não tenta de novo
+        } catch (e) {
+          logs.push({ step: "validate", status: "warning", ts: ts(), detail: `falha ao deletar campanha ${createdCampaignId}: ${(e as Error).message}` });
+        }
+      }
+      return respond({ ok: true, dry_run: true });
+    }
 
     // ── FASE 2 special flow: 1 creative + N adsets (one per audience) ──
     if (isVideoEngagementPreset && fase2AudienceIds.length > 0) {
