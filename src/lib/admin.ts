@@ -11,11 +11,25 @@ export async function isCurrentUserAdmin(): Promise<boolean> {
   return !!data;
 }
 
+// Numa resposta non-2xx o supabase-js devolve error=FunctionsHttpError e data=null (NÃO parseia
+// o body), então cairíamos no genérico "Edge Function returned a non-2xx status code". A mensagem
+// PT que a edge montou fica no error.context (a Response) — lê ela pra mostrar a causa real.
+// Mesmo padrão do fetchNodeInsights em meta-api.ts (fix PR #33).
+async function edgeErrorMessage(error: { message: string; context?: Response }): Promise<string> {
+  try {
+    const body = error.context ? await error.context.json() : null;
+    if (body?.error) return body.error;
+  } catch {
+    // body não-JSON ou já consumido — mantém a mensagem genérica.
+  }
+  return error.message;
+}
+
 export async function inviteUser(email: string, name: string) {
   const { data, error } = await supabase.functions.invoke("admin-invite-user", {
     body: { email, name },
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(await edgeErrorMessage(error));
   if (data?.error) throw new Error(data.error);
   return data as { ok: true; user_id: string };
 }
@@ -32,7 +46,7 @@ export type AppUser = {
 // Lista os gestores (membros) do app. Só admin (gate na edge).
 export async function listAppUsers(): Promise<AppUser[]> {
   const { data, error } = await supabase.functions.invoke("admin-list-users", { body: {} });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(await edgeErrorMessage(error));
   if (data?.error) throw new Error(data.error);
   return (data?.users ?? []) as AppUser[];
 }
@@ -42,7 +56,7 @@ export async function removeAppUser(userId: string) {
   const { data, error } = await supabase.functions.invoke("admin-remove-user", {
     body: { user_id: userId },
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(await edgeErrorMessage(error));
   if (data?.error) throw new Error(data.error);
   return data as { ok: true };
 }
