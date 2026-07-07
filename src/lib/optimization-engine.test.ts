@@ -139,13 +139,13 @@ describe("buildOptimizationView", () => {
   });
 
   it("campanha nunca tratada vai pra Pendentes, não pro Histórico", () => {
-    const { pendentes, history } = buildOptimizationView([viol()], [], RK);
+    const { pendentes, history } = buildOptimizationView([viol()], [], RK, new Set());
     expect(pendentes).toHaveLength(1);
     expect(history).toHaveLength(0);
   });
 
   it("campanha tratada sai de Pendentes e vai pro Histórico (reavaliada ao vivo)", () => {
-    const { pendentes, history } = buildOptimizationView([viol()], [act()], RK);
+    const { pendentes, history } = buildOptimizationView([viol()], [act()], RK, new Set());
     expect(pendentes).toHaveLength(0);
     expect(history).toHaveLength(1);
     expect(history[0].live).not.toBeNull();
@@ -154,28 +154,54 @@ describe("buildOptimizationView", () => {
   it("deduplica pra a ação mais recente por campanha (por createdAt)", () => {
     const older = act({ action: "dismissed", createdAt: "2026-07-01T00:00:00Z" });
     const newer = act({ action: "paused", createdAt: "2026-07-05T00:00:00Z" });
-    const { history } = buildOptimizationView([viol()], [older, newer], RK);
+    const { history } = buildOptimizationView([viol()], [older, newer], RK, new Set());
     expect(history).toHaveLength(1);
     expect(history[0].action.action).toBe("paused");
   });
 
-  it("reactivated (Religar) como ação mais recente: sai do Histórico e volta pra Pendentes se ainda estoura", () => {
-    const paused = act({ action: "paused", createdAt: "2026-07-05T00:00:00Z" });
-    const religado = act({ action: "reactivated", createdAt: "2026-07-06T00:00:00Z" });
-    const { pendentes, history } = buildOptimizationView([viol()], [paused, religado], RK);
-    expect(history).toHaveLength(0);       // célula religada some do Histórico
-    expect(pendentes).toHaveLength(1);     // e reaparece em Pendentes (tratada como nunca-agida)
+  it("pausa de CAMPANHA cuja campanha voltou a ficar ATIVA (religada/reativada) some do Histórico e volta pra Pendentes", () => {
+    const paused = act({ action: "paused" });
+    const { pendentes, history } = buildOptimizationView([viol()], [paused], RK, new Set(["c1"]));
+    expect(history).toHaveLength(0);   // campanha ativa de novo → some do Histórico
+    expect(pendentes).toHaveLength(1); // e volta pra Pendentes (ainda fura KPI)
+  });
+
+  it("só pausa de CAMPANHA passa pelo active-status: 'dismissed' (Mantida) de campanha ATIVA continua no Histórico", () => {
+    const kept = act({ action: "dismissed" });
+    const { pendentes, history } = buildOptimizationView([viol()], [kept], RK, new Set(["c1"]));
+    expect(history).toHaveLength(1);   // Mantida ativa é o estado normal — não sai
+    expect(pendentes).toHaveLength(0);
+  });
+
+  it("pausa de NÓ (adset/ad): fica no Histórico como log mesmo com a campanha ATIVA e NÃO suprime a campanha de Pendentes", () => {
+    const nodePause = act({
+      action: "paused",
+      snapshot: { metric: "cpc", actual: 3, operator: ">", rangeKey: RK, nodeLevel: "adset", nodeId: "as1", nodeName: "Conjunto A" },
+    });
+    const { pendentes, history } = buildOptimizationView([viol()], [nodePause], RK, new Set(["c1"]));
+    expect(history).toHaveLength(1);              // log do nó não passa pelo active-status → fica
+    expect(history[0].live).toBeNull();           // nó é log puro, sem violação viva
+    expect(history[0].action.snapshot.nodeLevel).toBe("adset");
+    expect(pendentes).toHaveLength(1);            // campanha segue em Pendentes (nó não trata a campanha)
+  });
+
+  it("pausas de NÓS diferentes na mesma campanha viram entradas SEPARADAS no Histórico", () => {
+    const nodeA = act({ createdAt: "2026-07-05T10:00:00Z", action: "paused", snapshot: { metric: "cpc", rangeKey: RK, nodeLevel: "adset", nodeId: "as1", nodeName: "A" } });
+    const nodeB = act({ createdAt: "2026-07-05T11:00:00Z", action: "paused", snapshot: { metric: "cpc", rangeKey: RK, nodeLevel: "ad", nodeId: "ad9", nodeName: "B" } });
+    const { history } = buildOptimizationView([], [nodeA, nodeB], RK, new Set());
+    expect(history).toHaveLength(2);
+    expect(history.map((h) => h.action.snapshot.nodeId).sort()).toEqual(["ad9", "as1"]);
   });
 
   it("marca 'piorou' quando o valor atual degrada vs o snapshot (mesmo período)", () => {
-    const { history } = buildOptimizationView([viol({ actual: 4 })], [act({ snapshot: { metric: "cpc", actual: 3, operator: ">", rangeKey: RK } })], RK);
+    const { history } = buildOptimizationView([viol({ actual: 4 })], [act({ snapshot: { metric: "cpc", actual: 3, operator: ">", rangeKey: RK } })], RK, new Set());
     expect(history[0].comparable).toBe(true);
     expect(history[0].worsened).toBe(true);
   });
 
   it("NÃO marca 'piorou' quando o snapshot foi tirado em período diferente do atual", () => {
     const snap = { metric: "cpc", actual: 3, operator: ">" as const, rangeKey: "preset:last_30d" };
-    const { history } = buildOptimizationView([viol({ actual: 999 })], [act({ snapshot: snap })], RK);
+    const { history } = buildOptimizationView([viol({ actual: 999 })], [act({ snapshot: snap })], RK, new Set());
     expect(history[0].comparable).toBe(false);
     expect(history[0].worsened).toBe(false);
   });
@@ -183,7 +209,7 @@ describe("buildOptimizationView", () => {
   it("snapshot legado (sem métrica/actual/rangeKey) não é comparável, não crasha, e não engole a violação viva", () => {
     // Ação sem métrica não casa com nenhuma violação viva → a violação de cpc segue em Pendentes
     // (não sumiu) e a entrada de histórico fica sem live.
-    const { pendentes, history } = buildOptimizationView([viol({ actual: 999 })], [act({ snapshot: {} })], RK);
+    const { pendentes, history } = buildOptimizationView([viol({ actual: 999 })], [act({ snapshot: {} })], RK, new Set());
     expect(pendentes).toHaveLength(1);
     expect(history[0].comparable).toBe(false);
     expect(history[0].worsened).toBe(false);
@@ -193,7 +219,7 @@ describe("buildOptimizationView", () => {
   it("2ª métrica que estoura depois NÃO é engolida: fica em Pendentes mesmo com a 1ª já tratada", () => {
     const found = [viol({ metric: "cpc", actual: 3 }), viol({ metric: "ctr", operator: "<", actual: 0.5 })];
     const actions = [act({ snapshot: { metric: "cpc", actual: 3, operator: ">", rangeKey: RK } })]; // manteve só cpc
-    const { pendentes, history } = buildOptimizationView(found, actions, RK);
+    const { pendentes, history } = buildOptimizationView(found, actions, RK, new Set());
     expect(pendentes.map((v) => v.metric)).toEqual(["ctr"]); // ctr novo continua alertando
     expect(history).toHaveLength(1);
     expect(history[0].action.snapshot.metric).toBe("cpc");
@@ -203,14 +229,14 @@ describe("buildOptimizationView", () => {
   it("não faz comparação cross-métrica: ação de cpc + violação viva só de cpm → live null, sem 'piorou' falso", () => {
     const found = [viol({ metric: "cpm", actual: 25 })];
     const actions = [act({ snapshot: { metric: "cpc", actual: 3, operator: ">", rangeKey: RK } })];
-    const { pendentes, history } = buildOptimizationView(found, actions, RK);
+    const { pendentes, history } = buildOptimizationView(found, actions, RK, new Set());
     expect(pendentes.map((v) => v.metric)).toEqual(["cpm"]); // cpm nunca tratado → pendente
     expect(history[0].live).toBeNull();                       // cpc sem violação viva → resolvido
     expect(history[0].worsened).toBe(false);
   });
 
   it("campanha tratada que sarou/foi pausada (fora da avaliação ao vivo) fica no Histórico com live=null", () => {
-    const { pendentes, history } = buildOptimizationView([], [act()], RK);
+    const { pendentes, history } = buildOptimizationView([], [act()], RK, new Set());
     expect(pendentes).toHaveLength(0);
     expect(history).toHaveLength(1);
     expect(history[0].live).toBeNull();
@@ -223,7 +249,7 @@ describe("buildOptimizationView", () => {
       act({ campaignId: "same", snapshot: { metric: "cpc", actual: 3, operator: ">", rangeKey: RK } }),    // ainda-fora, igual
       act({ campaignId: "healed" }),                                                                        // resolvida (não está em found)
     ];
-    const { history } = buildOptimizationView(found, actions, RK);
+    const { history } = buildOptimizationView(found, actions, RK, new Set());
     expect(history.map((h) => h.action.campaignId)).toEqual(["worse", "same", "healed"]);
   });
 });

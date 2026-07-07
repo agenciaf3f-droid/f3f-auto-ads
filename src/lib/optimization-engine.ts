@@ -52,6 +52,12 @@ export type MetricSnapshot = {
   limit?: number;
   operator?: ">" | "<";
   rangeKey?: string;
+  // O QUE foi desligado. Ausente/"campaign" = ação na campanha inteira (handleDesligarCampanha /
+  // handleManter, e linhas legadas). "adset"/"ad" = pausa de um NÓ específico via drill-in — vira
+  // um registro SEPARADO no Histórico ("Conjunto X desligado"), sem marcar a campanha como Desligada.
+  nodeLevel?: "campaign" | "adset" | "ad";
+  nodeId?: string;
+  nodeName?: string;
 };
 
 // "Piorou?" desde que o gestor agiu: direção-consciente. Pra operator ">" (limite máximo) pior =
@@ -66,10 +72,9 @@ export function hasWorsened(operator: ">" | "<", current: number, snapshot: numb
 // (camelCase). A página mapeia a linha de optimization_actions pra isto.
 export type OptimizationActionRecord = {
   campaignId: string;
-  adAccountId?: string; // só carregado p/ o botão "Religar" reinserir a ação (ad_account_id é NOT NULL)
   campaignName: string | null;
   clientName: string | null;
-  action: "dismissed" | "paused" | "reactivated";
+  action: "dismissed" | "paused";
   snapshot: MetricSnapshot;
   createdAt: string; // ISO — comparável por ordenação de string
 };
@@ -85,33 +90,51 @@ export type OptimizationHistoryEntry = {
 // campanha já mantida/desligada, reavaliada ao vivo). `actions` são TODAS as ações do gestor; a
 // função deduplica pra a mais recente por campanha (por createdAt). `currentRangeKey` = período
 // atual da tela — "piorou" só é calculado quando o snapshot foi tirado nesse mesmo período.
-// Chave de ação = campanha + MÉTRICA do snapshot. Uma ação trata UMA métrica, não a campanha
-// inteira: se a campanha estoura CPC e o gestor mantém, um estouro NOVO de CTR depois continua
-// aparecendo em Pendentes (antes sumia junto, sem volta).
+// Chave de ação por NÍVEL do que foi desligado:
+//  - CAMPANHA (nodeLevel "campaign"/ausente): campanha + MÉTRICA. Uma ação trata UMA métrica, não a
+//    campanha inteira: estourou CPC e o gestor manteve, um estouro NOVO de CTR depois segue em Pendentes.
+//  - NÓ (adset/ad): campanha + NÓ + métrica. Cada conjunto/criativo desligado é um registro SEPARADO
+//    no Histórico — pausar 2 conjuntos gera 2 entradas, não sobrescreve.
 const actionKey = (campaignId: string, metric?: string) => `${campaignId}::${metric ?? ""}`;
+const nodeActionKey = (campaignId: string, nodeId?: string, metric?: string) =>
+  `${campaignId}::${nodeId ?? ""}::${metric ?? ""}`;
+const isNodeLevel = (a: OptimizationActionRecord) =>
+  a.snapshot?.nodeLevel === "adset" || a.snapshot?.nodeLevel === "ad";
 
 export function buildOptimizationView(
   found: OptimizationViolation[],
   actions: OptimizationActionRecord[],
   currentRangeKey: string,
+  // IDs das campanhas ATIVAS agora (fetchCampaigns já filtra effective_status=ACTIVE). Uma pausa de
+  // CAMPANHA cuja campanha está ativa = desfeita (religada ou reativada por fora) → sai do Histórico.
+  activeCampaignIds: Set<string>,
 ): { pendentes: OptimizationViolation[]; history: OptimizationHistoryEntry[] } {
-  // Última ação por (campanha, métrica) (robusto à ordem de entrada — compara createdAt, não posição).
+  // Última ação por chave (campanha-nível ou nó-nível), robusto à ordem de entrada (compara createdAt).
   const latest = new Map<string, OptimizationActionRecord>();
   for (const a of actions) {
-    const k = actionKey(a.campaignId, a.snapshot?.metric);
+    const k = isNodeLevel(a)
+      ? nodeActionKey(a.campaignId, a.snapshot?.nodeId, a.snapshot?.metric)
+      : actionKey(a.campaignId, a.snapshot?.metric);
     const prev = latest.get(k);
     if (!prev || a.createdAt > prev.createdAt) latest.set(k, a);
   }
-  // "reactivated" (Religar no Histórico) DESFAZ o tratamento: quando é a ação MAIS RECENTE da célula
-  // (campanha, métrica), tratamos a célula como NUNCA-agida — sai do Histórico E volta pra Pendentes
-  // se ainda estourar o KPI ao vivo. Remover do `latest` a tira de actionedPairs e do loop do histórico.
-  for (const [k, a] of latest) {
-    if (a.action === "reactivated") latest.delete(k);
-  }
-  const actionedPairs = new Set(latest.keys());
 
-  // Pendente = violação (campanha, métrica) que nunca foi tratada nessa métrica específica.
-  const pendentes = found.filter((v) => !actionedPairs.has(actionKey(v.campaignId, v.metric)));
+  // Exclusão por status live — SÓ registros de CAMPANHA: uma pausa de CAMPANHA cuja campanha está
+  // ATIVA agora foi desfeita (Religar ou reativação por fora, no Gerenciador). Sai do Histórico e
+  // deixa de suprimir a campanha de Pendentes. Registros de NÓ NÃO passam por aqui (pausar um
+  // conjunto não desliga a campanha — fica de log). `dismissed` (Mantida) nunca é excluído.
+  for (const [k, a] of latest) {
+    if (!isNodeLevel(a) && a.action === "paused" && activeCampaignIds.has(a.campaignId)) latest.delete(k);
+  }
+
+  // Pendentes: uma violação (campanha, métrica) sai de Pendentes só se há ação de CAMPANHA sobre ela
+  // (dismissed, ou paused não-excluído). Registros de NÓ NÃO suprimem — pausar um conjunto ruim não
+  // trata a campanha como um todo; se a campanha segue fora do KPI, continua em Pendentes.
+  const campaignActioned = new Set<string>();
+  for (const a of latest.values()) {
+    if (!isNodeLevel(a)) campaignActioned.add(actionKey(a.campaignId, a.snapshot?.metric));
+  }
+  const pendentes = found.filter((v) => !campaignActioned.has(actionKey(v.campaignId, v.metric)));
 
   // Uma campanha pode ter >1 métrica fora ao mesmo tempo — guardamos todas por campanha.
   const liveByCampaign = new Map<string, OptimizationViolation[]>();
@@ -123,6 +146,12 @@ export function buildOptimizationView(
 
   const history: OptimizationHistoryEntry[] = [];
   for (const action of latest.values()) {
+    // Registro de NÓ = log puro ("você desligou ESTE conjunto/criativo"): sem violação viva, sem
+    // "piorou". Só registros de CAMPANHA casam com a violação viva da mesma métrica.
+    if (isNodeLevel(action)) {
+      history.push({ action, live: null, comparable: false, worsened: false });
+      continue;
+    }
     const snap = action.snapshot ?? {};
     const lvs = liveByCampaign.get(action.campaignId) ?? [];
     // SÓ a violação da MESMA métrica do snapshot — sem fallback pra outra métrica (comparar CPC
@@ -134,7 +163,7 @@ export function buildOptimizationView(
     const worsened = comparable ? hasWorsened(live!.operator, live!.actual, snap.actual as number) : false;
     history.push({ action, live, comparable, worsened });
   }
-  // Piorou primeiro (mais urgente), depois ainda-fora, depois resolvidas; cada grupo por data desc.
+  // Piorou primeiro (mais urgente), depois ainda-fora, depois resolvidas/logs; cada grupo por data desc.
   history.sort((a, b) => {
     const rank = (h: OptimizationHistoryEntry) => (h.worsened ? 0 : h.live ? 1 : 2);
     return rank(a) - rank(b) || b.action.createdAt.localeCompare(a.action.createdAt);

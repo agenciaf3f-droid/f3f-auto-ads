@@ -29,7 +29,7 @@ import {
 import { getMetricDef, rangeKey, type AggregatedBucket, type DateRangeSelection, type MetricDef } from "@/lib/meta-insights";
 import DateRangeSelector from "@/components/clients/DateRangeSelector";
 
-type ActionKind = "dismissed" | "paused" | "reactivated";
+type ActionKind = "dismissed" | "paused";
 
 // Navegação drill-in: null = lista de campanhas; { campaign } = dentro da campanha vendo
 // conjuntos; { campaign, adset } = dentro do conjunto vendo criativos (folha, não desce mais).
@@ -40,7 +40,6 @@ type Drill = null | { campaign: OptimizationViolation } | { campaign: Optimizati
 // ação pra o histórico exibir campanhas que já saíram da avaliação ao vivo (sararam/pausadas).
 type ActionRow = {
   campaign_id: string;
-  ad_account_id: string;
   campaign_name: string | null;
   client_name: string | null;
   action: ActionKind;
@@ -48,7 +47,25 @@ type ActionRow = {
   created_at: string;
 };
 
-const actionVerb = (a: ActionKind) => (a === "dismissed" ? "Mantida" : a === "reactivated" ? "Religada" : "Desligada");
+const actionVerb = (a: ActionKind) => (a === "dismissed" ? "Mantida" : "Desligada");
+
+// true = registro de pausa de um NÓ (conjunto/criativo) via drill-in; false = ação na campanha inteira.
+const isNodeAction = (a: OptimizationActionRecord) =>
+  a.snapshot?.nodeLevel === "adset" || a.snapshot?.nodeLevel === "ad";
+
+// Frase do Histórico por nível: campanha ("Mantida"/"Desligada") vs nó ("Conjunto/Criativo X desligado").
+const historyActionPhrase = (a: OptimizationActionRecord): string => {
+  if (a.snapshot?.nodeLevel === "adset") return `Conjunto ${a.snapshot.nodeName ?? ""} desligado`.trimEnd();
+  if (a.snapshot?.nodeLevel === "ad") return `Criativo ${a.snapshot.nodeName ?? ""} desligado`.trimEnd();
+  return actionVerb(a.action);
+};
+
+// Chave React estável por entrada do Histórico: nó → campanha:nó:métrica; campanha → campanha:métrica.
+const historyEntryKey = (a: OptimizationActionRecord): string =>
+  a.snapshot?.nodeId
+    ? `${a.campaignId}:${a.snapshot.nodeId}:${a.snapshot?.metric ?? ""}`
+    : `${a.campaignId}:${a.snapshot?.metric ?? ""}`;
+
 const fmtActionDate = (iso: string) =>
   new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 
@@ -159,7 +176,7 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
         const { data: { user } } = await supabase.auth.getUser();
         const { data: actioned } = await supabase
           .from("optimization_actions")
-          .select("campaign_id, ad_account_id, campaign_name, client_name, action, metric_snapshot, created_at")
+          .select("campaign_id, campaign_name, client_name, action, metric_snapshot, created_at")
           .eq("user_id", user?.id ?? "")
           .order("created_at", { ascending: false })
           .limit(200); // teto do Histórico: as 200 ações mais recentes (evita render sem limite ao longo dos meses)
@@ -167,7 +184,6 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
         // tratada vai pro Histórico, reavaliada ao vivo — se piorar, o gestor desliga direto de lá.
         const actionRecords: OptimizationActionRecord[] = ((actioned ?? []) as ActionRow[]).map((r) => ({
           campaignId: r.campaign_id,
-          adAccountId: r.ad_account_id,
           campaignName: r.campaign_name,
           clientName: r.client_name,
           action: r.action,
@@ -180,10 +196,15 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
         // Ordem final de `found`/`failedAccounts` não é garantida (lista sem ordenação, como antes).
         const found: OptimizationViolation[] = [];
         const failedAccounts: string[] = [];
+        // IDs de todas as campanhas ATIVAS agora (fetchCampaigns já filtra effective_status=ACTIVE).
+        // O engine usa isso pra sumir com pausa de CAMPANHA cuja campanha voltou a ficar ativa
+        // (Religar ou reativação por fora). Set compartilhado — cada .add é síncrono, sem corrida.
+        const activeCampaignIds = new Set<string>();
         await mapWithConcurrency(configs, ACCOUNTS_CONCURRENCY, async (config) => {
           try {
             const campaigns = await fetchCampaigns(status.access_token, config.adAccountId);
             if (campaigns.length === 0) return;
+            for (const c of campaigns as { id: string }[]) activeCampaignIds.add(c.id);
 
             const insights = await fetchCampaignInsights(status.access_token, campaigns.map((c: { id: string }) => c.id), range);
 
@@ -210,7 +231,7 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
 
         // Pendentes (nunca tratadas) vs Histórico (já mantidas/desligadas, reavaliadas ao vivo).
         // "piorou" só é calculado quando o snapshot foi tirado no MESMO período da tela atual.
-        const { pendentes, history: historyEntries } = buildOptimizationView(found, actionRecords, rangeKey(range));
+        const { pendentes, history: historyEntries } = buildOptimizationView(found, actionRecords, rangeKey(range), activeCampaignIds);
 
         if (!cancelled) {
           setViolations(pendentes);
@@ -270,7 +291,14 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     return () => { cancelled = true; };
   }, [drill, accessToken, range, toast]);
 
-  async function recordAction(violation: OptimizationViolation, action: ActionKind) {
+  // Registra manter/desligar. `node` presente = pausa de um NÓ (conjunto/criativo): grava nível+id+nome
+  // no snapshot → vira registro SEPARADO no Histórico ("Conjunto X desligado"), NÃO marca a campanha
+  // como Desligada nem a tira de Pendentes. Ausente = ação na campanha inteira (Manter/Desligar campanha).
+  async function recordAction(
+    violation: OptimizationViolation,
+    action: ActionKind,
+    node?: { level: "adset" | "ad"; id: string; name: string },
+  ) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     // rangeKey grava o período em que o snapshot foi tirado — o "piorou" no Histórico só compara
@@ -278,6 +306,8 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     const snapshot: MetricSnapshot = {
       metric: violation.metric, actual: violation.actual, limit: violation.limit, operator: violation.operator,
       rangeKey: rangeKey(range),
+      nodeLevel: node ? node.level : "campaign",
+      ...(node ? { nodeId: node.id, nodeName: node.name } : {}),
     };
     // supabase-js insert NÃO lança em erro de DB/PostgREST — devolve { error }. Se não checar,
     // uma falha (RLS, rede, coluna ausente) passa despercebida e o UI otimista mente "salvo".
@@ -291,27 +321,40 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
       metric_snapshot: snapshot,
     });
     if (error) throw new Error(error.message);
-    // Sai de Pendentes e entra/atualiza no Histórico. Chave por (campanha, MÉTRICA): manter/desligar
-    // trata só a métrica agida — outra métrica fora do KPI segue em Pendentes. Re-baselina contra o
-    // valor atual → worsened=false; se piorar depois, o próximo load marca "piorou".
-    const sameCell = (campaignId: string, metric: string) =>
-      campaignId === violation.campaignId && metric === violation.metric;
-    setViolations((prev) => prev.filter((v) => !sameCell(v.campaignId, v.metric)));
+
     const entry: OptimizationHistoryEntry = {
       action: {
         campaignId: violation.campaignId,
-        adAccountId: violation.adAccountId, // sem isso um Religar na MESMA sessão insere ad_account_id undefined (NOT NULL) e falha calado
         campaignName: violation.campaignName,
         clientName: violation.clientName,
         action,
         snapshot,
         createdAt: new Date().toISOString(),
       },
-      live: violation,
-      comparable: true,
+      live: node ? null : violation, // registro de nó = log puro, sem violação viva
+      comparable: !node,             // campanha: snapshot é do período atual → "estava X→agora Y". nó: sem live.
       worsened: false,
     };
-    setHistory((prev) => [entry, ...prev.filter((h) => !sameCell(h.action.campaignId, h.action.snapshot.metric ?? ""))]);
+
+    if (node) {
+      // Pausa de nó: NÃO tira a campanha de Pendentes. Só adiciona o log ao Histórico, dedup pela
+      // chave (campanha, nó, métrica) — sem sobrescrever a entrada da campanha nem de outros nós.
+      const sameNode = (a: OptimizationActionRecord) =>
+        a.campaignId === violation.campaignId && a.snapshot?.nodeId === node.id && (a.snapshot?.metric ?? "") === violation.metric;
+      setHistory((prev) => [entry, ...prev.filter((h) => !sameNode(h.action))]);
+      return;
+    }
+
+    // Ação de campanha: sai de Pendentes e entra/atualiza no Histórico. Chave (campanha, MÉTRICA):
+    // trata só a métrica agida — outra métrica fora do KPI segue em Pendentes. Substitui só a entrada
+    // de CAMPANHA dessa célula; logs de nó (nodeId != null) da mesma campanha ficam intactos.
+    const sameCell = (campaignId: string, metric: string) =>
+      campaignId === violation.campaignId && metric === violation.metric;
+    setViolations((prev) => prev.filter((v) => !sameCell(v.campaignId, v.metric)));
+    setHistory((prev) => [
+      entry,
+      ...prev.filter((h) => h.action.snapshot?.nodeId != null || !sameCell(h.action.campaignId, h.action.snapshot?.metric ?? "")),
+    ]);
   }
 
   async function handleManter(violation: OptimizationViolation) {
@@ -390,9 +433,10 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     }
   }
 
-  // Religa (reativa) a campanha desligada direto do card do Histórico. Só aparece em cards cuja
-  // ação foi "paused" (Desligada). Reusa `pausingId` como trava de clique. Religar é SILENCIOSO —
-  // NÃO avisa o cliente no WhatsApp (só a pausa avisa).
+  // Religa (reativa, status ACTIVE) a campanha desligada direto do card do Histórico. Só aparece em
+  // cards de campanha desligada (nível campanha, "paused"). Reusa `pausingId` como trava. SILENCIOSO —
+  // NÃO avisa o cliente (só a pausa avisa). Não grava ação: no próximo load a campanha aparece em
+  // activeCampaignIds e o engine já exclui a pausa de campanha do Histórico.
   async function handleReligar(action: OptimizationActionRecord) {
     if (!accessToken) return;
     setPausingId(action.campaignId);
@@ -403,31 +447,12 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
       setPausingId(null);
       return;
     }
-    // Campanha reativada na Meta. Registra a ação `reactivated` (DESFAZ o tratamento). Falha aqui
-    // (RLS/rede) não desfaz a reativação já feita — só o bookkeeping local fica pra trás.
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { error } = await supabase.from("optimization_actions").insert({
-          user_id: user.id,
-          campaign_id: action.campaignId,
-          ad_account_id: action.adAccountId,
-          campaign_name: action.campaignName,
-          client_name: action.clientName,
-          action: "reactivated",
-          // Copia o snapshot da ação anterior INTEIRO — a chave do Histórico é (campanha, snapshot.metric).
-          // Sem a MESMA métrica, o `reactivated` cairia noutra célula e não desfaria o `paused`.
-          metric_snapshot: action.snapshot,
-        });
-        if (error) throw new Error(error.message);
-      }
-    } catch (e) {
-      console.error("Falha ao registrar religar em optimization_actions (campanha já reativada na Meta)", e);
-    }
-    // Some do Histórico local na hora (mesma chave célula = campanha + métrica do snapshot). Na próxima
-    // reavaliação ao vivo o engine trata `reactivated` como não-tratada → volta pra Pendentes se estourar.
+    // Reativada na Meta. Some do Histórico local na hora — só a entrada de CAMPANHA dessa célula
+    // (campanha + métrica, sem nó); logs de nó da mesma campanha ficam.
     const metric = action.snapshot?.metric ?? "";
-    setHistory((prev) => prev.filter((h) => !(h.action.campaignId === action.campaignId && (h.action.snapshot?.metric ?? "") === metric)));
+    setHistory((prev) => prev.filter((h) =>
+      !(h.action.campaignId === action.campaignId && h.action.snapshot?.nodeId == null && (h.action.snapshot?.metric ?? "") === metric)
+    ));
     setPausingId(null);
     toast({ title: "Campanha religada", description: action.campaignName ?? action.campaignId });
   }
@@ -447,10 +472,11 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     // Nó pausado de verdade na Meta — marca localmente (botão vira "Pausado" disabled).
     setDrillNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, effective_status: "PAUSED" } : n)));
     toast({ title: "Pausado", description: node.name });
-    // Sai de Pendentes / entra no Histórico. Se falhar (rede/RLS), o nó já pausado na Meta não
-    // vira "nada aconteceu" — só o bookkeeping local fica pra trás, sem travar a UI.
+    // Registra no Histórico O NÓ desligado (nível adset/ad) — não a campanha. Se falhar (rede/RLS),
+    // o nó já pausado na Meta não vira "nada aconteceu" — só o bookkeeping local fica pra trás.
+    const nodeLevel: "adset" | "ad" = "adset" in drill ? "ad" : "adset";
     try {
-      await recordAction(drill.campaign, "paused");
+      await recordAction(drill.campaign, "paused", { level: nodeLevel, id: node.id, name: node.name });
     } catch (e) {
       console.error("Falha ao registrar pausa em optimization_actions (nó já pausado na Meta)", e);
     }
@@ -632,18 +658,6 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
             >
               {pausingId === v.campaignId ? "Desligando..." : "Desligar"}
             </Button>
-            {/* Religar: só em cards do Histórico cuja ação foi "paused" (Desligada). Reativa a
-                campanha na Meta e desfaz o tratamento (some do Histórico). */}
-            {meta?.action.action === "paused" && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={pausingId === v.campaignId}
-                onClick={() => handleReligar(meta.action)}
-              >
-                {pausingId === v.campaignId ? "Religando..." : "Religar"}
-              </Button>
-            )}
           </div>
         </CardContent>
       </Card>
@@ -863,31 +877,48 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
                   renderViolationCard(h.live, i, { action: h.action, comparable: h.comparable, worsened: h.worsened })
                 ) : (
                   <Card
-                    key={h.action.campaignId}
+                    key={historyEntryKey(h.action)}
                     className="border-l-[3px] border-l-muted-foreground/25 fade-in-up opacity-80"
                     style={{ animationDelay: `${i * 60}ms` }}
                   >
                     <CardContent className="p-4">
-                      <p className="text-sm truncate">{h.action.campaignName ?? h.action.campaignId}</p>
-                      {h.action.clientName && (
-                        <p className="text-xs text-muted-foreground truncate">{h.action.clientName}</p>
-                      )}
-                      <p className="text-[11px] text-muted-foreground mt-1.5">
-                        {actionVerb(h.action.action)} em {fmtActionDate(h.action.createdAt)} · dentro do limite ou inativa agora
-                      </p>
-                      {/* Card de campanha desligada (não veiculando → sem violação ao vivo). Religar
-                          reativa na Meta e desfaz o tratamento (some do Histórico). */}
-                      {h.action.action === "paused" && (
-                        <div className="flex mt-3">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={pausingId === h.action.campaignId}
-                            onClick={() => handleReligar(h.action)}
-                          >
-                            {pausingId === h.action.campaignId ? "Religando..." : "Religar"}
-                          </Button>
-                        </div>
+                      {isNodeAction(h.action) ? (
+                        // Log de nó: o QUE foi desligado (conjunto/criativo) LIDERA; a campanha (em geral
+                        // ainda ativa) vira contexto secundário, pra não ler como "campanha desligada".
+                        <>
+                          <p className="text-sm truncate">{historyActionPhrase(h.action)}</p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            na campanha {h.action.campaignName ?? h.action.campaignId}
+                          </p>
+                          {h.action.clientName && (
+                            <p className="text-xs text-muted-foreground truncate">{h.action.clientName}</p>
+                          )}
+                          <p className="text-[11px] text-muted-foreground mt-1.5">em {fmtActionDate(h.action.createdAt)}</p>
+                        </>
+                      ) : (
+                        // Ação de campanha: título = campanha, frase "Mantida/Desligada … inativa agora".
+                        <>
+                          <p className="text-sm truncate">{h.action.campaignName ?? h.action.campaignId}</p>
+                          {h.action.clientName && (
+                            <p className="text-xs text-muted-foreground truncate">{h.action.clientName}</p>
+                          )}
+                          <p className="text-[11px] text-muted-foreground mt-1.5">
+                            {historyActionPhrase(h.action)} em {fmtActionDate(h.action.createdAt)} · dentro do limite ou inativa agora
+                          </p>
+                          {/* Religar SÓ em campanha desligada (paused) e inativa. Nó é log — sem botão. */}
+                          {h.action.action === "paused" && (
+                            <div className="flex mt-3">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={pausingId === h.action.campaignId}
+                                onClick={() => handleReligar(h.action)}
+                              >
+                                {pausingId === h.action.campaignId ? "Religando..." : "Religar"}
+                              </Button>
+                            </div>
+                          )}
+                        </>
                       )}
                     </CardContent>
                   </Card>
