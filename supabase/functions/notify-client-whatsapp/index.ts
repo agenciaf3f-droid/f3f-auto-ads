@@ -232,7 +232,7 @@ Deno.serve(async (req) => {
       const adLink = await resolveAdLink(nodeId, accessToken);
       links = adLink;
       text =
-        `Desativamos o criativo *${nodeName}* por conta de *${metricLabel}* fora do KPI.` +
+        `Desativamos o criativo *${nodeName}* por conta de *${metricLabel}* fora do Ideal.` +
         (adLink ? `\n🔗 ${adLink}` : `\n(sem link público disponível)`);
     } else if (level === "campaign") {
       const ads = dedupeByLink(await resolveCampaignAds(campaignId, accessToken));
@@ -242,7 +242,7 @@ Deno.serve(async (req) => {
         .join("");
       text =
         `Desativamos a campanha *${campaignName}* e os criativos ativos dela, ` +
-        `por conta de *${metricLabel}* fora do KPI.` +
+        `por conta de *${metricLabel}* fora do Ideal.` +
         lines;
     } else {
       const ads = dedupeByLink(await resolveAdsetAds(nodeId, accessToken));
@@ -252,7 +252,7 @@ Deno.serve(async (req) => {
         .join("");
       text =
         `Desativamos o conjunto *${nodeName}* e os criativos ativos dele, ` +
-        `por conta de *${metricLabel}* fora do KPI.` +
+        `por conta de *${metricLabel}* fora do Ideal.` +
         lines;
     }
 
