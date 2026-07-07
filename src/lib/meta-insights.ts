@@ -206,6 +206,17 @@ export const METRIC_REGISTRY: MetricDef[] = [
 export const getMetricDef = (key: string): MetricDef | undefined =>
   METRIC_REGISTRY.find((m) => m.key === key);
 
+// Formata um valor de métrica conforme a unidade: moeda (R$ pt-BR), percentual (%) ou contagem.
+// Fonte única compartilhada entre a aba Otimizações (exibição do valor atual/limite) e a aba
+// Clientes (exibição do limite de KPI definido) — evita o número cru "20.9" no lugar de "R$ 20,90".
+export function formatMetricValue(value: number | null, unit?: MetricDef["unit"]): string {
+  if (value === null || value === undefined) return "sem dados suficientes";
+  const formatted = value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (unit === "currency") return `R$ ${formatted}`;
+  if (unit === "percent") return `${formatted}%`;
+  return formatted;
+}
+
 // ── Avaliação de regra ───────────────────────────────────────────────────────
 export interface KpiRule {
   metric_key: string;

@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { PRESET_BUCKETS, METRIC_REGISTRY, type PresetBucket } from "@/lib/meta-insights";
+import { PRESET_BUCKETS, METRIC_REGISTRY, getMetricDef, formatMetricValue, type PresetBucket } from "@/lib/meta-insights";
 import {
   listClientKpiRules,
   upsertKpiRule,
@@ -15,6 +15,14 @@ import {
   type ClientKpiRule,
   type ClientLtProduct,
 } from "@/lib/clients";
+
+// Aceita o valor digitado com vírgula OU ponto decimal ("20,90" ou "20.90"). O gestor BR digita
+// com vírgula; um <input type="number"> comeria a vírgula (value vira "" e Number("") === 0),
+// salvando 0 silenciosamente. Thresholds de KPI são valores pequenos (CPC, custo por conversa),
+// então não há separador de milhar a tratar.
+function parseThreshold(raw: string): number {
+  return Number(raw.trim().replace(",", "."));
+}
 
 export default function ClientKpiRulesEditor({ adAccounts, products }: { adAccounts: ClientAdAccount[]; products: ClientLtProduct[] }) {
   const [accountId, setAccountId] = useState<string>(adAccounts[0]?.id || "");
@@ -105,9 +113,11 @@ function BucketRules({
       .map((r) => r.metric_key),
   );
   const available = METRIC_REGISTRY.filter((m) => !usedMetrics.has(m.key) && (!m.buckets || m.buckets.includes(bucket)));
+  const selectedUnit = getMetricDef(metric)?.unit;
 
   const add = async () => {
-    if (!metric || threshold.trim() === "" || Number.isNaN(Number(threshold))) {
+    const parsedThreshold = parseThreshold(threshold);
+    if (!metric || threshold.trim() === "" || Number.isNaN(parsedThreshold)) {
       toast.error("Escolha a métrica e um valor numérico");
       return;
     }
@@ -122,7 +132,7 @@ function BucketRules({
         preset_bucket: bucket,
         metric_key: metric,
         comparator,
-        threshold_value: Number(threshold),
+        threshold_value: parsedThreshold,
         campaign_name_filter: isLt ? productName.trim() : null,
       });
       setMetric(""); setThreshold(""); setComparator(">"); setProductName("");
@@ -148,7 +158,7 @@ function BucketRules({
         <div key={r.id} className="flex items-center gap-2 text-sm rounded-md border border-border/60 bg-muted/20 px-3 py-2">
           <span className="flex-1">
             {metricLabel(r.metric_key)} <span className="text-muted-foreground">{r.comparator === ">" ? "acima de" : "abaixo de"}</span>{" "}
-            <span className="font-medium">{r.threshold_value}</span> → <span className="text-destructive">{r.label_if_triggered}</span>
+            <span className="font-medium">{formatMetricValue(r.threshold_value, getMetricDef(r.metric_key)?.unit)}</span> → <span className="text-destructive">{r.label_if_triggered}</span>
             {r.preset_bucket === "L.T" && r.campaign_name_filter && (
               <Badge variant="outline" className="ml-2 text-[10px]">produto: {r.campaign_name_filter}</Badge>
             )}
@@ -198,14 +208,18 @@ function BucketRules({
                   <SelectItem value="<">abaixo de</SelectItem>
                 </SelectContent>
               </Select>
-              <Input
-                type="number"
-                step="any"
-                value={threshold}
-                onChange={(e) => setThreshold(e.target.value)}
-                placeholder="valor"
-                className="w-[110px]"
-              />
+              <div className="flex items-center gap-1">
+                {selectedUnit === "currency" && <span className="text-xs text-muted-foreground">R$</span>}
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  value={threshold}
+                  onChange={(e) => setThreshold(e.target.value)}
+                  placeholder={selectedUnit === "currency" ? "0,00" : "valor"}
+                  className="w-[90px]"
+                />
+                {selectedUnit === "percent" && <span className="text-xs text-muted-foreground">%</span>}
+              </div>
               <Button size="sm" onClick={add} disabled={saving}>
                 {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
                 <span className="ml-1">Adicionar</span>
