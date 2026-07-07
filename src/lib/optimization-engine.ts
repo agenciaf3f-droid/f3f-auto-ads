@@ -66,9 +66,10 @@ export function hasWorsened(operator: ">" | "<", current: number, snapshot: numb
 // (camelCase). A página mapeia a linha de optimization_actions pra isto.
 export type OptimizationActionRecord = {
   campaignId: string;
+  adAccountId?: string; // só carregado p/ o botão "Religar" reinserir a ação (ad_account_id é NOT NULL)
   campaignName: string | null;
   clientName: string | null;
-  action: "dismissed" | "paused";
+  action: "dismissed" | "paused" | "reactivated";
   snapshot: MetricSnapshot;
   createdAt: string; // ISO — comparável por ordenação de string
 };
@@ -100,6 +101,12 @@ export function buildOptimizationView(
     const k = actionKey(a.campaignId, a.snapshot?.metric);
     const prev = latest.get(k);
     if (!prev || a.createdAt > prev.createdAt) latest.set(k, a);
+  }
+  // "reactivated" (Religar no Histórico) DESFAZ o tratamento: quando é a ação MAIS RECENTE da célula
+  // (campanha, métrica), tratamos a célula como NUNCA-agida — sai do Histórico E volta pra Pendentes
+  // se ainda estourar o KPI ao vivo. Remover do `latest` a tira de actionedPairs e do loop do histórico.
+  for (const [k, a] of latest) {
+    if (a.action === "reactivated") latest.delete(k);
   }
   const actionedPairs = new Set(latest.keys());
 

@@ -159,6 +159,14 @@ describe("buildOptimizationView", () => {
     expect(history[0].action.action).toBe("paused");
   });
 
+  it("reactivated (Religar) como ação mais recente: sai do Histórico e volta pra Pendentes se ainda estoura", () => {
+    const paused = act({ action: "paused", createdAt: "2026-07-05T00:00:00Z" });
+    const religado = act({ action: "reactivated", createdAt: "2026-07-06T00:00:00Z" });
+    const { pendentes, history } = buildOptimizationView([viol()], [paused, religado], RK);
+    expect(history).toHaveLength(0);       // célula religada some do Histórico
+    expect(pendentes).toHaveLength(1);     // e reaparece em Pendentes (tratada como nunca-agida)
+  });
+
   it("marca 'piorou' quando o valor atual degrada vs o snapshot (mesmo período)", () => {
     const { history } = buildOptimizationView([viol({ actual: 4 })], [act({ snapshot: { metric: "cpc", actual: 3, operator: ">", rangeKey: RK } })], RK);
     expect(history[0].comparable).toBe(true);

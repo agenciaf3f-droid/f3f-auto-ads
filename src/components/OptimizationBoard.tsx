@@ -12,6 +12,7 @@ import {
   fetchCampaignInsights,
   fetchNodeInsights,
   pauseCampaign,
+  activateCampaign,
   notifyClientPause,
   type MetaNodeInsight,
   type NotifyClientPauseParams,
@@ -28,7 +29,7 @@ import {
 import { getMetricDef, rangeKey, type AggregatedBucket, type DateRangeSelection, type MetricDef } from "@/lib/meta-insights";
 import DateRangeSelector from "@/components/clients/DateRangeSelector";
 
-type ActionKind = "dismissed" | "paused";
+type ActionKind = "dismissed" | "paused" | "reactivated";
 
 // Navegação drill-in: null = lista de campanhas; { campaign } = dentro da campanha vendo
 // conjuntos; { campaign, adset } = dentro do conjunto vendo criativos (folha, não desce mais).
@@ -39,6 +40,7 @@ type Drill = null | { campaign: OptimizationViolation } | { campaign: Optimizati
 // ação pra o histórico exibir campanhas que já saíram da avaliação ao vivo (sararam/pausadas).
 type ActionRow = {
   campaign_id: string;
+  ad_account_id: string;
   campaign_name: string | null;
   client_name: string | null;
   action: ActionKind;
@@ -46,7 +48,7 @@ type ActionRow = {
   created_at: string;
 };
 
-const actionVerb = (a: ActionKind) => (a === "dismissed" ? "Mantida" : "Desligada");
+const actionVerb = (a: ActionKind) => (a === "dismissed" ? "Mantida" : a === "reactivated" ? "Religada" : "Desligada");
 const fmtActionDate = (iso: string) =>
   new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 
@@ -141,7 +143,7 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
         const { data: { user } } = await supabase.auth.getUser();
         const { data: actioned } = await supabase
           .from("optimization_actions")
-          .select("campaign_id, campaign_name, client_name, action, metric_snapshot, created_at")
+          .select("campaign_id, ad_account_id, campaign_name, client_name, action, metric_snapshot, created_at")
           .eq("user_id", user?.id ?? "")
           .order("created_at", { ascending: false })
           .limit(200); // teto do Histórico: as 200 ações mais recentes (evita render sem limite ao longo dos meses)
@@ -149,6 +151,7 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
         // tratada vai pro Histórico, reavaliada ao vivo — se piorar, o gestor desliga direto de lá.
         const actionRecords: OptimizationActionRecord[] = ((actioned ?? []) as ActionRow[]).map((r) => ({
           campaignId: r.campaign_id,
+          adAccountId: r.ad_account_id,
           campaignName: r.campaign_name,
           clientName: r.client_name,
           action: r.action,
@@ -281,6 +284,7 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     const entry: OptimizationHistoryEntry = {
       action: {
         campaignId: violation.campaignId,
+        adAccountId: violation.adAccountId, // sem isso um Religar na MESMA sessão insere ad_account_id undefined (NOT NULL) e falha calado
         campaignName: violation.campaignName,
         clientName: violation.clientName,
         action,
@@ -361,6 +365,48 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     } catch (e) {
       console.error("Falha ao preparar aviso ao cliente no WhatsApp (campanha já desligada)", e);
     }
+  }
+
+  // Religa (reativa) a campanha desligada direto do card do Histórico. Só aparece em cards cuja
+  // ação foi "paused" (Desligada). Reusa `pausingId` como trava de clique. Religar é SILENCIOSO —
+  // NÃO avisa o cliente no WhatsApp (só a pausa avisa).
+  async function handleReligar(action: OptimizationActionRecord) {
+    if (!accessToken) return;
+    setPausingId(action.campaignId);
+    try {
+      await activateCampaign(accessToken, action.campaignId);
+    } catch (e) {
+      toast({ variant: "destructive", title: "Erro ao religar", description: (e as Error).message });
+      setPausingId(null);
+      return;
+    }
+    // Campanha reativada na Meta. Registra a ação `reactivated` (DESFAZ o tratamento). Falha aqui
+    // (RLS/rede) não desfaz a reativação já feita — só o bookkeeping local fica pra trás.
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { error } = await supabase.from("optimization_actions").insert({
+          user_id: user.id,
+          campaign_id: action.campaignId,
+          ad_account_id: action.adAccountId,
+          campaign_name: action.campaignName,
+          client_name: action.clientName,
+          action: "reactivated",
+          // Copia o snapshot da ação anterior INTEIRO — a chave do Histórico é (campanha, snapshot.metric).
+          // Sem a MESMA métrica, o `reactivated` cairia noutra célula e não desfaria o `paused`.
+          metric_snapshot: action.snapshot,
+        });
+        if (error) throw new Error(error.message);
+      }
+    } catch (e) {
+      console.error("Falha ao registrar religar em optimization_actions (campanha já reativada na Meta)", e);
+    }
+    // Some do Histórico local na hora (mesma chave célula = campanha + métrica do snapshot). Na próxima
+    // reavaliação ao vivo o engine trata `reactivated` como não-tratada → volta pra Pendentes se estourar.
+    const metric = action.snapshot?.metric ?? "";
+    setHistory((prev) => prev.filter((h) => !(h.action.campaignId === action.campaignId && (h.action.snapshot?.metric ?? "") === metric)));
+    setPausingId(null);
+    toast({ title: "Campanha religada", description: action.campaignName ?? action.campaignId });
   }
 
   // Pausa só o NÓ clicado (conjunto ou criativo) — nunca a campanha inteira. pauseCampaign aceita
@@ -547,6 +593,18 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
             >
               {pausingId === v.campaignId ? "Desligando..." : "Desligar"}
             </Button>
+            {/* Religar: só em cards do Histórico cuja ação foi "paused" (Desligada). Reativa a
+                campanha na Meta e desfaz o tratamento (some do Histórico). */}
+            {meta?.action.action === "paused" && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={pausingId === v.campaignId}
+                onClick={() => handleReligar(meta.action)}
+              >
+                {pausingId === v.campaignId ? "Religando..." : "Religar"}
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -778,6 +836,20 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
                       <p className="text-[11px] text-muted-foreground mt-1.5">
                         {actionVerb(h.action.action)} em {fmtActionDate(h.action.createdAt)} · dentro do limite ou inativa agora
                       </p>
+                      {/* Card de campanha desligada (não veiculando → sem violação ao vivo). Religar
+                          reativa na Meta e desfaz o tratamento (some do Histórico). */}
+                      {h.action.action === "paused" && (
+                        <div className="flex mt-3">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={pausingId === h.action.campaignId}
+                            onClick={() => handleReligar(h.action)}
+                          >
+                            {pausingId === h.action.campaignId ? "Religando..." : "Religar"}
+                          </Button>
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 )
