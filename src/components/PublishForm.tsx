@@ -218,6 +218,26 @@ const FAST_RETRY_CODES = new Set([1, 2]);   // transiente curto: vale re-tentar 
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Cache dos modelos de mensagem (FASE 3) por CONTA no localStorage. fetchImportedMetaTemplates
+// pagina ~10 chamadas /adcreatives a cada load; se rate-limita, volta 0 → validação diz "sem
+// mensagem". Com cache: load lê daqui (0 chamada Meta); só o botão "Buscar novamente" re-busca.
+const MSG_TEMPLATES_CACHE_PREFIX = "f3f:msgTemplates:v1:";
+const readTemplatesCache = (account: string): ImportedMetaTemplate[] | null => {
+  try {
+    const raw = localStorage.getItem(MSG_TEMPLATES_CACHE_PREFIX + account);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch { /* cache corrompido / modo privado — ignora */ }
+  return null;
+};
+const writeTemplatesCache = (account: string, templates: ImportedMetaTemplate[]) => {
+  // Só grava resultado NÃO-vazio: nunca sobrescreve um cache bom com [] (rate-limit/erro).
+  if (!templates.length) return;
+  try { localStorage.setItem(MSG_TEMPLATES_CACHE_PREFIX + account, JSON.stringify(templates)); } catch { /* quota/privado */ }
+};
+
 // Pool de concorrência: no máx `limit` workers simultâneos consumindo `items` (cursor síncrono = atômico no event loop).
 async function runPool<T>(items: T[], limit: number, worker: (item: T) => Promise<void>, staggerMs = 0): Promise<void> {
   let cursor = 0;
@@ -778,9 +798,17 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       loadWhatsappNumbers(pageId),
       (async () => {
         try {
+          // Cache primeiro (por conta): se houver modelos salvos, usa e NÃO toca na Meta.
+          const cached = readTemplatesCache(selectedAccount);
+          if (cached) {
+            setImportedTemplates(cached);
+            addLog(`✅ [imported] ${cached.length} modelo(s) do cache (0 chamada Meta). Use "Buscar novamente" p/ atualizar.`);
+            return;
+          }
           addLog(`📡 [imported] Buscando modelos de mensagem da conta...`);
           const result = await fetchImportedMetaTemplates(accessToken, selectedAccount);
           setImportedTemplates(result.templates);
+          writeTemplatesCache(selectedAccount, result.templates); // só grava se não-vazio
           addLog(`✅ [imported] ${result.templates.length} modelo(s) extraído(s) (scanned=${result.scanned_adsets}, erros=${result.errors_during_scan})`);
           if (result.error_summary) {
             addLog(`⚠️ [imported] ${result.error_summary}`);
@@ -789,6 +817,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
             addLog(`ℹ️ [imported] sample de erro: ${result.error_sample}`);
           }
         } catch (err: unknown) {
+          // Erro na busca → NÃO zera modelos (mantém o que tem); usuário ainda pode digitar manual.
           addLog(`⚠️ [imported] erro: ${err instanceof Error ? err.message : "desconhecido"}`);
         } finally {
           setLoadingImported(false);
@@ -1060,17 +1089,23 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     }
     setLoadingImported(true);
     try {
-      addLog(`📡 [imported] Buscando modelos de mensagem da conta ${selectedAccount}...`);
+      addLog(`📡 [imported] Buscando modelos de mensagem da conta ${selectedAccount} (ignorando cache)...`);
       const result = await fetchImportedMetaTemplates(accessToken, selectedAccount);
-      setImportedTemplates(result.templates);
-      addLog(`✅ [imported] ${result.templates.length} modelo(s) extraído(s) (scanned=${result.scanned_adsets}, erros=${result.errors_during_scan})`);
-      if (result.error_summary) {
+      if (result.templates.length > 0) {
+        setImportedTemplates(result.templates);
+        writeTemplatesCache(selectedAccount, result.templates); // regrava o cache p/ os próximos loads
+        addLog(`✅ [imported] ${result.templates.length} modelo(s) extraído(s) (scanned=${result.scanned_adsets}, erros=${result.errors_during_scan})`);
+      } else if (result.error_summary) {
+        // Rate-limit: NÃO zera os modelos atuais nem o cache — só avisa.
         toast.error("Meta rate-limited. Aguarde alguns segundos e tente Buscar novamente.");
-        addLog(`⚠️ [imported] ${result.error_summary}`);
-      } else if (result.templates.length === 0) {
+        addLog(`⚠️ [imported] ${result.error_summary} (mantendo modelos atuais)`);
+      } else {
+        // Conta realmente sem modelos.
+        setImportedTemplates([]);
         toast.info("Nenhum modelo encontrado nessa conta.");
       }
     } catch (e: any) {
+      // Erro → mantém o que tem (não zera).
       toast.error(`Erro ao buscar modelos: ${e.message}`);
       addLog(`❌ [imported] erro: ${e.message}`);
     } finally {
