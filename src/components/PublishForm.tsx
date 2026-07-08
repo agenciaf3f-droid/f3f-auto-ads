@@ -2379,7 +2379,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                     variant={cr.type === "instagram" ? "default" : "outline"}
                     size="sm"
                     className="flex-1 gap-1 text-xs"
-                    onClick={() => updateCreative(cr.id, { type: "instagram", link: "" })}
+                    onClick={() => updateCreative(cr.id, { type: "instagram" })}
                   >
                     <Instagram className="w-3.5 h-3.5" /> Instagram
                   </Button>
@@ -2387,7 +2387,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                     variant={cr.type === "drive" ? "default" : "outline"}
                     size="sm"
                     className="flex-1 gap-1 text-xs"
-                    onClick={() => updateCreative(cr.id, { type: "drive", link: "" })}
+                    onClick={() => updateCreative(cr.id, { type: "drive" })}
                   >
                     <HardDrive className="w-3.5 h-3.5" /> Drive
                   </Button>
