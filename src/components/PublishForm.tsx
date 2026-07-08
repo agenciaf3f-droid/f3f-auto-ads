@@ -387,6 +387,10 @@ export default function PublishForm() {
   const [publishStatus, setPublishStatus] = useState("");
   const logRef = useRef<LogPanelHandle>(null);
   const publishErrorRef = useRef<HTMLDivElement>(null);
+  // Dedup do carregamento FASE 3: guarda a chave "conta|page" já carregada. loadFase3Resources é
+  // chamado de 2 lugares (loadAccountContext + effect de preset/identidade) e na troca de conta os
+  // DOIS disparam → 2× whatsapp/templates. O ref garante que só 1 executa por conta|page.
+  const fase3LoadedKeyRef = useRef("");
   useEffect(() => {
     if (publishResult && !publishResult.ok) {
       publishErrorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -626,6 +630,7 @@ export default function PublishForm() {
 
     // ===== STEP 1: FULL RESET =====
     addLog("🔄 [pipeline] Reset completo do contexto da conta");
+    fase3LoadedKeyRef.current = ""; // troca de conta → permite recarregar os recursos FASE 3
     setIdentityPageId(null);
     setIdentityPageName(null);
     setIdentityIgActorId(null);
@@ -827,6 +832,14 @@ export default function PublishForm() {
   };
 
   const loadFase3Resources = async (pageId: string) => {
+    // Dedup: se já carregamos p/ esta conta|page, pula a 2ª chamada (loadAccountContext + effect
+    // disparam ambos na troca de conta). O ref é resetado no FULL RESET (troca de conta) → recarrega.
+    const loadKey = `${selectedAccount}|${pageId}`;
+    if (fase3LoadedKeyRef.current === loadKey) {
+      addLog(`↩️ [pipeline] Recursos FASE 3 já carregados (conta ${selectedAccount}, page ${pageId}) — pulando chamada duplicada`);
+      return;
+    }
+    fase3LoadedKeyRef.current = loadKey;
     addLog(`📡 [pipeline] Carregando recursos FASE 3 (page=${pageId})...`);
     setLoadingImported(true);
     // WhatsApp numbers + modelos de mensagem — ambos SÓ FASE 3/ZAP — em paralelo.
