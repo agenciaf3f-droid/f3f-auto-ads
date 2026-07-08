@@ -11,6 +11,13 @@ export async function cacheDiscovery(kind: string, accountId: string, data: unkn
       console.log(`[discovery-cache] envs ausentes; pulando ${kind}/${accountId}`);
       return;
     }
+    // accountId vem do body do usuário (funcs de descoberta não fazem getUser) e é
+    // gravado via SERVICE_ROLE. Sem validação, um account_id arbitrário criaria linhas
+    // ilimitadas em meta_discovery_cache. Aceita só 'shared', act_<num> ou <num>.
+    if (accountId !== "shared" && !/^(act_\d+|\d+)$/.test(accountId)) {
+      console.log(`[discovery-cache] account_id inválido; pulando ${kind}/${accountId}`);
+      return;
+    }
     const client = createClient(url, serviceRoleKey);
     // PK composta (kind, account_id) resolve o ON CONFLICT automaticamente.
     // updated_at explícito: DEFAULT now() só dispara no INSERT, não no UPDATE do upsert.
