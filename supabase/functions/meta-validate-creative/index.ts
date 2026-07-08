@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { extractDriveFileId, buildDriveApiUrl } from "../_shared/drive.ts";
+import { assertSafeDriveUrl } from "../_shared/url-guard.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -294,10 +295,19 @@ Deno.serve(async (req) => {
       }
 
       // Sem GOOGLE_DRIVE_API_KEY: fallback antigo (HEAD no uc?export=download).
+      // Anti-SSRF: só segue se creative_link for host de Drive permitido. verify_jwt=false →
+      // sem esta guarda, um link arbitrário faria a edge fazer fetch de host interno.
+      const guard = assertSafeDriveUrl(creative_link);
+      if (!guard.ok) {
+        return new Response(JSON.stringify({ ok: false, error: guard.error, timings }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
       let downloadUrl = creative_link;
       if (fileId) downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
       try {
-        const headRes = await fetch(downloadUrl, { method: "HEAD", redirect: "follow" });
+        // redirect:manual — não segue redirect cego após validar só o 1º host (hardening).
+        const headRes = await fetch(downloadUrl, { method: "HEAD", redirect: "manual" });
         mark("drive_check", tDrive);
         if (!headRes.ok) {
           return new Response(JSON.stringify({

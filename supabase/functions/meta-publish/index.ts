@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { extractDriveFileId, buildDriveApiUrl } from "../_shared/drive.ts";
+import { assertSafeDriveUrl } from "../_shared/url-guard.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -609,6 +610,11 @@ async function uploadDriveCreative(
   adAccountId: string,
   driveLink: string
 ): Promise<{ image_hash?: string; video_id?: string; error?: string }> {
+  // Anti-SSRF: rejeita antes de qualquer fetch (probe, file_url, download buffered) se
+  // driveLink não for host de Drive permitido. verify_jwt=false → link arbitrário no corpo
+  // faria a edge baixar de host interno em nome do atacante.
+  const guard = assertSafeDriveUrl(driveLink);
+  if (!guard.ok) return { error: guard.error };
   const fileId = extractDriveFileId(driveLink);
   // Candidatos em ordem: Drive API key (bypassa interstitial) → uc?confirm=t → usercontent.
   const driveApiKey = Deno.env.get("GOOGLE_DRIVE_API_KEY");
@@ -1524,35 +1530,49 @@ Deno.serve(async (req) => {
     // ID da entidade VERIFICADA. Puxamos esses ids de um adset existente da conta e replicamos.
     let universalBeneficiary: string | null = null;
     let universalPayer: string | null = null;
-    try {
-      const aRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/adsets?fields=regional_regulation_identities&limit=50&access_token=${access_token}`);
-      const aData = await aRes.json();
-      for (const it of (aData?.data || [])) {
-        const rri = it?.regional_regulation_identities;
-        if (rri?.universal_beneficiary) {
-          universalBeneficiary = String(rri.universal_beneficiary);
-          universalPayer = String(rri.universal_payer || rri.universal_beneficiary);
-          break;
+    let accountDsaRec: string | null = null;
+    const userBenef = (typeof body.dsa_beneficiary === "string" && body.dsa_beneficiary.trim()) ? body.dsa_beneficiary.trim() : "";
+    let dsaBeneficiary = "";
+    // LAZY + memoizado: regional_regulation_identities e dsa_recommendations SÓ alimentam applyDsa
+    // (criação de adset). Resolvemos on-demand no 1º build de adset e no MÁXIMO uma vez. Em CBO
+    // criativo 2..N (existing_adset_id → adset reusado, nenhum adset criado) NÃO roda — corta 1-2
+    // chamadas Meta por criativo. Resultado do adset criado fica IDÊNTICO ao anterior.
+    let dsaResolved = false;
+    const ensureDsaResolved = async () => {
+      if (dsaResolved) return;
+      dsaResolved = true;
+      try {
+        const aRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/adsets?fields=regional_regulation_identities&limit=50&access_token=${access_token}`);
+        const aData = await aRes.json();
+        for (const it of (aData?.data || [])) {
+          const rri = it?.regional_regulation_identities;
+          if (rri?.universal_beneficiary) {
+            universalBeneficiary = String(rri.universal_beneficiary);
+            universalPayer = String(rri.universal_payer || rri.universal_beneficiary);
+            break;
+          }
+        }
+      } catch (e) {
+        console.log(`[publish] regional_regulation_identities lookup failed: ${(e as Error).message}`);
+      }
+      // dsa_recommendations (fallback string DSA) SÓ quando não há entidade verificada herdável
+      // (universalBeneficiary) NEM beneficiário informado pelo usuário (userBenef) — nos dois casos
+      // accountDsaRec seria buscado e descartado. Guard poupa a chamada no caso comum BR.
+      if (!universalBeneficiary && !userBenef) {
+        try {
+          const rRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/dsa_recommendations?access_token=${access_token}`);
+          const rData = await rRes.json();
+          const d = rData?.data?.[0];
+          // a API retorna {data:[{beneficiary, payor}]}; versões antigas usam {recommendations:[...]}
+          const benef = d?.beneficiary ?? (Array.isArray(d?.recommendations) ? d.recommendations[0] : null);
+          if (benef && String(benef).trim()) accountDsaRec = String(benef).trim();
+        } catch (e) {
+          console.log(`[publish] dsa_recommendations failed: ${(e as Error).message}`);
         }
       }
-    } catch (e) {
-      console.log(`[publish] regional_regulation_identities lookup failed: ${(e as Error).message}`);
-    }
-    // Fallback (contas sem entidade verificada herdável): string DSA (gestor → dsa_recommendations).
-    let accountDsaRec: string | null = null;
-    try {
-      const rRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/dsa_recommendations?access_token=${access_token}`);
-      const rData = await rRes.json();
-      const d = rData?.data?.[0];
-      // a API retorna {data:[{beneficiary, payor}]}; versões antigas usam {recommendations:[...]}
-      const benef = d?.beneficiary ?? (Array.isArray(d?.recommendations) ? d.recommendations[0] : null);
-      if (benef && String(benef).trim()) accountDsaRec = String(benef).trim();
-    } catch (e) {
-      console.log(`[publish] dsa_recommendations failed: ${(e as Error).message}`);
-    }
-    const userBenef = (typeof body.dsa_beneficiary === "string" && body.dsa_beneficiary.trim()) ? body.dsa_beneficiary.trim() : "";
-    const dsaBeneficiary = userBenef || accountDsaRec || "";
-    console.log(`[publish] DSA resolvido: universal_beneficiary="${universalBeneficiary}" universal_payer="${universalPayer}" | fallback_string="${dsaBeneficiary}"`);
+      dsaBeneficiary = userBenef || accountDsaRec || "";
+      console.log(`[publish] DSA resolvido: universal_beneficiary="${universalBeneficiary}" universal_payer="${universalPayer}" | fallback_string="${dsaBeneficiary}"`);
+    };
     const applyDsa = (p: Record<string, any>) => {
       if (universalBeneficiary) {
         // anunciante verificado por ID — exatamente o que as campanhas que rodam nesta conta usam
@@ -2583,6 +2603,8 @@ Deno.serve(async (req) => {
     if (isDryRun) {
       const dryName = adset_name || generated_name || "__preflight__";
       let dryBuild: { payload?: Record<string, any>; error?: string };
+      // Pré-voo SEMPRE cria 1 adset de teste → precisa do DSA resolvido antes do build.
+      await ensureDsaResolved();
       if (isVideoEngagementPreset) {
         // FASE 2: config do adset é igual por público (só muda audience_id) → valida 1 representativo
         // com o 1º público. Exclusão VV50% é derivada de mídia (pulada) → null no pré-voo.
@@ -2645,6 +2667,8 @@ Deno.serve(async (req) => {
       if (fase2CombinedAdset && (fase2AudienceIds.length < 2 || fase2AudienceIds.length > 10)) {
         return respond({ ok: false, step: "publish", error_message: "FASE 2 ADAPTADO exige de 2 a 10 públicos combinados." });
       }
+      // FASE 2 cria N adsets (buildFase2Adset → applyDsa) → resolve DSA antes.
+      await ensureDsaResolved();
       const cr = resolvedCreatives[0];
 
       // 1. Cria 1 creative compartilhado PRIMEIRO (precisamos do video_id dele p/ VV50%).
@@ -2954,6 +2978,9 @@ Deno.serve(async (req) => {
         adsetIds.push(adsetId);
         logs.push({ step: "adset", status: "success", ts: ts(), detail: `existing adset: ${adsetId}` });
       } else {
+        // CBO cria 1 adset novo → resolve DSA agora. O ramo existing_adset_id acima NÃO chama isto
+        // (adset reusado, nenhum criado) → é aqui que a economia de 1-2 chamadas Meta acontece.
+        await ensureDsaResolved();
         const adsetPayloadName = makeAdsetName();
         const adsetBuild = buildAdsetPayload(adsetPayloadName);
         if (adsetBuild.error) {
@@ -2984,7 +3011,8 @@ Deno.serve(async (req) => {
         await createCreativeAndAd(resolvedCreatives[i], i + 1, adsetId);
       }
     } else {
-      // ABO: N AdSets, 1 Ad each
+      // ABO: N AdSets, 1 Ad each — sempre cria adsets (buildAdsetPayload → applyDsa) → resolve DSA.
+      await ensureDsaResolved();
       for (let i = 0; i < resolvedCreatives.length; i++) {
         const cr = resolvedCreatives[i];
         const idx = i + 1;
