@@ -408,8 +408,9 @@ export default function PublishForm() {
   const [ctaText, setCtaText] = useState("");
   const [greetingText, setGreetingText] = useState("");
   const [readyMessage, setReadyMessage] = useState("");
-  // useCustomMessage agora é sempre false (toggle removido da UI) — só imported templates
-const [useCustomMessage, setUseCustomMessage] = useState(false);
+  // Modo de mensagem FASE 3: false = usar modelo importado (CTWA); true = criar mensagem manual
+  // (Saudação + Mensagem pronta). Toggle re-exposto no Fase3Components (WhatsAppMessages).
+  const [useCustomMessage, setUseCustomMessage] = useState(false);
 
   // Location
   const [includedLocations, setIncludedLocations] = useState<LocationItem[]>([]);
@@ -478,6 +479,12 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   }, []);
 
   useEffect(() => { checkMetaStatus(); loadMessageTemplates(); }, []);
+  // Ao entrar no modo "Criar mensagem", limpa a seleção de modelo importado — senão o edge
+  // preferiria o importado e ignoraria a mensagem manual (precedência importedTemplateJson
+  // no buildFase3Creative). Cobre o toggle E o Editar/Duplicar de templates salvos.
+  useEffect(() => {
+    if (useCustomMessage) { setSelectedImportedKey(""); setImportedRawJson(""); }
+  }, [useCustomMessage]);
   const checkMetaStatus = async () => {
     setMetaLoading(true);
     try {
