@@ -217,33 +217,51 @@ Deno.serve(async (req) => {
       if (fileId && driveApiKey) {
         try {
           const apiUrl = buildDriveApiUrl(fileId, driveApiKey);
-          let res = await fetch(apiUrl, { headers: { Range: "bytes=0-15" }, signal: AbortSignal.timeout(15_000) });
-          // Arquivos grandes (>100-200MB) às vezes engasgam no primeiro request (visto: 6.8s
-          // → 401/403/404, retry imediato depois → 656ms → OK, com o MESMO arquivo/link/chave).
-          // Antes de concluir "não está público", 1 retry rápido — barato e evita falso alarme
-          // num arquivo que já é público de verdade.
-          if (res.status === 401 || res.status === 403 || res.status === 404) {
-            await new Promise((r) => setTimeout(r, 1500));
-            res = await fetch(apiUrl, { headers: { Range: "bytes=0-15" }, signal: AbortSignal.timeout(15_000) });
+          const ERR_STATUSES = [401, 403, 404, 429];
+          // Página anti-abuso / rate-limit do Google (muitos downloads anônimos em surto): NÃO é
+          // "arquivo privado". Vem como HTTP 429 OU 401/403 com HTML "<title>Sorry...".
+          const DRIVE_RATELIMIT_RE = /sorry|unusual traffic|automated queries|too many requests|try again later/i;
+          const RETRY_BACKOFFS_MS = [1500, 4000, 7000];
+          const fetchDriveWithBody = async () => {
+            const r = await fetch(apiUrl, { headers: { Range: "bytes=0-15" }, signal: AbortSignal.timeout(15_000) });
+            let body = "";
+            if (ERR_STATUSES.includes(r.status)) { try { body = await r.text(); } catch { /* corpo vazio/consumido */ } }
+            return { r, body };
+          };
+
+          let { r: res, body: bodyText } = await fetchDriveWithBody();
+          let googleRateLimited = res.status === 429 || DRIVE_RATELIMIT_RE.test(bodyText);
+          // Retry: (a) arquivo grande engasga no 1º hit (401/403/404 → OK no 2º); (b) rate-limit do
+          // Google → espera e re-tenta com backoff maior (a janela anti-abuso passa em segundos).
+          // 403 REAL de permissão (arquivo privado) NÃO re-tenta além do 1º hit — não adianta martelar.
+          for (let attempt = 0; attempt < RETRY_BACKOFFS_MS.length; attempt++) {
+            if (!ERR_STATUSES.includes(res.status)) break;
+            if (!googleRateLimited && attempt > 0) break;
+            console.log(`[validate-creative] drive check ${res.status}${googleRateLimited ? " (rate-limit Google)" : ""} — retry ${attempt + 1}/${RETRY_BACKOFFS_MS.length} em ${RETRY_BACKOFFS_MS[attempt]}ms`);
+            await new Promise((rr) => setTimeout(rr, RETRY_BACKOFFS_MS[attempt]));
+            ({ r: res, body: bodyText } = await fetchDriveWithBody());
+            googleRateLimited = res.status === 429 || DRIVE_RATELIMIT_RE.test(bodyText);
           }
           const ct = res.headers.get("content-type") || "";
           mark("drive_check", tDrive);
           mark("TOTAL", t0);
 
-          if (res.status === 401 || res.status === 403 || res.status === 404) {
-            // 401/403/404 acontece tanto por arquivo privado quanto por
-            // GOOGLE_DRIVE_API_KEY inválida/restrita (referrer, IP, key revogada).
-            // Sem diferenciar, o gestor fica revendo permissão de um arquivo que
-            // já está público. O corpo do erro do Google cita a chave nesse caso.
-            let bodyText = "";
-            try { bodyText = await res.text(); } catch { /* corpo pode já ter sido consumido/vazio */ }
-            // Termos reais de erro de chave/quota do Google (referrer bloqueado, quota,
-            // API desabilitada, etc.) — lista ampliada, mas SEMPRE anexamos o corpo bruto
-            // abaixo (googleDetail) pra não confiar só no regex: se o gestor jura que o
-            // arquivo já é público e a causa real for outra (quota, Shared Drive, etc.),
-            // o detalhe do Google aparece na mensagem em vez de sumir numa classificação errada.
-            const looksLikeKeyProblem = /api key|apikey|referer|ip address|key (is )?(invalid|expired|revoked|not valid)|quota|rate limit|accessnotconfigured|not been used in project|has not been used|disabled|blocked/i.test(bodyText);
+          if (ERR_STATUSES.includes(res.status)) {
             const googleDetail = bodyText ? ` [detalhe Google: ${bodyText.replace(/\s+/g, " ").slice(0, 300)}]` : "";
+            // Rate-limit anti-abuso do Google — NÃO é arquivo privado. Erro DISTINTO + transiente:
+            // o usuário só espera alguns segundos e re-valida (o edge já re-tentou com backoff).
+            if (googleRateLimited) {
+              console.log(`[validate-creative] drive check ${res.status} = RATE-LIMIT do Google (não é privado): ${bodyText.slice(0, 200)}`);
+              return new Response(JSON.stringify({
+                ok: false, google_rate_limit: true, transient: true,
+                error: `O Google limitou a validação (muitos arquivos de uma vez). Aguarde alguns segundos e clique Validar de novo.${googleDetail}`,
+                timings,
+              }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            }
+            // 401/403/404 acontece tanto por arquivo privado quanto por GOOGLE_DRIVE_API_KEY
+            // inválida/restrita (referrer, IP, key revogada). O corpo do erro do Google cita a chave
+            // nesse caso — SEMPRE anexamos o corpo bruto (googleDetail) pra não confiar só no regex.
+            const looksLikeKeyProblem = /api key|apikey|referer|ip address|key (is )?(invalid|expired|revoked|not valid)|quota|rate limit|accessnotconfigured|not been used in project|has not been used|disabled|blocked/i.test(bodyText);
             if (looksLikeKeyProblem) {
               console.log(`[validate-creative] drive check ${res.status} parece problema na GOOGLE_DRIVE_API_KEY: ${bodyText.slice(0, 300)}`);
               return new Response(JSON.stringify({
