@@ -208,9 +208,11 @@ interface AudienceRow { id: string; audienceId: string }
 // ── Orquestração paralela de publish ──
 const PUBLISH_CONCURRENCY = 3;              // quantos criativos sobem em paralelo (balance velocidade x rate limit da Meta)
 const PUBLISH_BACKOFF = [3000, 8000, 20000]; // backoff (ms) de retry só p/ erro transiente {1,2}/transporte
-// Backoff LONGO p/ rate-limit (#4): a janela é rolante (abre budget em ~1-3min). ESPERA e RETOMA
-// o mesmo criativo (60s→3min, ~6 tentativas ≈ até ~13min) em vez de parar o lote. Só desiste ao esgotar.
-const RATE_LIMIT_BACKOFF = [60000, 120000, 180000, 180000, 180000];
+// Rate-limit (#4) = janela ROLANTE de ~1h: se esperar, budget SEMPRE libera (chamadas velhas saem).
+// Logo, ESPERA fixa de 2min e RETOMA o mesmo criativo, até 18× (~36min por criativo) — sobrevive à
+// janela de 1h com folga e CONVERGE (não é loop infinito). Só desiste desse criativo ao esgotar.
+const RATE_LIMIT_BACKOFF_MS = 120000; // 2min por espera
+const RATE_LIMIT_MAX_WAITS = 18;      // ~36min de espera máx. por criativo
 const RATE_LIMIT_CODES = new Set([4, 17, 32, 341, 613]); // rate-limit da Meta: falha rápido (decai em ~15min), não martela
 const FAST_RETRY_CODES = new Set([1, 2]);   // transiente curto: vale re-tentar com backoff
 
@@ -1801,12 +1803,12 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               // #4: ESPERA a janela abrir e RETOMA o MESMO criativo. FASE 2 = 1 campanha por criativo;
               // na falha o backend já deletou a campanha desta tentativa (respond ok:false), então
               // re-criar é limpo, sem duplicar. Só desiste (para o lote) ao esgotar o backoff longo.
-              if (rlAttempt < RATE_LIMIT_BACKOFF.length) {
-                const s = Math.round(RATE_LIMIT_BACKOFF[rlAttempt] / 1000);
-                addLog(`⏳ [publish] ${label} — limite da Meta (#4). Aguardando ${s}s pra retomar (tentativa ${rlAttempt + 1}/${RATE_LIMIT_BACKOFF.length})...`);
-                setPublishStatus(`Limite da Meta (#4) atingido — aguardando ${s}s pra retomar o criativo ${label}. Não feche a página.`);
-                await sleep(RATE_LIMIT_BACKOFF[rlAttempt]);
-                setPublishStatus("");
+              if (rlAttempt < RATE_LIMIT_MAX_WAITS) {
+                const s = Math.round(RATE_LIMIT_BACKOFF_MS / 1000);
+                addLog(`⏳ [publish] ${label} — limite da Meta (#4). Aguardando ${s}s pra retomar (tentativa ${rlAttempt + 1}/${RATE_LIMIT_MAX_WAITS})...`);
+                setPublishStatus(`Limite da Meta (#4) atingido — aguardando ${s}s pra retomar o criativo ${label}. Mantenha esta aba ABERTA (o processo roda no navegador).`);
+                await sleep(RATE_LIMIT_BACKOFF_MS);
+                setPublishStatus(`Retomando criativo ${label}…`);
                 rlAttempt++;
                 continue;
               }
@@ -1845,6 +1847,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         const stillPending: number[] = [];
         await runPool(pending, 1, async (i) => {
           if (rateLimitTripped) { stillPending.push(i); return; }
+          setPublishStatus(`Publicando criativo ${i + 1}/${total}…`);
           addLog(`📦 [publish] criativo ${i + 1}/${total} — "${allCreatives[i].name}" (nova campanha)`);
           const ri = await publishWithRetry(() => callFor(i), `${i + 1}/${total}`);
           if (ri?.ok && ri.campaign_id) {
@@ -1858,10 +1861,10 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
             if (ri?.logs) for (const l of ri.logs) addLog(`  [${l.step}] ${l.status}${l.detail ? ` — ${l.detail}` : ""}`);
             addLog(`❌ criativo ${i + 1}/${total} falhou: ${errMsg}`);
           }
-          // Espaça lote grande (>5): delay entre criativos reduz quantas vezes bate o #4.
-          if (total > 5) await sleep(4000);
+          // Espaça lote grande (>5): 5s entre criativos reduz quantas vezes bate o #4.
+          if (total > 5) await sleep(5000);
         }, 400);
-        if (rateLimitTripped) addLog(`🛑 [publish] Limite da Meta (#4) persistente após ~13min de espera — parei. Clique Publicar pra retomar os pendentes.`);
+        if (rateLimitTripped) addLog(`🛑 [publish] Limite da Meta (#4) persistente após ~36min de espera — parei. Clique Publicar pra retomar os pendentes.`);
 
         const campaignIds = done.map(d => d.campaignId);
         const totalAdsets = done.reduce((s, d) => s + d.adsets, 0);
@@ -1917,12 +1920,12 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               // 1ª chamada (canTrip=false): na falha o backend deletou a campanha que criou (respond
               // ok:false) → re-criar é limpo. Chamadas seguintes: reusam a campanha; o #4 quase sempre
               // bate na criação do adset (nada criado) → re-tentar é limpo. Só desiste ao esgotar.
-              if (rlAttempt < RATE_LIMIT_BACKOFF.length) {
-                const s = Math.round(RATE_LIMIT_BACKOFF[rlAttempt] / 1000);
-                addLog(`⏳ [publish] ${label} — limite da Meta (#4). Aguardando ${s}s pra retomar (tentativa ${rlAttempt + 1}/${RATE_LIMIT_BACKOFF.length})...`);
-                setPublishStatus(`Limite da Meta (#4) atingido — aguardando ${s}s pra retomar o criativo ${label}. Não feche a página.`);
-                await sleep(RATE_LIMIT_BACKOFF[rlAttempt]);
-                setPublishStatus("");
+              if (rlAttempt < RATE_LIMIT_MAX_WAITS) {
+                const s = Math.round(RATE_LIMIT_BACKOFF_MS / 1000);
+                addLog(`⏳ [publish] ${label} — limite da Meta (#4). Aguardando ${s}s pra retomar (tentativa ${rlAttempt + 1}/${RATE_LIMIT_MAX_WAITS})...`);
+                setPublishStatus(`Limite da Meta (#4) atingido — aguardando ${s}s pra retomar o criativo ${label}. Mantenha esta aba ABERTA (o processo roda no navegador).`);
+                await sleep(RATE_LIMIT_BACKOFF_MS);
+                setPublishStatus(`Retomando criativo ${label}…`);
                 rlAttempt++;
                 continue;
               }
@@ -2017,6 +2020,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         const stillPending: number[] = [];
         await runPool(pending, publishConcurrency, async (i) => {
           if (rateLimitTripped) { stillPending.push(i); return; }
+          setPublishStatus(`Publicando criativo ${i + 1}/${total}…`);
           addLog(`📦 [publish] ${i + 1}/${total} — "${allCreatives[i].name}"`);
           const ri = await publishWithRetry(
             () => callFor(i, { existing_campaign_id: campaignId, existing_adset_id: firstAdsetId }),
@@ -2035,10 +2039,10 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
             if (ri?.logs) for (const l of ri.logs) addLog(`  [${l.step}] ${l.status}${l.detail ? ` — ${l.detail}` : ""}`);
             addLog(`❌ ${i + 1}/${total} falhou: ${errMsg}`);
           }
-          // Espaça lote grande (>5): delay entre criativos reduz quantas vezes bate o #4.
-          if (total > 5) await sleep(4000);
+          // Espaça lote grande (>5): 5s entre criativos reduz quantas vezes bate o #4.
+          if (total > 5) await sleep(5000);
         }, 400);
-        if (rateLimitTripped) addLog(`🛑 [publish] Limite da Meta (#4) persistente após ~13min de espera — parei. Clique Publicar pra retomar os pendentes.`);
+        if (rateLimitTripped) addLog(`🛑 [publish] Limite da Meta (#4) persistente após ~36min de espera — parei. Clique Publicar pra retomar os pendentes.`);
 
         const allOk = stillPending.length === 0;
         if (allOk) {
