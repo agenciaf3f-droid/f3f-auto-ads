@@ -203,6 +203,7 @@ export type Database = {
       }
       message_templates: {
         Row: {
+          ad_account_id: string | null
           created_at: string
           greeting: string
           id: string
@@ -211,6 +212,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          ad_account_id?: string | null
           created_at?: string
           greeting?: string
           id?: string
@@ -219,6 +221,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          ad_account_id?: string | null
           created_at?: string
           greeting?: string
           id?: string
