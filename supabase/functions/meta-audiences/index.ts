@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { cacheDiscovery } from "../_shared/discovery-cache.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,6 +39,8 @@ Deno.serve(async (req) => {
       }
       savedUrl = data.paging?.next || null;
     }
+
+    await cacheDiscovery("audiences", ad_account_id, audiences);
 
     return new Response(JSON.stringify({ audiences }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

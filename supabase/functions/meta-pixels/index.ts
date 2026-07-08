@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { cacheDiscovery } from "../_shared/discovery-cache.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -31,6 +32,8 @@ Deno.serve(async (req) => {
     const pixels = (data.data || [])
       .filter((p: any) => !p.is_unavailable)
       .map((p: any) => ({ id: p.id, name: p.name || p.id, creation_time: p.creation_time }));
+
+    await cacheDiscovery("pixels", ad_account_id, pixels);
 
     return new Response(JSON.stringify({ pixels }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

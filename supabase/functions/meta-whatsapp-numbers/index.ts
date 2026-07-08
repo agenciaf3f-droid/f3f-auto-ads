@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { cacheDiscovery } from "../_shared/discovery-cache.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -284,6 +285,7 @@ Deno.serve(async (req) => {
     }
 
     console.log(`[whatsapp] Final total: ${numbers.length} numbers | summary: ${error_summary || "ok"}`);
+    await cacheDiscovery("whatsapp_numbers", ad_account_id, numbers);
     return new Response(JSON.stringify({ ok: true, numbers, error_summary, waba_count: wabaCount }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
