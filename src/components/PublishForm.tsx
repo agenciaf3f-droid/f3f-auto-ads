@@ -1463,35 +1463,28 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     if (creativesToValidate.length > 0) {
       setValidatingCreative(true);
       const tCr = performance.now();
-      addLog(`🔍 [validate] Validando ${creativesToValidate.length} criativo(s) em paralelo (${creatives.length - creativesToValidate.length} já validados, pulando)...`);
+      addLog(`🔍 [validate] Validando ${creativesToValidate.length} criativo(s) — concorrência 3 + stagger 300ms (${creatives.length - creativesToValidate.length} já validados, pulando)...`);
 
-      const results = await Promise.allSettled(
-        creativesToValidate.map(async (cr) => {
-          const tSingle = performance.now();
-          addLog(`🔍 [validate-creative] "${cr.name}" (${cr.type}) — iniciando...`);
+      // Concorrência 3 + stagger 300ms (runPool) em vez de tudo de uma vez — reduz o pico de
+      // chamadas simultâneas que estoura o rate-limit (#4) da conta ao Validar.
+      const validationMap = new Map<string, CreativeItem["validation"]>();
+      let hasError = false;
+      await runPool(creativesToValidate, 3, async (cr) => {
+        const tSingle = performance.now();
+        addLog(`🔍 [validate-creative] "${cr.name}" (${cr.type}) — iniciando...`);
+        try {
           const result = await validateCreative({
             access_token: accessToken, ad_account_id: selectedAccount, creative_link: cr.link, creative_type: cr.type,
             ig_account_id: identityIgActorId || undefined,
           });
           addLog(`⏱️ [validate-creative] "${cr.name}" — ${Math.round(performance.now() - tSingle)}ms — ${result.ok ? "✅ OK" : `❌ ${result.error}`} (source: ${result.source || "api"})`);
-          return { id: cr.id, name: cr.name, result };
-        })
-      );
-
-      const validationMap = new Map<string, CreativeItem["validation"]>();
-      let hasError = false;
-      for (const r of results) {
-        if (r.status === "fulfilled") {
-          validationMap.set(r.value.id, r.value.result);
-          if (!r.value.result.ok) {
-            toast.error(`Criativo "${r.value.name}" inválido`);
-            hasError = true;
-          }
-        } else {
+          validationMap.set(cr.id, result);
+          if (!result.ok) { toast.error(`Criativo "${cr.name}" inválido`); hasError = true; }
+        } catch (e) {
           hasError = true;
-          addLog(`❌ [validate-creative] Erro: ${r.reason}`);
+          addLog(`❌ [validate-creative] Erro "${cr.name}": ${e instanceof Error ? e.message : String(e)}`);
         }
-      }
+      }, 300);
       if (isMountedRef.current) {
         setCreatives(prev => prev.map(c => validationMap.has(c.id) ? { ...c, validation: validationMap.get(c.id)! } : c));
       }
@@ -1595,6 +1588,8 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     // === BUILD AND STORE THE PUBLISH PAYLOAD ===
     // Pré-voo REAL na Meta (dry_run): preenchido dentro do bloco allValid; erro real bloqueia publicar.
     let preflightError: string | null = null;
+    // Pré-voo pulado por rate-limit (#4/transiente) — NÃO bloqueia; publicação segue liberada.
+    let preflightSkipped = false;
     if (allValid) {
       const schedule = buildSchedule();
       const payload: Record<string, unknown> = {
@@ -1695,9 +1690,17 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       try {
         const dry = await validatePublish(payload);
         if (!dry?.ok) {
-          preflightError = dry?.error_user_msg || dry?.error_message || "Falha no pré-voo na Meta.";
-          setValidatedPayload(null); // bloqueia publicar
-          addLog(`❌ [validate] Pré-voo falhou: ${preflightError}`);
+          // Distingue rate-limit/transiente (#4 e cia: codes 1,2,4,17,32,341,613 ou is_transient)
+          // de erro de config REAL. O pré-voo NUNCA deve virar bloqueio extra por causa do limite
+          // da Meta — só bloqueia config errada de verdade. classifyRetry != "none" = transiente.
+          if (classifyRetry(dry, false) !== "none") {
+            preflightSkipped = true; // rate-limit/transiente → NÃO bloqueia (mantém validatedPayload)
+            addLog(`⚠️ [validate] Pré-voo pulado — limite da Meta atingido (#4/transiente). Publicação liberada (o publish valida de novo).`);
+          } else {
+            preflightError = dry?.error_user_msg || dry?.error_message || "Falha no pré-voo na Meta.";
+            setValidatedPayload(null); // bloqueia publicar
+            addLog(`❌ [validate] Pré-voo falhou: ${preflightError}`);
+          }
         } else {
           addLog("✅ [validate] Pré-voo OK — config validado na Meta (teste criado e deletado)");
         }
@@ -1710,14 +1713,25 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       setValidatedPayload(null);
     }
 
+    // Pré-voo pulado (rate-limit) NÃO invalida — só erro de config real (preflightError) bloqueia.
     const finalValid = allValid && !preflightError;
+    const preflightDetail = preflightError
+      ? preflightError
+      : preflightSkipped
+        ? "pulado — limite da Meta atingido (#4). Pode publicar; o publish valida de novo."
+        : "config validado (teste criado e deletado)";
     const resultChecks = allValid
-      ? [...checks, { label: "Pré-voo na Meta", ok: !preflightError, detail: preflightError || "config validado (teste criado e deletado)" }]
+      ? [...checks, { label: "Pré-voo na Meta", ok: !preflightError, detail: preflightDetail }]
       : checks;
     setValidationResult({ valid: finalValid, checks: resultChecks, error: preflightError || undefined });
     if (finalValid) {
-      addLog("✅ Validação OK — payload pronto para publicação");
-      toast.success("Validação OK! Pronto para publicar.");
+      if (preflightSkipped) {
+        addLog("⚠️ Validação OK — pré-voo pulado por limite da Meta (#4). Pode publicar.");
+        toast.warning("Validado. Pré-voo pulado (limite da Meta) — pode publicar.");
+      } else {
+        addLog("✅ Validação OK — payload pronto para publicação");
+        toast.success("Validação OK! Pronto para publicar.");
+      }
     } else if (preflightError) {
       toast.error(`Pré-voo na Meta falhou: ${preflightError}`);
     } else {
