@@ -22,7 +22,7 @@ import { toast } from "sonner";
 import {
   LogIn, Settings2, Send, CheckCircle2, Loader2, Copy, AlertTriangle, Unplug,
   Instagram, HardDrive, ArrowRight, FolderOpen, Plus, Calendar, Clock, MessageCircle, MapPin, Phone, Save, Trash2,
-  Layers, PlusCircle, X, Pencil, Search, ChevronDown,
+  Layers, PlusCircle, X, Pencil, Search, ChevronDown, RefreshCw,
 } from "lucide-react";
 import {
   getMetaLoginUrl, fetchMetaStatus, fetchAdAccounts, fetchAudiences,
@@ -189,6 +189,10 @@ const PRESETS = [
 type PresetId = typeof PRESETS[number]["id"];
 
 const UTM_DEFAULT = "utm_source=FB&utm_campaign={{campaign.name}}|{{campaign.id}}&utm_medium={{adset.name}}|{{adset.id}}&utm_content={{ad.name}}|{{ad.id}}&utm_term={{placement}}";
+
+// Cache das contas de anúncios (localStorage). Page load lê daqui = 0 chamada Meta;
+// só o botão manual "Carregar novas contas" re-busca. Limpo no disconnect.
+const AD_ACCOUNTS_CACHE_KEY = "f3f:adAccounts:v1";
 
 let creativeCounter = 0;
 function nextCreativeId() { return `cr_${++creativeCounter}_${Date.now()}`; }
@@ -814,6 +818,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       setAccessToken(null);
       setMetaName("");
       setAdAccounts([]);
+      try { localStorage.removeItem(AD_ACCOUNTS_CACHE_KEY); } catch { /* ignore */ }
       setSelectedAccount("");
       setAudiences([]);
       setSelectedAudience("");
@@ -844,14 +849,50 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
   const loadAdAccounts = async () => {
     if (!accessToken) return;
+    // 1) Cache primeiro: se houver contas salvas, usa e NÃO toca na Meta (economiza ~37 chamadas/load).
+    try {
+      const cached = localStorage.getItem(AD_ACCOUNTS_CACHE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setAdAccounts(parsed);
+          addLog(`✅ ${parsed.length} conta(s) do cache (0 chamada Meta). Use "Carregar novas contas" p/ atualizar.`);
+          return;
+        }
+      }
+    } catch { /* cache corrompido → ignora e busca da Meta */ }
+
+    // 2) Sem cache válido: busca da Meta e grava o cache.
     setLoadingAdAccounts(true);
     try {
       addLog("📡 Carregando todas as contas de anúncios...");
       const accounts = await fetchAdAccounts(accessToken);
       setAdAccounts(accounts);
+      try { localStorage.setItem(AD_ACCOUNTS_CACHE_KEY, JSON.stringify(accounts)); } catch { /* quota/privado */ }
       addLog(`✅ ${accounts.length} conta(s) encontrada(s)`);
     } catch (err: unknown) {
+      // Erro → mantém o que tem, NÃO apaga o cache.
       addLog(`❌ Erro ao carregar contas: ${err instanceof Error ? err.message : "Erro"}`);
+    } finally {
+      setLoadingAdAccounts(false);
+    }
+  };
+
+  // Botão manual: busca da Meta IGNORANDO o cache e regrava. Única fonte de chamadas Meta p/ contas.
+  const refreshAdAccounts = async () => {
+    if (!accessToken) return;
+    setLoadingAdAccounts(true);
+    try {
+      addLog("📡 Buscando contas de anúncios na Meta (ignorando cache)...");
+      const accounts = await fetchAdAccounts(accessToken);
+      setAdAccounts(accounts);
+      try { localStorage.setItem(AD_ACCOUNTS_CACHE_KEY, JSON.stringify(accounts)); } catch { /* quota/privado */ }
+      addLog(`✅ ${accounts.length} conta(s) atualizada(s)`);
+      toast.success(`${accounts.length} conta(s) de anúncios carregada(s).`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Erro";
+      addLog(`❌ Erro ao atualizar contas: ${msg}`);
+      toast.error(`Erro ao carregar contas: ${msg}`);
     } finally {
       setLoadingAdAccounts(false);
     }
@@ -2096,7 +2137,19 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         <>
           {/* Ad Account */}
           <Card className="glass-card p-6 space-y-4">
-            <Label className="font-display font-semibold text-sm">Conta de Anúncios ({adAccounts.length})</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label className="font-display font-semibold text-sm">Conta de Anúncios ({adAccounts.length})</Label>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1 text-xs h-8"
+                onClick={refreshAdAccounts}
+                disabled={loadingAdAccounts}
+                title="Busca as contas na Meta (ignora o cache). Use quando criar/ganhar acesso a uma conta nova."
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingAdAccounts ? "animate-spin" : ""}`} /> Carregar novas contas
+              </Button>
+            </div>
             {loadingAdAccounts && adAccounts.length === 0 ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="w-4 h-4 animate-spin" /> Carregando contas de anúncios...
