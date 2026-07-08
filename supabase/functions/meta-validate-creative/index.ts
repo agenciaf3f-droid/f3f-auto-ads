@@ -87,7 +87,7 @@ Deno.serve(async (req) => {
         let mediaApiCalls = 0;
         let mediaChecked = 0;
 
-        while (mediaUrl && mediaChecked < 400) {
+        while (mediaUrl && mediaChecked < 500) { // alinhado com o scan do publish (resolveInstagramMediaId < 500) — reduz falso "post não encontrado"
           mediaApiCalls++;
           const mediaRes = await fetchMeta(mediaUrl);
           const mediaData = await mediaRes.json();
