@@ -130,6 +130,20 @@ Deno.serve(async (req) => {
       }
 
       // === SLOW PATH: Scan pages (apenas quando NÃO há ig_account_id) ===
+      // Prod SEMPRE manda ig_account_id (identity IG resolvido) → com ele o fast path acima já
+      // resolveu OU retornou não-achado sem varrer. Chegar aqui SEM ig_account_id = varrer TODAS
+      // as páginas (cada IG até 200 medias); com N criativos em paralelo isso trava + estoura o
+      // rate limit da Meta. Mata o pior caso: sem ig_account_id, retorna não-achado direto.
+      if (!ig_account_id) {
+        mark("TOTAL", t0);
+        console.log(`[validate-creative] SLOW PATH skipped: no ig_account_id — returning not-found without page scan`);
+        return new Response(JSON.stringify({
+          ok: false,
+          error: `Post não encontrado. Confira se o link está certo e se é um post desta conta — ou use "Arquivo (Google Drive)".`,
+          suggest_drive: true, shortcode_searched: shortcode, timings,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
       const tPages = Date.now();
       const allPages: any[] = [];
       let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id}&limit=25&access_token=${access_token}`;
