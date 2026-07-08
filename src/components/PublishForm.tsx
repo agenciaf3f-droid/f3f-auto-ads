@@ -1499,7 +1499,14 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       if (isMountedRef.current) {
         setValidatingCreative(false);
       }
-      if (hasError) return;
+      // NÃO bloqueia mais: a falha de validação de criativo (muitas vezes é o rate-limit do Google
+      // Drive, NÃO permissão — arquivo público falha falso) vira só AVISO. O publish baixa a mídia
+      // por outro caminho (API key/Meta) e é o gate real; se um arquivo for de fato inválido, ele
+      // falha por criativo no publish (limpo). Deixa o gestor configurar tudo e publicar direto.
+      if (hasError) {
+        addLog("⚠️ [validate] Alguns criativos não validaram (provável limite do Google Drive, não permissão) — você PODE publicar mesmo assim; o publish baixa a mídia. Confira os marcados com ✗.");
+        toast.warning("Alguns criativos não validaram — pode publicar mesmo assim (o publish baixa a mídia).");
+      }
 
       // Build up-to-date list since React state still holds pre-update snapshot
       finalCreatives = creatives.map(c => validationMap.has(c.id) ? { ...c, validation: validationMap.get(c.id)! } : c);
