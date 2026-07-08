@@ -85,6 +85,20 @@ interface CreativeItem {
   link: string;
   name: string;
   validation?: { ok: boolean; error?: string; suggest_drive?: boolean } | null;
+  // media_id resolvido pela validação IG (evita re-scan no publish). Limpo ao editar link/tipo.
+  resolved_instagram_media_id?: string | null;
+  resolved_ig_account_id?: string | null;
+}
+
+// Aplica o resultado da validação a um criativo: guarda a validação + o media_id/ig resolvido
+// (só em sucesso). Usada no setCreatives (state) E no finalCreatives (payload) — mesma lógica.
+function applyCreativeValidation(c: CreativeItem, r: any): CreativeItem {
+  return {
+    ...c,
+    validation: r,
+    resolved_instagram_media_id: r?.ok ? (r.instagram_media_id ?? null) : null,
+    resolved_ig_account_id: r?.ok ? (r.ig_account_id ?? null) : null,
+  };
 }
 
 const PRESETS = [
@@ -1290,7 +1304,18 @@ export default function PublishForm() {
     setCreatives(prev => prev.length <= 1 ? prev : prev.filter(c => c.id !== id));
   };
   const updateCreative = (id: string, updates: Partial<CreativeItem>) => {
-    setCreatives(prev => prev.map(c => c.id === id ? { ...c, ...updates, validation: updates.link !== undefined || updates.type !== undefined ? null : c.validation } : c));
+    setCreatives(prev => prev.map(c => {
+      if (c.id !== id) return c;
+      // Mudar link/tipo invalida a validação E o media_id resolvido (senão o publish usaria id velho).
+      const linkOrTypeChanged = updates.link !== undefined || updates.type !== undefined;
+      return {
+        ...c,
+        ...updates,
+        validation: linkOrTypeChanged ? null : c.validation,
+        resolved_instagram_media_id: linkOrTypeChanged ? null : c.resolved_instagram_media_id,
+        resolved_ig_account_id: linkOrTypeChanged ? null : c.resolved_ig_account_id,
+      };
+    }));
   };
 
   // Audience management (mesma mecânica dos criativos)
@@ -1298,7 +1323,7 @@ export default function PublishForm() {
   const removeAudience = (id: string) => setAudienceRows(prev => prev.length <= 1 ? prev : prev.filter(r => r.id !== id));
   const updateAudience = (id: string, audienceId: string) => setAudienceRows(prev => prev.map(r => r.id === id ? { ...r, audienceId } : r));
 
-  const selectedAud = audiences.find((a) => a.id === selectedAudience);
+  const selectedAud = useMemo(() => audiences.find((a) => a.id === selectedAudience), [audiences, selectedAudience]);
   const selectedAudienceName = selectedAud?.name || "";
   const selectedPreset = PRESETS.find(p => p.id === preset)!;
   const isFase3 = selectedPreset.requires_whatsapp;
@@ -1338,10 +1363,20 @@ export default function PublishForm() {
       return next;
     });
   };
-  const multiAudIds = [...new Set(audienceRows.map(r => r.audienceId).filter(Boolean))];
-  const multiAudNamesList = multiAudIds.map(id => audiences.find(a => a.id === id)?.name || id);
-  const multiSingleAud = audiences.find(a => a.id === multiAudIds[0]);
-  const anySavedSelected = multiAudIds.some(id => audiences.find(a => a.id === id)?.type === "saved");
+  // Memoizados (deps: audienceRows/audiences) pra não recalcular O(n·m) a cada keystroke em
+  // qualquer campo do form — só quando os públicos/linhas realmente mudam.
+  const multiAudIds = useMemo(() => [...new Set(audienceRows.map(r => r.audienceId).filter(Boolean))], [audienceRows]);
+  const multiAudNamesList = useMemo(() => multiAudIds.map(id => audiences.find(a => a.id === id)?.name || id), [multiAudIds, audiences]);
+  const multiSingleAud = useMemo(() => audiences.find(a => a.id === multiAudIds[0]), [audiences, multiAudIds]);
+  const anySavedSelected = useMemo(() => multiAudIds.some(id => audiences.find(a => a.id === id)?.type === "saved"), [multiAudIds, audiences]);
+  // Options dos Select memoizados: um array novo a cada render quebra a memo dos filhos (re-render).
+  const campaignOptions = useMemo(() => campaigns.map(c => ({ id: c.id, name: c.name })), [campaigns]);
+  const ltProductOptions = useMemo(() => ltProducts.map(p => ({ id: p.name, name: p.name })), [ltProducts]);
+  // Filtro FASE 2 memoizado: só recalcula quando os públicos ou a busca mudam (não a cada keystroke geral).
+  const fase2FilteredAudiences = useMemo(() => {
+    const q = fase2Search.trim().toLowerCase();
+    return q ? audiences.filter(a => (a.name || "").toLowerCase().includes(q) || a.id.includes(q)) : audiences;
+  }, [audiences, fase2Search]);
   // Opções por linha: dedupe entre linhas; com >1 linha só custom (salvo não combina no Meta).
   const audienceOptionsFor = (rowId: string): Audience[] => {
     const restrictCustom = audienceRows.length > 1;
@@ -1585,7 +1620,7 @@ export default function PublishForm() {
       // Concorrência 2 + stagger 500ms (runPool): o Drive anônimo é sensível a surto — muitos
       // downloads de uma vez disparam a página anti-abuso do Google (falso "arquivo não público").
       // Menos concorrência = menos surto no Google (e na Meta).
-      const validationMap = new Map<string, CreativeItem["validation"]>();
+      const validationMap = new Map<string, any>(); // guarda o result completo (inclui resolved_*)
       let hasError = false;
       await runPool(creativesToValidate, 2, async (cr) => {
         const tSingle = performance.now();
@@ -1604,7 +1639,7 @@ export default function PublishForm() {
         }
       }, 500);
       if (isMountedRef.current) {
-        setCreatives(prev => prev.map(c => validationMap.has(c.id) ? { ...c, validation: validationMap.get(c.id)! } : c));
+        setCreatives(prev => prev.map(c => validationMap.has(c.id) ? applyCreativeValidation(c, validationMap.get(c.id)) : c));
       }
       addLog(`⏱️ [validate] Criativos validados em ${Math.round(performance.now() - tCr)}ms`);
       if (isMountedRef.current) {
@@ -1620,7 +1655,7 @@ export default function PublishForm() {
       }
 
       // Build up-to-date list since React state still holds pre-update snapshot
-      finalCreatives = creatives.map(c => validationMap.has(c.id) ? { ...c, validation: validationMap.get(c.id)! } : c);
+      finalCreatives = creatives.map(c => validationMap.has(c.id) ? applyCreativeValidation(c, validationMap.get(c.id)) : c);
     } else {
       addLog("⏱️ [validate] Todos os criativos já validados, pulando validação de criativos");
     }
@@ -1739,7 +1774,12 @@ export default function PublishForm() {
         targeting_spec: isMultiAud
           ? (multiAudIds.length >= 2 ? null : (multiSingleAud?.targeting_spec || null))
           : (selectedAud?.targeting_spec || null),
-        creatives: finalCreatives.map(c => ({ type: c.type, link: c.link, name: c.name })),
+        creatives: finalCreatives.map(c => ({
+          type: c.type, link: c.link, name: c.name,
+          // media_id resolvido na validação → o publish reusa e NÃO re-escaneia (só quando existe).
+          resolved_instagram_media_id: c.resolved_instagram_media_id || undefined,
+          resolved_ig_account_id: c.resolved_ig_account_id || undefined,
+        })),
         creative_link: finalCreatives[0].link,
         creative_type: finalCreatives[0].type,
         creative_name: finalCreatives[0].name,
@@ -2467,7 +2507,7 @@ export default function PublishForm() {
                 ) : campaigns.length > 0 ? (
                   <>
                     <SearchableSelect
-                      options={campaigns.map(c => ({ id: c.id, name: c.name }))}
+                      options={campaignOptions}
                       value={selectedCampaign}
                       onValueChange={(id) => {
                         setSelectedCampaign(id);
@@ -2499,7 +2539,7 @@ export default function PublishForm() {
                 <Label className="text-xs font-medium text-muted-foreground">{isFase3Lp ? "Nome do produto" : "Nome da Campanha"}</Label>
                 {isFase3Lp && ltProducts.length > 0 ? (
                   <SearchableSelect
-                    options={ltProducts.map(p => ({ id: p.name, name: p.name }))}
+                    options={ltProductOptions}
                     value={campaignNameInput}
                     onValueChange={setCampaignNameInput}
                     placeholder="Selecione o produto"
@@ -2712,8 +2752,7 @@ export default function PublishForm() {
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-muted/20 rounded-lg p-4 max-h-64 overflow-y-auto">
                     {(() => {
-                      const q = fase2Search.trim().toLowerCase();
-                      const list = q ? audiences.filter(a => (a.name || "").toLowerCase().includes(q) || a.id.includes(q)) : audiences;
+                      const list = fase2FilteredAudiences;
                       if (list.length === 0) return <p className="text-xs text-muted-foreground col-span-full text-center py-2">Nenhum público encontrado</p>;
                       return list.map((aud) => {
                       const checked = fase2Audiences.includes(aud.id);
