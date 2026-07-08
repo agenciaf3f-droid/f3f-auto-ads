@@ -1291,7 +1291,9 @@ async function buildFase3Creative(
         call_to_action: callToAction,
         page_welcome_message: welcomeMessageJson,
       };
-      if (readyMessage) linkData.message = readyMessage;
+      // ready_message NÃO vai pro texto do anúncio (link_data.message) — é só prefill
+      // do WhatsApp (waLink ?text=) + autofill do page_welcome_message. Ver path IG que
+      // não seta message. Punha a "Mensagem pronta" como copy visível do anúncio (bug).
       const storySpec: Record<string, any> = { page_id: pageId, link_data: linkData };
       if (igActorId) storySpec.instagram_user_id = igActorId;
       console.log(`[FASE3-creative] OK (drive/image): hash=${result.image_hash}`);
@@ -1308,7 +1310,9 @@ async function buildFase3Creative(
         call_to_action: callToAction,
         page_welcome_message: welcomeMessageJson,
       };
-      if (readyMessage) videoData.message = readyMessage;
+      // ready_message NÃO vai pro texto do anúncio (video_data.message) — é só prefill
+      // do WhatsApp (waLink ?text=) + autofill do page_welcome_message. Ver path IG que
+      // não seta message. Punha a "Mensagem pronta" como copy visível do anúncio (bug).
       const storySpec: Record<string, any> = { page_id: pageId, video_data: videoData };
       if (igActorId) storySpec.instagram_user_id = igActorId;
       console.log(`[FASE3-creative] OK (drive/video): video_id=${result.video_id}`);
