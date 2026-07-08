@@ -136,20 +136,28 @@ async function acquireAdsetDedupeLock(params: {
   const latest = existing?.[0];
   // Job "failed" NÃO bloqueia: o auto-retry no #4 re-publica o MESMO fingerprint — se um attempt
   // anterior falhou (limite/erro), a re-tentativa tem que passar (senão o retry se auto-bloqueia
-  // como "duplicada", pior que o trip). Só bloqueia execução em andamento (in_progress) ou já
+  // como "duplicada", pior que o trip). Só bloqueia execução EM ANDAMENTO (in_progress) ou já
   // concluída com sucesso (dedup real).
+  // in_progress "preso" (publish morreu/timeout na edge ANTES de finalizar) é tratado como MORTO
+  // se > STALE_INPROGRESS_MS (> o timeout da edge, ~150s) → também não bloqueia, senão travaria
+  // todo retry até a janela de 10min passar.
+  const STALE_INPROGRESS_MS = 5 * 60 * 1000;
   if (latest && latest.status !== "failed") {
     const isInProgress = latest.status === "in_progress";
-    const warningMessage = isInProgress
-      ? `Publicação duplicada bloqueada: já existe uma execução em andamento para este payload (fingerprint=${params.fingerprint.slice(0, 12)}).`
-      : `Publicação duplicada bloqueada: este payload já foi enviado recentemente. Aguarde ${params.windowMinutes} minutos para reenviar.`;
+    const ageMs = latest.created_at ? Date.now() - new Date(latest.created_at).getTime() : Infinity;
+    const staleInProgress = isInProgress && ageMs > STALE_INPROGRESS_MS;
+    if (!staleInProgress) {
+      const warningMessage = isInProgress
+        ? `Publicação duplicada bloqueada: já existe uma execução em andamento para este payload (fingerprint=${params.fingerprint.slice(0, 12)}).`
+        : `Publicação duplicada bloqueada: este payload já foi enviado recentemente. Aguarde ${params.windowMinutes} minutos para reenviar.`;
 
-    return {
-      allowed: false,
-      warningMessage,
-      existingJobId: latest.id,
-      existingStatus: latest.status,
-    };
+      return {
+        allowed: false,
+        warningMessage,
+        existingJobId: latest.id,
+        existingStatus: latest.status,
+      };
+    }
   }
 
   const requestJson = {
