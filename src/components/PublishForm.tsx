@@ -668,6 +668,10 @@ export default function PublishForm() {
     setValidationResult(null);
     setPublishResult(null);
     setMinBudget(null);
+    // Troca de conta invalida validação + media_id resolvido dos criativos (eram do IG da conta
+    // anterior). Sem isso o publish (T1#1) injetaria mídia/actor da conta antiga na conta nova.
+    // Mantém link/nome/tipo; o usuário re-valida na conta nova (ou o publish escaneia).
+    setCreatives(prev => prev.map(c => ({ ...c, validation: undefined, resolved_instagram_media_id: null, resolved_ig_account_id: null })));
 
     // ===== Identidade: tenta cache por conta (a varredura de páginas é lenta) =====
     let resolvedPageId: string | null = null;
