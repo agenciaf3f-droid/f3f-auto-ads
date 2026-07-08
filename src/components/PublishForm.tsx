@@ -1061,21 +1061,36 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     try {
       text = await navigator.clipboard.readText();
     } catch {
-      toast.error("Não consegui ler a área de transferência — copie as 2 colunas (nome + link) do Sheets e tente de novo.");
+      toast.error("Não consegui ler a área de transferência — copie os nomes e links do Sheets e tente de novo.");
       return;
     }
-    const rows = text.split("\n").map(l => l.trim()).filter(Boolean);
-    if (rows.length === 0) {
-      toast.error("Área de transferência vazia — copie as 2 colunas (nome + link) do Sheets.");
+    // Achata TUDO em células (linhas × TAB), preserva a ordem, dropa vazias. Cobre os 2 formatos:
+    // 2 colunas (nome<TAB>link por linha) E coluna única (N nomes depois N links).
+    const cells = text.split(/\r?\n/).flatMap(line => line.split("\t")).map(c => c.trim()).filter(Boolean);
+    if (cells.length === 0) {
+      toast.error("Nada pra colar — copie os nomes e/ou links do Sheets.");
       return;
     }
-    const paired: CreativeItem[] = rows.map(row => {
-      const cols = row.split("\t");
+    // Classifica cada célula por conteúdo: tem URL → links[]; senão → names[]. Ordem preservada.
+    const isLink = (s: string) => /https?:\/\/|drive\.google|docs\.google|instagram\.com/i.test(s);
+    // Auto-tipo pelo domínio do link: Drive → "drive"; Instagram/qualquer outro → "instagram".
+    const detectType = (link: string): CreativeType => (/drive\.google|docs\.google/i.test(link) ? "drive" : "instagram");
+    const names: string[] = [];
+    const links: string[] = [];
+    for (const c of cells) (isLink(c) ? links : names).push(c);
+
+    // Pareia por índice até o MÁXIMO (o que faltar fica vazio p/ o usuário completar).
+    const n = Math.max(names.length, links.length);
+    if (names.length !== links.length) {
+      toast.warning(`${names.length} nome(s), ${links.length} link(s) — pareei por ordem; complete o que faltar.`);
+    }
+    const paired: CreativeItem[] = Array.from({ length: n }, (_, i) => {
+      const link = (links[i] || "").trim();
       return {
         ...blankCreative(),
-        type: "drive",
-        name: (cols[0] || "").trim(),
-        link: (cols[1] || "").trim(),
+        name: (names[i] || "").trim(),
+        link,
+        type: link ? detectType(link) : "instagram",
         validation: null,
       };
     });
@@ -2308,7 +2323,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                         <PlusCircle className="w-3.5 h-3.5" /> Gerar
                       </Button>
                     </div>
-                    <Button variant="outline" size="sm" className="gap-1 text-xs h-8" onClick={pasteCreativesFromClipboard} title="Cola 2 colunas do Sheets (nome + link do Drive) — substitui a lista">
+                    <Button variant="outline" size="sm" className="gap-1 text-xs h-8" onClick={pasteCreativesFromClipboard} title="Cola nomes e links do Sheets (detecta automaticamente qual é qual e o tipo Drive/IG) — substitui a lista">
                       <Copy className="w-3.5 h-3.5" /> Colar
                     </Button>
                   </>
