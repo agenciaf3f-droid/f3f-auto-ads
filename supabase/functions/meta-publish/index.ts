@@ -684,11 +684,12 @@ async function uploadDriveCreative(
   let contentDisp = "";
   let fileBlob: Blob | null = null;
   let downloadUrl = candidateUrls[0];
+  const driveAttempts: string[] = []; // guarda o motivo REAL de cada tentativa (status/content-type)
 
   for (const url of candidateUrls) {
     downloadUrl = url;
     const r = await fetch(url, { redirect: "follow", headers: DOWNLOAD_HEADERS });
-    if (!r.ok) { console.log(`[drive-upload] ${url} status=${r.status}`); continue; }
+    if (!r.ok) { console.log(`[drive-upload] ${url} status=${r.status}`); driveAttempts.push(`HTTP ${r.status}`); continue; }
     const ct = r.headers.get("content-type") || "";
     const cd = r.headers.get("content-disposition") || "";
     if (ct.includes("text/html") || ct.includes("text/plain")) {
@@ -708,6 +709,7 @@ async function uploadDriveCreative(
           }
         }
       } catch (e) { console.log(`[drive-upload] parse html failed: ${(e as Error).message}`); }
+      driveAttempts.push(`página HTML do Google (interstitial de confirmação/anti-abuso "Sorry" — arquivo não público OU cota de download temporária)`);
       continue;
     }
     fileRes = r; contentType = ct; contentDisp = cd; fileBlob = await r.blob();
@@ -717,7 +719,10 @@ async function uploadDriveCreative(
   // Sem fallback file_url: Meta downloada HTML interstitial achando ser vídeo,
   // cria creative WITH_ISSUES (#1487713/#2490446). Falha fast é melhor.
   if (!fileRes || !fileBlob) {
-    return { error: `Arquivo do Drive não pôde ser baixado. Causa mais comum: não está público — no Drive, Compartilhar → Acesso geral → "Qualquer pessoa com o link" (Leitor). Se já estiver público: pode ser cota de download temporária do Drive (re-upload o arquivo), arquivo maior que 100MB (reduza o tamanho) ou use o link do Instagram.` };
+    // Anexa o motivo REAL de cada tentativa (status HTTP / página HTML) — senão o gestor só vê a
+    // causa "mais comum" genérica e revê permissão de um arquivo que talvez já esteja público.
+    const detail = driveAttempts.length ? ` [tentativas: ${driveAttempts.join(" | ")}]` : "";
+    return { error: `Arquivo do Drive não pôde ser baixado. Causa mais comum: não está público — no Drive, Compartilhar → Acesso geral → "Qualquer pessoa com o link" (Leitor). Se já estiver público: pode ser cota de download temporária do Drive (re-upload o arquivo), arquivo maior que 100MB (reduza o tamanho) ou use o link do Instagram.${detail}` };
   }
 
   // Detecção: content-type, content-disposition (filename) ou magic bytes.
@@ -1574,6 +1579,7 @@ Deno.serve(async (req) => {
       // Sequencial fura timeout 150s da edge function com 5+ Drive uploads.
       const buildOne = async (cr: typeof creativesList[number], ci: number): Promise<{ spec?: Record<string, any>; error?: string }> => {
         console.log(`[publish] creative ${ci + 1}/${creativesList.length}: type=${cr.type}, name=${cr.name}, builder=${presetLabel}`);
+        logs.push({ step: "resolve_creative", status: "start", ts: ts(), detail: `criativo ${ci + 1}/${creativesList.length} "${cr.name}" (type=${cr.type}, link=${cr.link}, builder=${presetLabel})` });
         if (isVideoEngagementPreset) {
           return buildFase2Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, logs);
         } else if (isWebsitePreset) {
@@ -1587,12 +1593,25 @@ Deno.serve(async (req) => {
       };
 
       const settled = await Promise.all(creativesList.map((cr, ci) => buildOne(cr, ci)));
-      const firstError = settled.findIndex((r) => r.error);
-      if (firstError !== -1) {
-        const cr = creativesList[firstError];
-        const err = settled[firstError].error!;
-        logs.push({ step: "resolve_creatives", status: "error", ts: ts(), detail: `creative ${firstError + 1} "${cr.name}": ${err}` });
-        return respond({ ok: false, step: "resolve_creative", error_message: err });
+      // Coleta TODOS os criativos que falharam (não só o 1º) com nome + motivo REAL, pra o gestor
+      // ver EXATAMENTE o que quebrou em cada um — em vez de um genérico "falha no criativo".
+      const creativeErrs = settled
+        .map((r, ci) => (r.error ? { name: creativesList[ci].name || `Criativo ${ci + 1}`, error: r.error } : null))
+        .filter((x): x is { name: string; error: string } => x !== null);
+      if (creativeErrs.length > 0) {
+        for (const ce of creativeErrs) {
+          logs.push({ step: "resolve_creative", status: "error", ts: ts(), detail: `criativo "${ce.name}": ${ce.error}` });
+        }
+        const first = creativeErrs[0];
+        return respond({
+          ok: false,
+          step: "resolve_creative",
+          error_message: creativeErrs.length > 1
+            ? `Falha ao resolver ${creativeErrs.length} criativos (ANTES da campanha). 1º: "${first.name}" — ${first.error}`
+            : `Falha ao resolver o criativo "${first.name}" (ANTES da campanha): ${first.error}`,
+          error_user_msg: first.error,
+          creative_errors: creativeErrs,
+        });
       }
       resolvedCreatives = settled.map((r, ci) => ({
         spec: r.spec!,

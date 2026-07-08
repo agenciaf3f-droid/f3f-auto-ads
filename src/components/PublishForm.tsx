@@ -2178,10 +2178,12 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         const msg = result.error_message || result.error || "Erro desconhecido";
         const isWarning = result.warning || stepLabel === "idempotency";
         addLog(`${isWarning ? "⚠️" : "❌"} Falha no step "${stepLabel}": ${msg}`);
+        if (result.error_code != null || result.error_subcode != null) addLog(`   Meta: code=${result.error_code ?? "-"} subcode=${result.error_subcode ?? "-"}`);
         if (result.error_user_title) addLog(`   Título: ${result.error_user_title}`);
         if (result.error_user_msg) addLog(`   Detalhe: ${result.error_user_msg}`);
+        if (result.creative_errors?.length) for (const ce of result.creative_errors) addLog(`   ▸ criativo "${ce.name}": ${ce.error}`);
         if (isWarning) toast.warning(msg);
-        else toast.error(`Falha ao publicar (${stepLabel})`);
+        else toast.error(`Falha (${stepLabel}): ${msg}`.slice(0, 120));
       }
     } catch (err: unknown) {
       const parsed = tryParseError(err);
@@ -3365,6 +3367,9 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 <p className="text-xs text-destructive font-medium">{publishResult.error_message || publishResult.error}</p>
                 {publishResult.error_user_title && <p className="text-xs text-destructive">{publishResult.error_user_title}</p>}
                 {publishResult.error_user_msg && <p className="text-xs text-muted-foreground">{publishResult.error_user_msg}</p>}
+                {(publishResult.error_code != null || publishResult.error_subcode != null) && (
+                  <p className="text-[10px] font-mono text-muted-foreground">Meta code={publishResult.error_code ?? "-"} · subcode={publishResult.error_subcode ?? "-"}</p>
+                )}
               </div>
               {publishResult.creative_errors && publishResult.creative_errors.length > 0 && (
                 <div className="space-y-1.5">
