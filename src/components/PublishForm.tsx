@@ -1470,13 +1470,14 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     if (creativesToValidate.length > 0) {
       setValidatingCreative(true);
       const tCr = performance.now();
-      addLog(`🔍 [validate] Validando ${creativesToValidate.length} criativo(s) — concorrência 3 + stagger 300ms (${creatives.length - creativesToValidate.length} já validados, pulando)...`);
+      addLog(`🔍 [validate] Validando ${creativesToValidate.length} criativo(s) — concorrência 2 + stagger 500ms (${creatives.length - creativesToValidate.length} já validados, pulando)...`);
 
-      // Concorrência 3 + stagger 300ms (runPool) em vez de tudo de uma vez — reduz o pico de
-      // chamadas simultâneas que estoura o rate-limit (#4) da conta ao Validar.
+      // Concorrência 2 + stagger 500ms (runPool): o Drive anônimo é sensível a surto — muitos
+      // downloads de uma vez disparam a página anti-abuso do Google (falso "arquivo não público").
+      // Menos concorrência = menos surto no Google (e na Meta).
       const validationMap = new Map<string, CreativeItem["validation"]>();
       let hasError = false;
-      await runPool(creativesToValidate, 3, async (cr) => {
+      await runPool(creativesToValidate, 2, async (cr) => {
         const tSingle = performance.now();
         addLog(`🔍 [validate-creative] "${cr.name}" (${cr.type}) — iniciando...`);
         try {
@@ -1491,7 +1492,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
           hasError = true;
           addLog(`❌ [validate-creative] Erro "${cr.name}": ${e instanceof Error ? e.message : String(e)}`);
         }
-      }, 300);
+      }, 500);
       if (isMountedRef.current) {
         setCreatives(prev => prev.map(c => validationMap.has(c.id) ? { ...c, validation: validationMap.get(c.id)! } : c));
       }
