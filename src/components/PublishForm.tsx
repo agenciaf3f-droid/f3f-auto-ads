@@ -1054,6 +1054,34 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     setCreatives(prev => [...prev, ...Array.from({ length: n }, () => blankCreative())]);
     setBulkCount("");
   };
+  // Colar em massa: lê a área de transferência (2 colunas do Sheets, nome<TAB>link por linha),
+  // gera 1 criativo Drive por linha e SUBSTITUI a lista.
+  const pasteCreativesFromClipboard = async () => {
+    let text = "";
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      toast.error("Não consegui ler a área de transferência — copie as 2 colunas (nome + link) do Sheets e tente de novo.");
+      return;
+    }
+    const rows = text.split("\n").map(l => l.trim()).filter(Boolean);
+    if (rows.length === 0) {
+      toast.error("Área de transferência vazia — copie as 2 colunas (nome + link) do Sheets.");
+      return;
+    }
+    const paired: CreativeItem[] = rows.map(row => {
+      const cols = row.split("\t");
+      return {
+        ...blankCreative(),
+        type: "drive",
+        name: (cols[0] || "").trim(),
+        link: (cols[1] || "").trim(),
+        validation: null,
+      };
+    });
+    setCreatives(paired);
+    toast.success(`${paired.length} criativo(s) colado(s) do Sheets.`);
+  };
   const removeCreative = (id: string) => {
     setCreatives(prev => prev.length <= 1 ? prev : prev.filter(c => c.id !== id));
   };
@@ -2261,24 +2289,29 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               <Label className="font-display font-semibold text-sm">
                 Criativos ({creatives.length})
               </Label>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap justify-end">
                 {!isFase2Adaptado && (
-                  <div className="flex items-center gap-1">
-                    <Label htmlFor="bulk-count" className="text-[10px] text-muted-foreground shrink-0">Quantos?</Label>
-                    <Input
-                      id="bulk-count"
-                      type="number"
-                      min={1}
-                      max={20}
-                      value={bulkCount}
-                      onChange={(e) => setBulkCount(e.target.value)}
-                      placeholder="N"
-                      className="h-8 w-16 text-xs"
-                    />
-                    <Button variant="outline" size="sm" className="gap-1 text-xs h-8" onClick={addCreativesBulk}>
-                      <PlusCircle className="w-3.5 h-3.5" /> Gerar
+                  <>
+                    <div className="flex items-center gap-1">
+                      <Label htmlFor="bulk-count" className="text-[10px] text-muted-foreground shrink-0">Quantos?</Label>
+                      <Input
+                        id="bulk-count"
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={bulkCount}
+                        onChange={(e) => setBulkCount(e.target.value)}
+                        placeholder="N"
+                        className="h-8 w-16 text-xs"
+                      />
+                      <Button variant="outline" size="sm" className="gap-1 text-xs h-8" onClick={addCreativesBulk}>
+                        <PlusCircle className="w-3.5 h-3.5" /> Gerar
+                      </Button>
+                    </div>
+                    <Button variant="outline" size="sm" className="gap-1 text-xs h-8" onClick={pasteCreativesFromClipboard} title="Cola 2 colunas do Sheets (nome + link do Drive) — substitui a lista">
+                      <Copy className="w-3.5 h-3.5" /> Colar
                     </Button>
-                  </div>
+                  </>
                 )}
                 <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={addCreative}>
                   <PlusCircle className="w-3.5 h-3.5" /> Adicionar criativo
