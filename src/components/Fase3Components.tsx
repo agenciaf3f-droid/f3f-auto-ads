@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -154,42 +156,114 @@ export function WhatsAppMessages({
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
         <Label className="text-xs text-muted-foreground">Modelo de mensagem (obrigatório)</Label>
-        {onLoadImported && (
+        {onLoadImported && !useCustomMessage && (
           <Button variant="outline" size="sm" onClick={onLoadImported} disabled={loadingImported} className="text-xs gap-1">
             {loadingImported ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Buscar"}
           </Button>
         )}
       </div>
 
-      {importedTemplates.length > 0 ? (
-        <Select value={selectedImportedKey} onValueChange={(v) => onSelectImported?.(v)}>
-          <SelectTrigger><SelectValue placeholder={`${importedTemplates.length} modelo(s) encontrado(s) — selecione`} /></SelectTrigger>
-          <SelectContent>
-            {importedTemplates.map((t) => (
-              <SelectItem key={t.key} value={t.key}>
-                {(t.welcome_text || "(sem saudação)").substring(0, 40)} → {(t.autofill || "(sem autofill)").substring(0, 30)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      ) : (
-        <p className="text-xs text-muted-foreground italic">
-          {loadingImported
-            ? "Carregando modelos da conta..."
-            : "Nenhum modelo encontrado. Esta conta de anúncios precisa ter campanhas WhatsApp publicadas com 'Modelo de mensagem' no Gerenciador da Meta. Clique em Buscar para tentar novamente."}
-        </p>
-      )}
+      {/* Escolha: importar um modelo CTWA existente OU criar a mensagem manualmente. Contas sem
+          criativo WhatsApp (0 modelos) usam "Criar mensagem". */}
+      <RadioGroup
+        value={useCustomMessage ? "custom" : "imported"}
+        onValueChange={(v) => onUseCustomMessageChange(v === "custom")}
+        className="flex flex-wrap gap-4"
+      >
+        <label htmlFor="msg-imported" className="flex items-center gap-2 cursor-pointer">
+          <RadioGroupItem value="imported" id="msg-imported" />
+          <span className="text-xs">Usar modelo importado</span>
+        </label>
+        <label htmlFor="msg-custom" className="flex items-center gap-2 cursor-pointer">
+          <RadioGroupItem value="custom" id="msg-custom" />
+          <span className="text-xs">Criar mensagem</span>
+        </label>
+      </RadioGroup>
 
-      {selectedImportedKey && (() => {
-        const t = importedTemplates.find(x => x.key === selectedImportedKey);
-        return t ? (
-          <div className="bg-warning/10 border border-warning/30 rounded-md p-3 space-y-1">
-            <p className="text-xs"><strong>Saudação:</strong> {t.welcome_text}</p>
-            <p className="text-xs"><strong>Autofill:</strong> {t.autofill}</p>
-            {t.template_id !== "inline" && <p className="text-[8px] text-muted-foreground">template_id: {t.template_id}</p>}
+      {useCustomMessage ? (
+        <div className="space-y-2">
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Saudação (1ª mensagem que abre a conversa)</Label>
+            <Textarea
+              value={greetingText}
+              onChange={(e) => onGreetingChange(e.target.value)}
+              rows={2}
+              className="text-xs"
+              placeholder="Olá! Vi seu anúncio e quero saber mais."
+            />
           </div>
-        ) : null;
-      })()}
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Mensagem pronta (texto já preenchido pro cliente enviar)</Label>
+            <Textarea
+              value={readyMessage}
+              onChange={(e) => onReadyMessageChange(e.target.value)}
+              rows={2}
+              className="text-xs"
+              placeholder="Quero saber mais sobre..."
+            />
+          </div>
+          {/* Salvar a mensagem manual como template reutilizável (reusa o fluxo já existente). */}
+          <div className="flex items-center gap-2">
+            <Input
+              value={templateName}
+              onChange={(e) => onTemplateName(e.target.value)}
+              placeholder="Nome do template (opcional, p/ salvar)"
+              className="h-8 text-xs flex-1"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs gap-1"
+              onClick={onSaveTemplate}
+              disabled={savingTemplate || !templateName.trim() || !greetingText.trim() || !readyMessage.trim()}
+            >
+              {savingTemplate ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Salvar template
+            </Button>
+          </div>
+          {messageTemplates.length > 0 && (
+            <Select value={selectedTemplateId} onValueChange={onSelectTemplate}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={`${messageTemplates.length} template(s) salvo(s) — usar um`} /></SelectTrigger>
+              <SelectContent>
+                {messageTemplates.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+      ) : (
+        <>
+          {importedTemplates.length > 0 ? (
+            <Select value={selectedImportedKey} onValueChange={(v) => onSelectImported?.(v)}>
+              <SelectTrigger><SelectValue placeholder={`${importedTemplates.length} modelo(s) encontrado(s) — selecione`} /></SelectTrigger>
+              <SelectContent>
+                {importedTemplates.map((t) => (
+                  <SelectItem key={t.key} value={t.key}>
+                    {(t.welcome_text || "(sem saudação)").substring(0, 40)} → {(t.autofill || "(sem autofill)").substring(0, 30)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <p className="text-xs text-muted-foreground italic">
+              {loadingImported
+                ? "Carregando modelos da conta..."
+                : "Nenhum modelo encontrado nesta conta. Publique uma campanha WhatsApp com 'Modelo de mensagem' no Gerenciador da Meta, ou escolha \"Criar mensagem\" acima."}
+            </p>
+          )}
+
+          {selectedImportedKey && (() => {
+            const t = importedTemplates.find(x => x.key === selectedImportedKey);
+            return t ? (
+              <div className="bg-warning/10 border border-warning/30 rounded-md p-3 space-y-1">
+                <p className="text-xs"><strong>Saudação:</strong> {t.welcome_text}</p>
+                <p className="text-xs"><strong>Autofill:</strong> {t.autofill}</p>
+                {t.template_id !== "inline" && <p className="text-[8px] text-muted-foreground">template_id: {t.template_id}</p>}
+              </div>
+            ) : null;
+          })()}
+        </>
+      )}
     </div>
   );
 }
