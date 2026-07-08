@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { cacheDiscovery } from "../_shared/discovery-cache.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -224,6 +225,8 @@ Deno.serve(async (req) => {
       // Adiciona contador final de pages no diagnóstico
       diagnostic.push({ endpoint: "_total_pages_scanned", status: "info", count: allPages.length });
 
+      await cacheDiscovery("identity", ad_account_id, { ig_accounts: results, dsa_beneficiary: dsaBeneficiary });
+
       return new Response(JSON.stringify({ ig_accounts: results, pages_scanned: allPages.length, dsa_beneficiary: dsaBeneficiary, diagnostic }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -282,6 +285,7 @@ Deno.serve(async (req) => {
     await Promise.all(bizTasks);
 
     const allAccounts = Array.from(accountMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+    await cacheDiscovery("ad_accounts", "shared", allAccounts);
     return new Response(JSON.stringify({ accounts: allAccounts, businesses_scanned: businesses.length, biz_error: bizError }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

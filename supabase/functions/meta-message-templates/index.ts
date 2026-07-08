@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { cacheDiscovery } from "../_shared/discovery-cache.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -111,6 +112,8 @@ Deno.serve(async (req) => {
       : cappedWithMore
         ? `Limite de ${max_creatives} criativos varridos atingido — pode haver mais modelos além disso.`
         : null;
+
+    await cacheDiscovery("imported_templates", ad_account_id, templates);
 
     return new Response(JSON.stringify({
       templates,

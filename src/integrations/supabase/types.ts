@@ -255,6 +255,27 @@ export type Database = {
         }
         Relationships: []
       }
+      meta_discovery_cache: {
+        Row: {
+          account_id: string
+          data: Json
+          kind: string
+          updated_at: string
+        }
+        Insert: {
+          account_id?: string
+          data?: Json
+          kind: string
+          updated_at?: string
+        }
+        Update: {
+          account_id?: string
+          data?: Json
+          kind?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       optimization_actions: {
         Row: {
           action: string
