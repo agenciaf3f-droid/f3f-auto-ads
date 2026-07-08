@@ -129,79 +129,18 @@ Deno.serve(async (req) => {
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // === SLOW PATH: Scan pages (apenas quando NÃO há ig_account_id) ===
-      const tPages = Date.now();
-      const allPages: any[] = [];
-      let pagesUrl: string | null = `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,instagram_business_account{id}&limit=25&access_token=${access_token}`;
-      let pageRequests = 0;
-      while (pagesUrl) {
-        pageRequests++;
-        const pagesRes = await fetchMeta(pagesUrl);
-        const pagesData = await pagesRes.json();
-        if (pagesData.error) {
-          mark("fetch_pages", tPages);
-          console.log(`[validate-creative] fetch_pages ERROR: ${pagesData.error.message}`);
-          return new Response(JSON.stringify({
-            ok: false, error: `Erro ao buscar páginas: ${pagesData.error.message}`, timings,
-          }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-        }
-        if (pagesData.data) allPages.push(...pagesData.data);
-        pagesUrl = pagesData.paging?.next || null;
-        if (allPages.length >= 100) break;
-      }
-      mark("fetch_pages", tPages);
-      console.log(`[validate-creative] ${allPages.length} pages fetched in ${pageRequests} request(s)`);
-
-      if (allPages.length === 0) {
-        return new Response(JSON.stringify({
-          ok: false, error: "Nenhuma página encontrada. Verifique permissões.", suggest_drive: true, timings,
-        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-
-      const tSearch = Date.now();
-      const pagesWithIg = allPages.filter(p => p.instagram_business_account);
-      // Skip IG accounts already checked in fast path
-      const filteredPages = ig_account_id
-        ? pagesWithIg.filter(p => p.instagram_business_account.id !== ig_account_id)
-        : pagesWithIg;
-      let mediaApiCalls = 0;
-
-      for (const page of filteredPages) {
-        const igAccountId = page.instagram_business_account.id;
-        let mediaUrl: string | null = `https://graph.facebook.com/v25.0/${igAccountId}/media?fields=id,shortcode,permalink&limit=30&access_token=${access_token}`;
-        let mediaChecked = 0;
-        while (mediaUrl && mediaChecked < 200) {
-          mediaApiCalls++;
-          const mediaRes = await fetchMeta(mediaUrl);
-          const mediaData = await mediaRes.json();
-
-          if (mediaData.data) {
-            mediaChecked += mediaData.data.length;
-            const found = mediaData.data.find((m: any) => m.shortcode === shortcode || m.permalink?.includes(shortcode));
-            if (found) {
-              mark("search_media", tSearch);
-              mark("TOTAL", t0);
-              console.log(`[validate-creative] FOUND after ${mediaApiCalls} media API calls: shortcode=${shortcode} on page=${page.name}, ig=${igAccountId}, media_id=${found.id}`);
-              return new Response(JSON.stringify({
-                ok: true, creative_resolved: true,
-                instagram_media_id: found.id, page_id: page.id, page_name: page.name,
-                ig_account_id: igAccountId, content_type: parsed.type, source: "page_scan", timings,
-              }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-            }
-          }
-          mediaUrl = mediaData.paging?.next || null;
-        }
-      }
-
-      mark("search_media", tSearch);
+      // === SEM ig_account_id: NÃO varre páginas ===
+      // O slow-path (scan de TODAS as páginas → cada IG até 200 medias = 4+7N chamadas Meta,
+      // catastrófico com criativos em paralelo — auto-flagado acima) só era alcançável quando
+      // ig_account_id estava ausente. Em produção o front SEMPRE manda ig_account_id (a conta IG
+      // da identidade já está resolvida) → o fast path acima cobre 100% dos casos reais. Sem
+      // ig_account_id, retorna claro em vez de varrer.
       mark("TOTAL", t0);
-      console.log(`[validate-creative] NOT FOUND after ${mediaApiCalls} media API calls in ${filteredPages.length} IG accounts`);
-      const pageNames = pagesWithIg.map((p: any) => p.name).join(", ");
+      console.log(`[validate-creative] sem ig_account_id — slow-path desabilitado, retornando não-identificado`);
       return new Response(JSON.stringify({
         ok: false,
-        error: `Post não encontrado nas contas Instagram conectadas (${pageNames}). Use "Arquivo (Google Drive)" como alternativa.`,
-        suggest_drive: true, parsed_type: parsed.type, shortcode_searched: shortcode,
-        pages_with_ig: pagesWithIg.length, media_api_calls: mediaApiCalls, timings,
+        error: `Conta do Instagram não identificada — selecione a página/conta IG antes de validar o criativo, ou use "Arquivo (Google Drive)".`,
+        suggest_drive: true, shortcode_searched: shortcode, timings,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
