@@ -285,7 +285,9 @@ Deno.serve(async (req) => {
     }
 
     console.log(`[whatsapp] Final total: ${numbers.length} numbers | summary: ${error_summary || "ok"}`);
-    await cacheDiscovery("whatsapp_numbers", ad_account_id, numbers);
+    // Guard non-empty: edge sempre retorna 200 ok:true (inclusive vazio c/ error_summary).
+    // Sem guard, [] de falha transiente clobbaria cache bom.
+    if (numbers.length) await cacheDiscovery("whatsapp_numbers", ad_account_id, numbers);
     return new Response(JSON.stringify({ ok: true, numbers, error_summary, waba_count: wabaCount }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

@@ -40,7 +40,9 @@ Deno.serve(async (req) => {
       savedUrl = data.paging?.next || null;
     }
 
-    await cacheDiscovery("audiences", ad_account_id, audiences);
+    // Guard non-empty: este loop não checa data.error → erro transiente da Meta vira []
+    // "sucesso". Sem guard, [] clobbaria cache bom (reader do front confiaria no vazio).
+    if (audiences.length) await cacheDiscovery("audiences", ad_account_id, audiences);
 
     return new Response(JSON.stringify({ audiences }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
