@@ -478,7 +478,7 @@ export default function PublishForm() {
     else pendingLogsRef.current.push(msg);
   }, []);
 
-  useEffect(() => { checkMetaStatus(); loadMessageTemplates(); }, []);
+  useEffect(() => { checkMetaStatus(); }, []); // modelos são por conta → carregam no selectedAccount, não no mount
   // Ao entrar no modo "Criar mensagem", limpa a seleção de modelo importado — senão o edge
   // preferiria o importado e ignoraria a mensagem manual (precedência importedTemplateJson
   // no buildFase3Creative). Cobre o toggle E o Editar/Duplicar de templates salvos.
@@ -542,6 +542,9 @@ export default function PublishForm() {
   useEffect(() => {
     if (selectedAccount && accessToken) {
       loadAccountContext();
+      loadMessageTemplates(selectedAccount); // modelos salvos DESTA conta
+    } else {
+      setMessageTemplates([]); // sem conta → limpa (senão sobrariam os da conta anterior)
     }
   }, [selectedAccount]);
 
@@ -1078,16 +1081,19 @@ export default function PublishForm() {
     }
   };
 
-  const loadMessageTemplates = async () => {
+  const loadMessageTemplates = async (account = selectedAccount) => {
+    // Templates são POR CONTA DE ANÚNCIO: sem conta → nenhum; senão filtra ESTRITO por ad_account_id.
+    if (!account) { setMessageTemplates([]); return; }
     try {
-      addLog("📡 [modelos] Carregando biblioteca global de modelos de mensagens...");
+      addLog(`📡 [modelos] Carregando modelos salvos da conta ${account}...`);
       const { data, error } = await supabase
         .from("message_templates")
         .select("id, name, greeting, ready_message")
+        .eq("ad_account_id", account)
         .order("created_at", { ascending: false });
       if (!error && data) {
         setMessageTemplates(data);
-        addLog(`✅ [modelos] ${data.length} modelo(s) encontrado(s) — escopo: global do usuário (sem filtro por conta)`);
+        addLog(`✅ [modelos] ${data.length} modelo(s) da conta ${account}`);
       } else {
         addLog(`⚠️ [modelos] Erro ao carregar: ${error?.message || "Desconhecido"}`);
       }
@@ -1098,12 +1104,13 @@ export default function PublishForm() {
 
   const handleSaveTemplate = async () => {
     if (!templateName.trim()) { toast.error("Digite um nome para o modelo."); return; }
+    if (!selectedAccount) { toast.error("Selecione a conta de anúncios antes de salvar o modelo."); return; }
     setSavingTemplate(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { toast.error("Faça login primeiro."); return; }
       const { error } = await supabase.from("message_templates").insert({
-        user_id: user.id, name: templateName.trim(), greeting: greetingText, ready_message: readyMessage,
+        user_id: user.id, ad_account_id: selectedAccount, name: templateName.trim(), greeting: greetingText, ready_message: readyMessage,
       });
       if (error) throw error;
       toast.success("Modelo salvo!");
