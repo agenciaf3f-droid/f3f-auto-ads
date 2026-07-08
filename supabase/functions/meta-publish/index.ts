@@ -134,18 +134,30 @@ async function acquireAdsetDedupeLock(params: {
   }
 
   const latest = existing?.[0];
-  if (latest) {
+  // Job "failed" NÃO bloqueia: o auto-retry no #4 re-publica o MESMO fingerprint — se um attempt
+  // anterior falhou (limite/erro), a re-tentativa tem que passar (senão o retry se auto-bloqueia
+  // como "duplicada", pior que o trip). Só bloqueia execução EM ANDAMENTO (in_progress) ou já
+  // concluída com sucesso (dedup real).
+  // in_progress "preso" (publish morreu/timeout na edge ANTES de finalizar) é tratado como MORTO
+  // se > STALE_INPROGRESS_MS (> o timeout da edge, ~150s) → também não bloqueia, senão travaria
+  // todo retry até a janela de 10min passar.
+  const STALE_INPROGRESS_MS = 5 * 60 * 1000;
+  if (latest && latest.status !== "failed") {
     const isInProgress = latest.status === "in_progress";
-    const warningMessage = isInProgress
-      ? `Publicação duplicada bloqueada: já existe uma execução em andamento para este payload (fingerprint=${params.fingerprint.slice(0, 12)}).`
-      : `Publicação duplicada bloqueada: este payload já foi enviado recentemente. Aguarde ${params.windowMinutes} minutos para reenviar.`;
+    const ageMs = latest.created_at ? Date.now() - new Date(latest.created_at).getTime() : Infinity;
+    const staleInProgress = isInProgress && ageMs > STALE_INPROGRESS_MS;
+    if (!staleInProgress) {
+      const warningMessage = isInProgress
+        ? `Publicação duplicada bloqueada: já existe uma execução em andamento para este payload (fingerprint=${params.fingerprint.slice(0, 12)}).`
+        : `Publicação duplicada bloqueada: este payload já foi enviado recentemente. Aguarde ${params.windowMinutes} minutos para reenviar.`;
 
-    return {
-      allowed: false,
-      warningMessage,
-      existingJobId: latest.id,
-      existingStatus: latest.status,
-    };
+      return {
+        allowed: false,
+        warningMessage,
+        existingJobId: latest.id,
+        existingStatus: latest.status,
+      };
+    }
   }
 
   const requestJson = {
@@ -2770,6 +2782,9 @@ Deno.serve(async (req) => {
 
       // 3. ADAPTADO: 1 único adset com TODOS os públicos combinados (2-10). COMPLETO: loop
       // existente (inalterado, byte-idêntico ao original — só movido pro else) — 1 adset/audience.
+      // Captura o 1º erro Meta (objeto) do fluxo FASE 2 pra surfacar error_code/is_transient na
+      // resposta — senão o frontend não detecta rate-limit (#4) e o auto-retry do publish não dispara.
+      let firstFase2Error: any = null;
       if (fase2CombinedAdset) {
         const combinedAudNamesRaw = fase2AudienceIds.map((id, i) => fase2AudienceNames[i] || id).join(" + ");
         // Meta limita nome de adset a 255 chars — trunca a lista de públicos se necessário.
@@ -2784,6 +2799,7 @@ Deno.serve(async (req) => {
             return respond({ ok: false, step: "idempotency", campaign_id: campaignId, warning: true, error_message: adsetResult.warning });
           }
           if (adsetResult.error) {
+            if (!firstFase2Error) firstFase2Error = adsetResult.error;
             failures.push({ index: 1, name: "combined", step: "adset", reason: adsetResult.error.message || JSON.stringify(adsetResult.error) });
           } else {
             const adsetId = adsetResult.id!;
@@ -2805,6 +2821,7 @@ Deno.serve(async (req) => {
             if (adData.error) {
               const errDetail = `${adData.error.message} | code=${adData.error.code} | subcode=${adData.error.error_subcode}`;
               logs.push({ step: "ad_1", status: "error", ts: ts(), detail: errDetail });
+              if (!firstFase2Error) firstFase2Error = adData.error;
               failures.push({ index: 1, name: "combined", step: "ad", reason: errDetail });
             } else {
               adIds.push(adData.id);
@@ -2829,6 +2846,7 @@ Deno.serve(async (req) => {
           return respond({ ok: false, step: "idempotency", campaign_id: campaignId, warning: true, error_message: adsetResult.warning });
         }
         if (adsetResult.error) {
+          if (!firstFase2Error) firstFase2Error = adsetResult.error;
           failures.push({ index: idx, name: audId, step: "adset", reason: adsetResult.error.message || JSON.stringify(adsetResult.error) });
           continue;
         }
@@ -2852,6 +2870,7 @@ Deno.serve(async (req) => {
         if (adData.error) {
           const errDetail = `${adData.error.message} | code=${adData.error.code} | subcode=${adData.error.error_subcode}`;
           logs.push({ step: `ad_${idx}`, status: "error", ts: ts(), detail: errDetail });
+          if (!firstFase2Error) firstFase2Error = adData.error;
           failures.push({ index: idx, name: audId, step: "ad", reason: errDetail });
           continue;
         }
@@ -2870,6 +2889,11 @@ Deno.serve(async (req) => {
         ads_created: adsCreated,
         exclusion_audience_id: exclusionAudienceId,
         failures: failures.length > 0 ? failures : undefined,
+        // Surfaca o 1º erro Meta pro frontend detectar rate-limit (#4) e auto-retomar o publish.
+        error_code: firstFase2Error?.code ?? undefined,
+        error_subcode: firstFase2Error?.error_subcode ?? undefined,
+        error_message: firstFase2Error ? (firstFase2Error.error_user_msg || firstFase2Error.message) : undefined,
+        is_transient: firstFase2Error ? isTransientMeta(firstFase2Error) : undefined,
       });
     }
 
