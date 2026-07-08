@@ -1079,12 +1079,43 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     const links: string[] = [];
     for (const c of cells) (isLink(c) ? links : names).push(c);
 
-    // Pareia por índice até o MÁXIMO (o que faltar fica vazio p/ o usuário completar).
-    const n = Math.max(names.length, links.length);
+    const hasNames = names.length > 0;
+    const hasLinks = links.length > 0;
+
+    // SÓ LINKS colados (o gestor já pôs os nomes na mão): PREENCHE os links nos criativos
+    // existentes por ordem, MANTENDO os nomes. Estende se colou mais links que criativos.
+    if (hasLinks && !hasNames) {
+      setCreatives(prev => {
+        const count = Math.max(prev.length, links.length);
+        return Array.from({ length: count }, (_, i) => {
+          const base = prev[i] ?? blankCreative();
+          const link = (links[i] ?? base.link ?? "").trim();
+          return { ...base, link, type: link ? detectType(link) : base.type, validation: null };
+        });
+      });
+      toast.success(`${links.length} link(s) colado(s) — nomes mantidos.`);
+      return;
+    }
+
+    // SÓ NOMES colados: PREENCHE os nomes, MANTENDO os links dos criativos existentes. Estende.
+    if (hasNames && !hasLinks) {
+      setCreatives(prev => {
+        const count = Math.max(prev.length, names.length);
+        return Array.from({ length: count }, (_, i) => {
+          const base = prev[i] ?? blankCreative();
+          return { ...base, name: (names[i] ?? base.name ?? "").trim(), validation: null };
+        });
+      });
+      toast.success(`${names.length} nome(s) colado(s) — links mantidos.`);
+      return;
+    }
+
+    // NOME + LINK juntos (2 colunas do Sheets) → substitui pela lista pareada (batch fresco).
+    const count = Math.max(names.length, links.length);
     if (names.length !== links.length) {
       toast.warning(`${names.length} nome(s), ${links.length} link(s) — pareei por ordem; complete o que faltar.`);
     }
-    const paired: CreativeItem[] = Array.from({ length: n }, (_, i) => {
+    const paired: CreativeItem[] = Array.from({ length: count }, (_, i) => {
       const link = (links[i] || "").trim();
       return {
         ...blankCreative(),
