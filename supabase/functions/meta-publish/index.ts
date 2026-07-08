@@ -616,17 +616,18 @@ async function uploadDriveCreative(
   const guard = assertSafeDriveUrl(driveLink);
   if (!guard.ok) return { error: guard.error };
   const fileId = extractDriveFileId(driveLink);
+  // A1/SSRF: EXIGE fileId. Link de ARQUIVO do Drive sempre tem id extraível; sem id (link de
+  // pasta/URL inválida) → rejeita antes de QUALQUER download. Com fileId, toda candidateUrl é
+  // reconstruída sobre host Google allow-listed — nunca o driveLink cru (o `else` era o vetor SSRF:
+  // fetch(driveLink, {redirect:"follow"}) seguia link arbitrário). assertSafeDriveUrl acima é defesa extra.
+  if (!fileId) return { error: "Link inválido — use o link do ARQUIVO do Google Drive (não de pasta)." };
   // Candidatos em ordem: Drive API key (bypassa interstitial) → uc?confirm=t → usercontent.
   const driveApiKey = Deno.env.get("GOOGLE_DRIVE_API_KEY");
-  const apiUrl = fileId && driveApiKey ? buildDriveApiUrl(fileId, driveApiKey) : null;
+  const apiUrl = driveApiKey ? buildDriveApiUrl(fileId, driveApiKey) : null;
   const candidateUrls: string[] = [];
-  if (fileId) {
-    if (apiUrl) candidateUrls.push(apiUrl);
-    candidateUrls.push(`https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`);
-    candidateUrls.push(`https://drive.usercontent.google.com/download?id=${fileId}&export=download&authuser=0&confirm=t`);
-  } else {
-    candidateUrls.push(driveLink);
-  }
+  if (apiUrl) candidateUrls.push(apiUrl);
+  candidateUrls.push(`https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`);
+  candidateUrls.push(`https://drive.usercontent.google.com/download?id=${fileId}&export=download&authuser=0&confirm=t`);
 
   // Fast-path SEM buffer na edge: com a API key do Drive, a URL devolve bytes crus
   // (sem o HTML interstitial de vírus/quota). Mandamos file_url e a Meta baixa o
@@ -1537,10 +1538,10 @@ Deno.serve(async (req) => {
     // (criação de adset). Resolvemos on-demand no 1º build de adset e no MÁXIMO uma vez. Em CBO
     // criativo 2..N (existing_adset_id → adset reusado, nenhum adset criado) NÃO roda — corta 1-2
     // chamadas Meta por criativo. Resultado do adset criado fica IDÊNTICO ao anterior.
-    let dsaResolved = false;
-    const ensureDsaResolved = async () => {
-      if (dsaResolved) return;
-      dsaResolved = true;
+    // Memoiza a PROMISE (não um bool): se um dia a criação de adset for paralelizada (Promise.all),
+    // dois callers concorrentes awaitam a MESMA promise → nenhum segue com beneficiário ainda vazio.
+    let dsaPromise: Promise<void> | null = null;
+    const ensureDsaResolved = (): Promise<void> => (dsaPromise ??= (async () => {
       try {
         const aRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/adsets?fields=regional_regulation_identities&limit=50&access_token=${access_token}`);
         const aData = await aRes.json();
@@ -1572,7 +1573,7 @@ Deno.serve(async (req) => {
       }
       dsaBeneficiary = userBenef || accountDsaRec || "";
       console.log(`[publish] DSA resolvido: universal_beneficiary="${universalBeneficiary}" universal_payer="${universalPayer}" | fallback_string="${dsaBeneficiary}"`);
-    };
+    })());
     const applyDsa = (p: Record<string, any>) => {
       if (universalBeneficiary) {
         // anunciante verificado por ID — exatamente o que as campanhas que rodam nesta conta usam
