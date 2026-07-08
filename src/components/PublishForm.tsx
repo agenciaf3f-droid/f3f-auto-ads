@@ -191,9 +191,32 @@ type PresetId = typeof PRESETS[number]["id"];
 
 const UTM_DEFAULT = "utm_source=FB&utm_campaign={{campaign.name}}|{{campaign.id}}&utm_medium={{adset.name}}|{{adset.id}}&utm_content={{ad.name}}|{{ad.id}}&utm_term={{placement}}";
 
-// Cache das contas de anúncios (localStorage). Page load lê daqui = 0 chamada Meta;
-// só o botão manual "Carregar novas contas" re-busca. Limpo no disconnect.
-const AD_ACCOUNTS_CACHE_KEY = "f3f:adAccounts:v1";
+// Cache de descoberta COMPARTILHADO no banco (tabela meta_discovery_cache, gravada pelos edges).
+// Frontend LÊ daqui primeiro em cada load* = 0 chamada Meta. kind ∈ {ad_accounts, audiences,
+// identity, imported_templates, whatsapp_numbers, pixels}; account_id = conta (ou "shared"
+// p/ ad_accounts). Retorna o `data` só se NÃO-vazio (array com itens / objeto com keys); senão null.
+// Loga o error do supabase-js (NÃO lança em falha de RLS) — guard anti-silêncio.
+async function readDiscoveryCache<T = unknown>(kind: string, accountId: string): Promise<T | null> {
+  try {
+    const { data, error } = await supabase
+      .from("meta_discovery_cache")
+      .select("data")
+      .eq("kind", kind)
+      .eq("account_id", accountId)
+      .maybeSingle();
+    if (error) {
+      console.warn(`[discovery-cache] leitura ${kind}/${accountId} falhou: ${error.message}`);
+      return null;
+    }
+    const d = data?.data as unknown;
+    if (Array.isArray(d)) return d.length ? (d as T) : null;
+    if (d && typeof d === "object" && Object.keys(d).length > 0) return d as T;
+    return null;
+  } catch (e) {
+    console.warn(`[discovery-cache] leitura ${kind}/${accountId} erro: ${e instanceof Error ? e.message : "?"}`);
+    return null;
+  }
+}
 
 let creativeCounter = 0;
 function nextCreativeId() { return `cr_${++creativeCounter}_${Date.now()}`; }
@@ -218,26 +241,6 @@ const RATE_LIMIT_CODES = new Set([4, 17, 32, 341, 613]); // rate-limit da Meta: 
 const FAST_RETRY_CODES = new Set([1, 2]);   // transiente curto: vale re-tentar com backoff
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-// Cache dos modelos de mensagem (FASE 3) por CONTA no localStorage. fetchImportedMetaTemplates
-// pagina ~10 chamadas /adcreatives a cada load; se rate-limita, volta 0 → validação diz "sem
-// mensagem". Com cache: load lê daqui (0 chamada Meta); só o botão "Buscar novamente" re-busca.
-const MSG_TEMPLATES_CACHE_PREFIX = "f3f:msgTemplates:v1:";
-const readTemplatesCache = (account: string): ImportedMetaTemplate[] | null => {
-  try {
-    const raw = localStorage.getItem(MSG_TEMPLATES_CACHE_PREFIX + account);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-    }
-  } catch { /* cache corrompido / modo privado — ignora */ }
-  return null;
-};
-const writeTemplatesCache = (account: string, templates: ImportedMetaTemplate[]) => {
-  // Só grava resultado NÃO-vazio: nunca sobrescreve um cache bom com [] (rate-limit/erro).
-  if (!templates.length) return;
-  try { localStorage.setItem(MSG_TEMPLATES_CACHE_PREFIX + account, JSON.stringify(templates)); } catch { /* quota/privado */ }
-};
 
 // Pool de concorrência: no máx `limit` workers simultâneos consumindo `items` (cursor síncrono = atômico no event loop).
 async function runPool<T>(items: T[], limit: number, worker: (item: T) => Promise<void>, staggerMs = 0): Promise<void> {
@@ -663,16 +666,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       }
     } catch { /* ignore */ }
 
-    // ===== STEP 2+3: dispara fetch IG (só se não veio do cache) junto com loadAudiences =====
-    const igFetchPromise = identityFromCache ? null : fetchIgAccountsForAdAccount(accessToken, selectedAccount);
-    if (!identityFromCache) addLog(`📡 [pipeline] Buscando contas IG autorizadas para ${selectedAccount}...`);
-    await loadAudiences();
-
-    // ===== STEP 3: LOAD IDENTITY (só se não veio do cache) =====
-    if (!identityFromCache) {
-    try {
-      const { ig_accounts: igAccounts, diagnostic, dsa_beneficiary } = await igFetchPromise!;
-      if (dsa_beneficiary) { setSuggestedBeneficiary(dsa_beneficiary); addLog(`🏷️ [pipeline] Beneficiário da conta (auto-preenchido): ${dsa_beneficiary}`); }
+    // resolveIdentity: MESMA resolução p/ o cache-do-banco e p/ o fetch-da-Meta (senão divergem →
+    // page/IG/whatsapp inconsistentes). Recebe igAccounts + dsa_beneficiary (+ diagnostic só p/
+    // log/erro). Seta os 6 setIdentity*, re-cacheia na sessão, e RETORNA o pageId resolvido.
+    const resolveIdentity = (igAccounts: any[], dsaBeneficiary: string | null, diagnostic: any[] = []): string | null => {
+      if (dsaBeneficiary) { setSuggestedBeneficiary(dsaBeneficiary); addLog(`🏷️ [pipeline] Beneficiário da conta (auto-preenchido): ${dsaBeneficiary}`); }
       addLog(`📄 [pipeline] contas IG autorizadas: ${igAccounts.length}`);
       for (const d of diagnostic) {
         addLog(`   🔎 ${d.endpoint} → ${d.status}${d.count !== undefined ? ` (${d.count})` : ""}${d.detail ? ` | ${d.detail}` : ""}`);
@@ -727,16 +725,15 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       setIdentityWhatsappId(foundWhatsappId);
       setIdentityWhatsappPhone(foundWhatsappPhone);
       setIdentityLoaded(true);
-      resolvedPageId = foundPageId;
 
-      // Cacheia identidade resolvida por conta (só quando achou IG) p/ próxima vez ser instantâneo.
+      // Re-cacheia identidade resolvida na sessão (só quando achou IG) p/ próxima vez ser instantâneo.
       if (foundIgActorId) {
         try {
           sessionStorage.setItem(identityCacheKey, JSON.stringify({
             pageId: foundPageId, pageName: foundPageName,
             igActorId: foundIgActorId, igUsername: foundIgUsername,
             whatsappId: foundWhatsappId, whatsappPhone: foundWhatsappPhone,
-            dsaBeneficiary: dsa_beneficiary || null,
+            dsaBeneficiary: dsaBeneficiary || null,
             _cachedAt: Date.now(),
           }));
         } catch { /* ignore */ }
@@ -747,15 +744,35 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         setIdentityError(`Nenhuma conta Instagram autorizada encontrada. Tentativas: ${diagSummary || "n/a"}`);
       }
       addLog(`✅ [pipeline] identidade final: page=${foundPageId}, ig_actor=${foundIgActorId}, ig_user=@${foundIgUsername || "N/A"}, whatsapp_id=${foundWhatsappId || "N/A"}, whatsapp_phone=${foundWhatsappPhone || "N/A"}`);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Erro";
-      addLog(`❌ [pipeline] Erro ao carregar identidade: ${msg}`);
-      setIdentityError(msg);
-      setIdentityLoaded(true);
-    } finally {
-      setIdentityLoading(false);
-    }
-    } // fim do if (!identityFromCache)
+      return foundPageId;
+    };
+
+    // ===== Identidade (cache do banco → senão fetch) + Públicos EM PARALELO =====
+    // Identidade: kind=identity guarda {ig_accounts, dsa_beneficiary}; se tiver IG, resolve dele
+    // SEM chamar a Meta (gate em ig_accounts.length p/ não pinar um "sem IG" cacheado). Senão fetch
+    // (o edge grava o cache). Gera resolvedPageId ANTES do loadFase3Resources (whatsapp depende dele).
+    const identityWork = identityFromCache ? Promise.resolve() : (async () => {
+      try {
+        const dbIdentity = await readDiscoveryCache<{ ig_accounts: any[]; dsa_beneficiary: string | null }>("identity", selectedAccount);
+        if (dbIdentity && dbIdentity.ig_accounts?.length) {
+          addLog(`⚡ [pipeline] Identidade do cache do banco (${dbIdentity.ig_accounts.length} IG) — 0 chamada Meta`);
+          resolvedPageId = resolveIdentity(dbIdentity.ig_accounts, dbIdentity.dsa_beneficiary ?? null, []);
+        } else {
+          addLog(`📡 [pipeline] Buscando contas IG autorizadas para ${selectedAccount}...`);
+          const { ig_accounts, diagnostic, dsa_beneficiary } = await fetchIgAccountsForAdAccount(accessToken, selectedAccount);
+          resolvedPageId = resolveIdentity(ig_accounts, dsa_beneficiary, diagnostic);
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Erro";
+        addLog(`❌ [pipeline] Erro ao carregar identidade: ${msg}`);
+        setIdentityError(msg);
+        setIdentityLoaded(true);
+      } finally {
+        setIdentityLoading(false);
+      }
+    })();
+
+    await Promise.all([loadAudiences(), identityWork]);
 
     // ===== STEPS 4-6 EM PARALELO: (WhatsApp+Templates só FASE 3) + Pixels =====
     // Antes era sequencial com 1.5s de sleep no meio — agora roda tudo junto.
@@ -777,6 +794,13 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     setLoadingPixels(true);
     tasks.push((async () => {
       try {
+        // Cache compartilhado (kind=pixels): se houver pixels, usa e NÃO toca na Meta.
+        const cachedPx = await readDiscoveryCache<AdPixel[]>("pixels", selectedAccount);
+        if (cachedPx) {
+          setPixels(cachedPx);
+          addLog(`✅ [pixels] ${cachedPx.length} pixel(s) do cache (0 chamada Meta)`);
+          return;
+        }
         addLog(`📡 [pixels] Carregando pixels da conta...`);
         const list = await fetchPixels(accessToken, selectedAccount);
         setPixels(list);
@@ -801,17 +825,16 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       loadWhatsappNumbers(pageId),
       (async () => {
         try {
-          // Cache primeiro (por conta): se houver modelos salvos, usa e NÃO toca na Meta.
-          const cached = readTemplatesCache(selectedAccount);
-          if (cached) {
-            setImportedTemplates(cached);
-            addLog(`✅ [imported] ${cached.length} modelo(s) do cache (0 chamada Meta). Use "Buscar novamente" p/ atualizar.`);
+          // Cache compartilhado (kind=imported_templates): se houver modelos, usa e NÃO toca na Meta.
+          const cachedT = await readDiscoveryCache<ImportedMetaTemplate[]>("imported_templates", selectedAccount);
+          if (cachedT) {
+            setImportedTemplates(cachedT);
+            addLog(`✅ [imported] ${cachedT.length} modelo(s) do cache (0 chamada Meta). Use "Buscar novamente" p/ atualizar.`);
             return;
           }
           addLog(`📡 [imported] Buscando modelos de mensagem da conta...`);
           const result = await fetchImportedMetaTemplates(accessToken, selectedAccount);
           setImportedTemplates(result.templates);
-          writeTemplatesCache(selectedAccount, result.templates); // só grava se não-vazio
           addLog(`✅ [imported] ${result.templates.length} modelo(s) extraído(s) (scanned=${result.scanned_adsets}, erros=${result.errors_during_scan})`);
           if (result.error_summary) {
             addLog(`⚠️ [imported] ${result.error_summary}`);
@@ -857,7 +880,6 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       setAccessToken(null);
       setMetaName("");
       setAdAccounts([]);
-      try { localStorage.removeItem(AD_ACCOUNTS_CACHE_KEY); } catch { /* ignore */ }
       setSelectedAccount("");
       setAudiences([]);
       setSelectedAudience("");
@@ -888,50 +910,55 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
   const loadAdAccounts = async () => {
     if (!accessToken) return;
-    // 1) Cache primeiro: se houver contas salvas, usa e NÃO toca na Meta (economiza ~37 chamadas/load).
-    try {
-      const cached = localStorage.getItem(AD_ACCOUNTS_CACHE_KEY);
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setAdAccounts(parsed);
-          addLog(`✅ ${parsed.length} conta(s) do cache (0 chamada Meta). Use "Carregar novas contas" p/ atualizar.`);
-          return;
-        }
-      }
-    } catch { /* cache corrompido → ignora e busca da Meta */ }
-
-    // 2) Sem cache válido: busca da Meta e grava o cache.
+    // 1) Cache compartilhado no banco (kind=ad_accounts, account=shared): se houver contas,
+    //    usa e NÃO toca na Meta (economiza ~37 chamadas/load).
+    const cachedAccounts = await readDiscoveryCache<AdAccount[]>("ad_accounts", "shared");
+    if (cachedAccounts) {
+      setAdAccounts(cachedAccounts);
+      addLog(`✅ ${cachedAccounts.length} conta(s) do cache compartilhado (0 chamada Meta). Use "Atualizar" p/ re-buscar.`);
+      return;
+    }
+    // 2) Sem cache: busca da Meta (o edge grava o cache p/ todos).
     setLoadingAdAccounts(true);
     try {
       addLog("📡 Carregando todas as contas de anúncios...");
       const accounts = await fetchAdAccounts(accessToken);
       setAdAccounts(accounts);
-      try { localStorage.setItem(AD_ACCOUNTS_CACHE_KEY, JSON.stringify(accounts)); } catch { /* quota/privado */ }
       addLog(`✅ ${accounts.length} conta(s) encontrada(s)`);
     } catch (err: unknown) {
-      // Erro → mantém o que tem, NÃO apaga o cache.
       addLog(`❌ Erro ao carregar contas: ${err instanceof Error ? err.message : "Erro"}`);
     } finally {
       setLoadingAdAccounts(false);
     }
   };
 
-  // Botão manual: busca da Meta IGNORANDO o cache e regrava. Única fonte de chamadas Meta p/ contas.
-  const refreshAdAccounts = async () => {
+  // Botão "Atualizar": re-busca TUDO da Meta ignorando o cache (cada edge regrava o cache
+  // compartilhado p/ todos). Sequencial p/ não estourar o rate-limit (#4) da conta em surto.
+  const refreshAll = async (account: string) => {
     if (!accessToken) return;
     setLoadingAdAccounts(true);
     try {
-      addLog("📡 Buscando contas de anúncios na Meta (ignorando cache)...");
-      const accounts = await fetchAdAccounts(accessToken);
+      addLog("📡 [atualizar] Re-buscando contas de anúncios na Meta (ignorando cache)...");
+      const accounts = await fetchAdAccounts(accessToken, true); // force pula o micro-cache de sessão
       setAdAccounts(accounts);
-      try { localStorage.setItem(AD_ACCOUNTS_CACHE_KEY, JSON.stringify(accounts)); } catch { /* quota/privado */ }
-      addLog(`✅ ${accounts.length} conta(s) atualizada(s)`);
-      toast.success(`${accounts.length} conta(s) de anúncios carregada(s).`);
+      addLog(`✅ [atualizar] ${accounts.length} conta(s)`);
+
+      // Recursos da conta atual (sequencial: 1 dependência real é identity→whatsapp; e serial
+      // evita o surto de ~6 edges paginando de uma vez, que re-tripa o #4).
+      if (account) {
+        try { const auds = await fetchAudiences(accessToken, account); setAudiences(auds); addLog(`✅ [atualizar] ${auds.length} público(s)`); } catch (e) { addLog(`⚠️ [atualizar] públicos: ${e instanceof Error ? e.message : "erro"}`); }
+        try { const px = await fetchPixels(accessToken, account); setPixels(px); addLog(`✅ [atualizar] ${px.length} pixel(s)`); } catch (e) { addLog(`⚠️ [atualizar] pixels: ${e instanceof Error ? e.message : "erro"}`); }
+        try { const ig = await fetchIgAccountsForAdAccount(accessToken, account); if (ig.dsa_beneficiary) setSuggestedBeneficiary(ig.dsa_beneficiary); addLog(`✅ [atualizar] identidade re-buscada (${ig.ig_accounts.length} IG)`); } catch (e) { addLog(`⚠️ [atualizar] identidade: ${e instanceof Error ? e.message : "erro"}`); }
+        if (isFase3) {
+          try { const r = await fetchImportedMetaTemplates(accessToken, account); setImportedTemplates(r.templates); addLog(`✅ [atualizar] ${r.templates.length} modelo(s)`); } catch (e) { addLog(`⚠️ [atualizar] modelos: ${e instanceof Error ? e.message : "erro"}`); }
+          try { const w = await fetchWhatsAppNumbers(accessToken, account, identityPageId || undefined); setWhatsappNumbers(w.numbers); addLog(`✅ [atualizar] ${w.numbers.length} número(s) WhatsApp`); } catch (e) { addLog(`⚠️ [atualizar] whatsapp: ${e instanceof Error ? e.message : "erro"}`); }
+        }
+      }
+      toast.success(`Cache atualizado: ${accounts.length} conta(s).`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Erro";
-      addLog(`❌ Erro ao atualizar contas: ${msg}`);
-      toast.error(`Erro ao carregar contas: ${msg}`);
+      addLog(`❌ [atualizar] erro: ${msg}`);
+      toast.error(`Erro ao atualizar: ${msg}`);
     } finally {
       setLoadingAdAccounts(false);
     }
@@ -939,6 +966,13 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
   const loadAudiences = async () => {
     if (!accessToken || !selectedAccount) return;
+    // Cache compartilhado (kind=audiences): se houver públicos, usa e NÃO toca na Meta.
+    const cachedAuds = await readDiscoveryCache<Audience[]>("audiences", selectedAccount);
+    if (cachedAuds) {
+      setAudiences(cachedAuds);
+      addLog(`✅ ${cachedAuds.length} público(s) do cache (0 chamada Meta)`);
+      return;
+    }
     setLoadingAudiences(true);
     try {
       addLog(`📡 Carregando públicos da conta ${selectedAccount}...`);
@@ -978,8 +1012,20 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       // explicitPageId vem direto da resolução de identidade (state ainda pode estar
       // stale aqui). Sem isso, Strategy 1 (page→WABA, a mais confiável) era pulada.
       const pageId = explicitPageId || identityPageId;
-      addLog(`📡 Buscando números de WhatsApp (ad_account=${adAccId || "none"}, page_id=${pageId || "none"})...`);
-      const { numbers: nums, error_summary } = await fetchWhatsAppNumbers(accessToken, adAccId || undefined, pageId || undefined);
+      // Cache compartilhado (kind=whatsapp_numbers): se houver números, usa; senão busca da Meta.
+      // Os números do cache passam pela MESMA lógica de seleção abaixo (identidade/seed).
+      let nums: WhatsAppNumber[];
+      let error_summary: string | undefined;
+      const cachedNums = adAccId ? await readDiscoveryCache<WhatsAppNumber[]>("whatsapp_numbers", adAccId) : null;
+      if (cachedNums) {
+        nums = cachedNums;
+        addLog(`✅ ${nums.length} número(s) de WhatsApp do cache (0 chamada Meta)`);
+      } else {
+        addLog(`📡 Buscando números de WhatsApp (ad_account=${adAccId || "none"}, page_id=${pageId || "none"})...`);
+        const res = await fetchWhatsAppNumbers(accessToken, adAccId || undefined, pageId || undefined);
+        nums = res.numbers;
+        error_summary = res.error_summary;
+      }
       setWhatsappNumbers(nums);
       if (nums.length > 0) {
         addLog(`✅ ${nums.length} número(s) de WhatsApp encontrado(s)`);
@@ -1095,8 +1141,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       addLog(`📡 [imported] Buscando modelos de mensagem da conta ${selectedAccount} (ignorando cache)...`);
       const result = await fetchImportedMetaTemplates(accessToken, selectedAccount);
       if (result.templates.length > 0) {
-        setImportedTemplates(result.templates);
-        writeTemplatesCache(selectedAccount, result.templates); // regrava o cache p/ os próximos loads
+        setImportedTemplates(result.templates); // o edge já regravou o cache do banco p/ os próximos loads
         addLog(`✅ [imported] ${result.templates.length} modelo(s) extraído(s) (scanned=${result.scanned_adsets}, erros=${result.errors_during_scan})`);
       } else if (result.error_summary) {
         // Rate-limit: NÃO zera os modelos atuais nem o cache — só avisa.
@@ -2210,11 +2255,11 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
                 variant="outline"
                 size="sm"
                 className="gap-1 text-xs h-8"
-                onClick={refreshAdAccounts}
+                onClick={() => refreshAll(selectedAccount)}
                 disabled={loadingAdAccounts}
-                title="Busca as contas na Meta (ignora o cache). Use quando criar/ganhar acesso a uma conta nova."
+                title="Re-busca tudo na Meta ignorando o cache e atualiza o cache compartilhado p/ todos. Use quando criar/ganhar acesso a uma conta, público, número novo, etc."
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${loadingAdAccounts ? "animate-spin" : ""}`} /> Carregar novas contas
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingAdAccounts ? "animate-spin" : ""}`} /> Atualizar
               </Button>
             </div>
             {loadingAdAccounts && adAccounts.length === 0 ? (
