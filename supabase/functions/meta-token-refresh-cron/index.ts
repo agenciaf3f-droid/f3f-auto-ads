@@ -4,10 +4,14 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 // Cron diário: refresca tokens Meta que expiram em ≤ 14 dias.
 // Mantém conexão viva sem depender de admin abrir o app.
 Deno.serve(async (req) => {
-  // Proteção simples: exige header de cron secret
+  // Proteção: exige header de cron secret. Fail-CLOSED — sem CRON_SECRET no ambiente,
+  // rejeita tudo (antes ficava ABERTO se a env não estivesse setada).
   const cronSecret = Deno.env.get("CRON_SECRET");
+  if (!cronSecret) {
+    return new Response(JSON.stringify({ error: "CRON_SECRET não configurado" }), { status: 500 });
+  }
   const provided = req.headers.get("x-cron-secret");
-  if (cronSecret && provided !== cronSecret) {
+  if (provided !== cronSecret) {
     return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
   }
 
