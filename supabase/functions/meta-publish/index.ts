@@ -647,7 +647,7 @@ async function uploadDriveCreative(
         if (!upd.error && upd.id) {
           const videoId = upd.id;
           let sawError = false;
-          for (let i = 0; i < 10; i++) {
+          for (let i = 0; i < 5; i++) {
             await new Promise((r) => setTimeout(r, 2500));
             try {
               const stRes = await fetch(`https://graph.facebook.com/v25.0/${videoId}?fields=status&access_token=${accessToken}`);
@@ -762,7 +762,7 @@ async function uploadDriveCreative(
     const videoId = uploadData.id;
     // Poll status pra evitar criar creative WITH_ISSUES (#1487713/#2490446).
     // Meta processa async; status="error" significa upload corrompido (ex: file_url HTML).
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 4; i++) {
       await new Promise(r => setTimeout(r, 2500));
       try {
         const stRes = await fetch(`https://graph.facebook.com/v25.0/${videoId}?fields=status&access_token=${accessToken}`);
@@ -855,8 +855,11 @@ async function resolveVideoThumbnailField(
   let thumbUri = "";
   let pictureFallback = "";
   let attemptsSincePicture = 0;
-  const GRACE_ATTEMPTS = 8; // ~32s (4s/poll) de graça pro thumbnail bom, depois de já ter o picture
-  for (let attempt = 0; attempt < 30; attempt++) {
+  // Poll de thumbnail cortado (30→3, graça 8→1): cada leitura é uma chamada Meta e queimava o
+  // rate-limit do app (#4) — ~30 GETs por vídeo quando a thumb do Drive falha (Google limitando).
+  // Aceita o `picture` (1º frame) já na 1ª leitura; se não vier em 3 tentativas, a Meta gera a capa.
+  const GRACE_ATTEMPTS = 1;
+  for (let attempt = 0; attempt < 3; attempt++) {
     await new Promise((r) => setTimeout(r, 4000));
     try {
       const r = await fetch(`https://graph.facebook.com/v25.0/${videoId}?fields=status,picture,thumbnails{uri,is_preferred}&access_token=${accessToken}`);
