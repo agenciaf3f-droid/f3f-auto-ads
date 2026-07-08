@@ -498,6 +498,8 @@ async function resolveInstagramMediaId(
   knownPageId?: string,
   knownIgActorId?: string,
   logs: StepLog[] = [],
+  preResolvedMediaId?: string,
+  preResolvedIgAccountId?: string,
 ): Promise<{
   instagram_media_id?: string;
   ig_account_id?: string;
@@ -507,6 +509,19 @@ async function resolveInstagramMediaId(
   media_type?: string;
   error?: string;
 }> {
+  // Onda 2 — corta o scan (1-8 chamadas Meta por criativo IG) quando o meta-validate-creative
+  // JÁ resolveu o media_id p/ ESTE criativo. Determinístico: o validate varre a MESMA conta IG
+  // (fast path por ig_account_id) pelo MESMO shortcode → MESMO id. Só corta com AMBOS presentes
+  // (media_id + ig_account_id) → garante o actor correto, pareado ao dono da mídia. Sem os dois,
+  // cai no scan normal (fallback intacto).
+  const preMedia = (preResolvedMediaId || "").trim();
+  const preIg = (preResolvedIgAccountId || "").trim();
+  if (preMedia && preIg) {
+    console.log(`[ig_media_resolve] PRE-RESOLVED (validate) media_id=${preMedia}, ig=${preIg} — scan pulado`);
+    logs.push({ step: "ig_media_resolve", status: "success", ts: ts(), detail: `media_id=${preMedia}, ig_actor=${preIg} (pré-resolvido pelo validate; scan pulado)` });
+    return { instagram_media_id: preMedia, ig_account_id: preIg, page_id: knownPageId };
+  }
+
   const normalizeUrl = (value?: string) => (value || "").trim().toLowerCase().split("?")[0].replace(/\/+$/, "");
 
   const normalizedLink = normalizeUrl(igLink);
@@ -957,6 +972,8 @@ async function buildFase1Creative(
   igActorId: string | undefined,
   igUsername: string | undefined,
   logs: StepLog[],
+  preResolvedMediaId?: string,
+  preResolvedIgAccountId?: string,
 ): Promise<{ spec?: Record<string, any>; error?: string }> {
   const igProfileLink = igUsername ? `https://www.instagram.com/${igUsername}/` : `https://www.instagram.com/`;
   const isIgLink = creativeType === "instagram" || (!creativeType && creativeLink?.includes("instagram.com"));
@@ -965,7 +982,7 @@ async function buildFase1Creative(
   console.log(`[FASE1-creative] type=${creativeType}, isIg=${isIgLink}, isDrive=${isDriveLink}`);
 
   if (isIgLink) {
-    const result = await resolveInstagramMediaId(accessToken, adAccountId, creativeLink, pageId, igActorId, logs);
+    const result = await resolveInstagramMediaId(accessToken, adAccountId, creativeLink, pageId, igActorId, logs, preResolvedMediaId, preResolvedIgAccountId);
     if (result.error) return { error: result.error };
     if (!result.instagram_media_id) return { error: "instagram_media_id não resolvido." };
 
@@ -1110,6 +1127,8 @@ async function buildFase2Creative(
   pageId: string,
   igActorId: string | undefined,
   logs: StepLog[],
+  preResolvedMediaId?: string,
+  preResolvedIgAccountId?: string,
 ): Promise<{ spec?: Record<string, any>; error?: string; videoId?: string }> {
   const isIgLink = creativeType === "instagram" || (!creativeType && creativeLink?.includes("instagram.com"));
   const isDriveLink = creativeType === "drive" || (!creativeType && (creativeLink?.includes("drive.google.com") || creativeLink?.includes("docs.google.com")));
@@ -1118,7 +1137,7 @@ async function buildFase2Creative(
   // Pra Drive, faz upload via uploadDriveCreative (que já existe no projeto).
   // Audience exclusão é tentada DEPOIS — se falhar, segue sem ela.
   if (isIgLink) {
-    const result = await resolveInstagramMediaId(accessToken, adAccountId, creativeLink, pageId, igActorId, logs);
+    const result = await resolveInstagramMediaId(accessToken, adAccountId, creativeLink, pageId, igActorId, logs, preResolvedMediaId, preResolvedIgAccountId);
     if (result.error) return { error: result.error };
     if (!result.instagram_media_id) return { error: "instagram_media_id não resolvido." };
     const resolvedIgActor = result.ig_account_id || igActorId;
@@ -1177,6 +1196,8 @@ async function buildFase3LpCreative(
   igActorId: string | undefined,
   lpUrl: string,
   logs: StepLog[],
+  preResolvedMediaId?: string,
+  preResolvedIgAccountId?: string,
 ): Promise<{ spec?: Record<string, any>; error?: string }> {
   if (!lpUrl) return { error: "URL de destino (lp_url) ausente." };
   const callToAction = { type: "LEARN_MORE", value: { link: lpUrl } };
@@ -1185,7 +1206,7 @@ async function buildFase3LpCreative(
   const isDriveLink = creativeType === "drive" || (!creativeType && (creativeLink?.includes("drive.google.com") || creativeLink?.includes("docs.google.com")));
 
   if (isIgLink) {
-    const result = await resolveInstagramMediaId(accessToken, adAccountId, creativeLink, pageId, igActorId, logs);
+    const result = await resolveInstagramMediaId(accessToken, adAccountId, creativeLink, pageId, igActorId, logs, preResolvedMediaId, preResolvedIgAccountId);
     if (result.error) return { error: result.error };
     if (!result.instagram_media_id) return { error: "instagram_media_id não resolvido." };
     const resolvedIgActor = result.ig_account_id || igActorId;
@@ -1251,6 +1272,8 @@ async function buildFase3Creative(
   readyMessage: string | undefined,
   importedTemplateJson: string | undefined,
   logs: StepLog[],
+  preResolvedMediaId?: string,
+  preResolvedIgAccountId?: string,
 ): Promise<{ spec?: Record<string, any>; error?: string }> {
   // ── FIXED by preset ──
   const waLink = buildWhatsAppLink(whatsappPhone, greetingText, readyMessage);
@@ -1274,7 +1297,7 @@ async function buildFase3Creative(
 
   if (isIgLink) {
     // IG source: use source_instagram_media_id + call_to_action
-    const result = await resolveInstagramMediaId(accessToken, adAccountId, creativeLink, pageId, igActorId, logs);
+    const result = await resolveInstagramMediaId(accessToken, adAccountId, creativeLink, pageId, igActorId, logs, preResolvedMediaId, preResolvedIgAccountId);
     if (result.error) return { error: result.error };
     if (!result.instagram_media_id) return { error: "instagram_media_id não resolvido." };
 
@@ -1404,6 +1427,7 @@ Deno.serve(async (req) => {
       creatives,
       identity,
       creative_link, creative_type, creative_name,
+      resolved_instagram_media_id, resolved_ig_account_id,
       whatsapp_number, whatsapp_number_id, location_targeting, cta_text, greeting_text, ready_message,
       imported_template_json,
       lp_url, pixel_id, custom_event_type,
@@ -1489,10 +1513,12 @@ Deno.serve(async (req) => {
     console.log(`[publish] ═══════════════════════════════════════════`);
 
     // Build creatives list
-    const creativesList: { type: string; link: string; name: string }[] =
+    // resolved_instagram_media_id/resolved_ig_account_id: dica opcional do meta-validate-creative
+    // (por criativo). Presente → buildOne pula o re-scan de mídia IG no publish (Onda 2).
+    const creativesList: { type: string; link: string; name: string; resolved_instagram_media_id?: string; resolved_ig_account_id?: string }[] =
       creatives && creatives.length > 0
         ? creatives
-        : [{ type: creative_type, link: creative_link, name: creative_name || ad_name || "Ad" }];
+        : [{ type: creative_type, link: creative_link, name: creative_name || ad_name || "Ad", resolved_instagram_media_id, resolved_ig_account_id }];
 
     // --- Resolve Page & IG ---
     let pageId: string;
@@ -1601,15 +1627,19 @@ Deno.serve(async (req) => {
       const buildOne = async (cr: typeof creativesList[number], ci: number): Promise<{ spec?: Record<string, any>; error?: string }> => {
         console.log(`[publish] creative ${ci + 1}/${creativesList.length}: type=${cr.type}, name=${cr.name}, builder=${presetLabel}`);
         logs.push({ step: "resolve_creative", status: "start", ts: ts(), detail: `criativo ${ci + 1}/${creativesList.length} "${cr.name}" (type=${cr.type}, link=${cr.link}, builder=${presetLabel})` });
+        // Onda 2: se o validate-creative já resolveu (media_id + ig_account_id), passa adiante
+        // → resolveInstagramMediaId pula o scan. Sem os dois → scan normal (fallback).
+        const preMediaId = cr.resolved_instagram_media_id;
+        const preIgAccountId = cr.resolved_ig_account_id;
         if (isVideoEngagementPreset) {
-          return buildFase2Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, logs);
+          return buildFase2Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, logs, preMediaId, preIgAccountId);
         } else if (isWebsitePreset) {
-          return buildFase3LpCreative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, lp_url || "", logs);
+          return buildFase3LpCreative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, lp_url || "", logs, preMediaId, preIgAccountId);
         } else if (isWhatsAppPreset) {
-          return buildFase3Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, whatsapp_number || "", greeting_text, ready_message, imported_template_json, logs);
+          return buildFase3Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, whatsapp_number || "", greeting_text, ready_message, imported_template_json, logs, preMediaId, preIgAccountId);
         } else {
           // FASE 1 OR generic fallback (mesmo builder)
-          return buildFase1Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, identity?.instagram_username || undefined, logs);
+          return buildFase1Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, identity?.instagram_username || undefined, logs, preMediaId, preIgAccountId);
         }
       };
 
