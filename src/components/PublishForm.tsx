@@ -1629,7 +1629,20 @@ export default function PublishForm() {
     checks.push({ label: "Nome Gerado", ok: !!generatedName || campaignStructure === "existing", detail: generatedName || (campaignStructure === "existing" ? "campanha existente" : "ausente") });
     checks.push({ label: "Identidade (Página)", ok: !!identityPageId, detail: identityPageName || "ausente" });
     checks.push({ label: "Identidade (Instagram)", ok: !!identityIgActorId, detail: identityIgUsername ? `@${identityIgUsername}` : (identityIgActorId || "ausente") });
-    checks.push({ label: "Criativos", ok: finalCreatives.every(c => c.validation?.ok), detail: `${finalCreatives.filter(c => c.validation?.ok).length}/${finalCreatives.length} validados` });
+    // "Criativos" é INFORMATIVO — NÃO trava o publish. A validação de mídia (Drive/IG) não é o
+    // gate: o publish é quem resolve/baixa a mídia e mostra o motivo REAL se falhar de verdade.
+    // O ✗ por-criativo continua visível na lista; aqui só avisa, sem derrubar validationResult.valid.
+    {
+      const okCount = finalCreatives.filter(c => c.validation?.ok).length;
+      const failCount = finalCreatives.length - okCount;
+      checks.push({
+        label: "Criativos",
+        ok: true,
+        detail: failCount > 0
+          ? `${okCount}/${finalCreatives.length} validados — ⚠ ${failCount} não validaram; pode publicar (o publish resolve a mídia e mostra o motivo se falhar)`
+          : `${okCount}/${finalCreatives.length} validados`,
+      });
+    }
     if (isFase3) {
       checks.push({ label: "WhatsApp", ok: !!selectedWhatsappId && !!selectedWhatsapp?.phone, detail: selectedWhatsapp?.display || whatsappError || "não puxado" });
       checks.push({ label: "CTA", ok: true, detail: "WHATSAPP_MESSAGE (automático)" });
