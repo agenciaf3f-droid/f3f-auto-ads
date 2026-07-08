@@ -134,7 +134,11 @@ async function acquireAdsetDedupeLock(params: {
   }
 
   const latest = existing?.[0];
-  if (latest) {
+  // Job "failed" NÃO bloqueia: o auto-retry no #4 re-publica o MESMO fingerprint — se um attempt
+  // anterior falhou (limite/erro), a re-tentativa tem que passar (senão o retry se auto-bloqueia
+  // como "duplicada", pior que o trip). Só bloqueia execução em andamento (in_progress) ou já
+  // concluída com sucesso (dedup real).
+  if (latest && latest.status !== "failed") {
     const isInProgress = latest.status === "in_progress";
     const warningMessage = isInProgress
       ? `Publicação duplicada bloqueada: já existe uma execução em andamento para este payload (fingerprint=${params.fingerprint.slice(0, 12)}).`
