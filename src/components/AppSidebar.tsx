@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Megaphone, Users, Settings, Gauge, History, ShieldCheck } from "lucide-react";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/sidebar";
 import { fetchMetaStatus } from "@/lib/meta-api";
 import { isCurrentUserAdmin } from "@/lib/admin";
+import { usePublishing } from "@/contexts/PublishingContext";
 
 type NavItem = {
   label: string;
@@ -68,6 +69,16 @@ function MetaStatusDot() {
 
 export default function AppSidebar() {
   const location = useLocation();
+  const { publishing } = usePublishing();
+  // Guard de navegação: sair da página de publicação ("/") durante o publish desmonta o PublishForm
+  // (é rota) mas o loop de publish continua invisível → desync/duplicata. Confirma antes de sair.
+  // Só bloqueia SAIR de "/" (voltar pra "/" ou navegar entre outras abas já saídas não re-pergunta).
+  const guardNav = (e: MouseEvent<HTMLAnchorElement>, to: string) => {
+    if (publishing && location.pathname === "/" && to !== "/" &&
+        !window.confirm("Publicação em andamento. Se sair, ela continua mas você perde o acompanhamento. Sair mesmo?")) {
+      e.preventDefault();
+    }
+  };
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
@@ -96,7 +107,7 @@ export default function AppSidebar() {
                     tooltip={item.label}
                     className="data-[active=true]:border-l-2 data-[active=true]:border-sidebar-primary data-[active=true]:bg-sidebar-primary/10 data-[active=true]:text-sidebar-primary"
                   >
-                    <Link to={item.to}>
+                    <Link to={item.to} onClick={(e) => guardNav(e, item.to)}>
                       <item.icon />
                       <span>{item.label}</span>
                       {item.to === "/settings" && <MetaStatusDot />}

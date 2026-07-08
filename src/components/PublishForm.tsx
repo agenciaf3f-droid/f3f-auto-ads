@@ -41,6 +41,7 @@ import IDDisplay from "@/components/IDDisplay";
 import LocationSelector, { type LocationItem } from "@/components/LocationSelector";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { supabase } from "@/integrations/supabase/client";
+import { usePublishing } from "@/contexts/PublishingContext";
 
 interface AdAccount { id: string; name: string }
 interface Audience { id: string; name: string; type: "custom" | "saved"; targeting_spec?: any }
@@ -372,6 +373,8 @@ export default function PublishForm() {
   const [loadingCampaigns, setLoadingCampaigns] = useState(false);
   const [loadingAdAccounts, setLoadingAdAccounts] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Sinal global de publicação em andamento (guard de navegação + beforeunload no AppLayout).
+  const { setPublishing } = usePublishing();
   const [loadingAudiences, setLoadingAudiences] = useState(false);
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [validatedPayload, setValidatedPayload] = useState<Record<string, unknown> | null>(null);
@@ -1781,6 +1784,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
     }
 
     setLoading(true);
+    setPublishing(true); // liga o guard de navegação/beforeunload (finally desliga em todos os caminhos)
     setPublishResult(null);
     addLog(`🚀 [publish] Usando payload previamente validado (NÃO remontando)`);
     addLog(`📋 [publish] Preset: ${selectedPreset.label}`);
@@ -2152,6 +2156,7 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
       toast.error("Falha ao publicar");
     } finally {
       setLoading(false);
+      setPublishing(false); // desliga o guard de navegação/beforeunload em TODOS os caminhos
       setPublishStatus("");
     }
   };
