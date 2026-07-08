@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { extractDriveFileId, buildDriveApiUrl } from "../_shared/drive.ts";
+import { assertSafeDriveUrl } from "../_shared/url-guard.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -294,9 +295,26 @@ Deno.serve(async (req) => {
       }
 
       // Sem GOOGLE_DRIVE_API_KEY: fallback antigo (HEAD no uc?export=download).
-      let downloadUrl = creative_link;
-      if (fileId) downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+      // A1/SSRF: EXIGE fileId. Link de ARQUIVO do Drive sempre tem id extraível; link de pasta
+      // ou URL arbitrária não tem → rejeita ANTES de qualquer fetch. Com fileId, a URL baixada é
+      // SEMPRE a reconstruída (drive.google.com/uc?...), nunca o creative_link cru — é isso que
+      // fecha o SSRF (o vetor era o ramo `else downloadUrl = creative_link`).
+      if (!fileId) {
+        return new Response(JSON.stringify({
+          ok: false, error: "Link inválido — use o link do ARQUIVO do Google Drive (não de pasta).", timings,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      // Defesa extra (host allow-list) — mesmo com fileId, barra creative_link de host estranho.
+      const guard = assertSafeDriveUrl(creative_link);
+      if (!guard.ok) {
+        return new Response(JSON.stringify({ ok: false, error: guard.error, timings }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
       try {
+        // redirect:follow — o uc?export=download responde 303 pro drive.usercontent.google.com
+        // (allow-listed). fileId obrigatório acima garante que downloadUrl nunca é o link cru.
         const headRes = await fetch(downloadUrl, { method: "HEAD", redirect: "follow" });
         mark("drive_check", tDrive);
         if (!headRes.ok) {
