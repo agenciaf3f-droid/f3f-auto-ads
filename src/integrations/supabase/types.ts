@@ -39,6 +39,24 @@ export type Database = {
   }
   public: {
     Tables: {
+      ad_accounts_cache: {
+        Row: {
+          accounts: Json
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          accounts?: Json
+          id?: string
+          updated_at?: string
+        }
+        Update: {
+          accounts?: Json
+          id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       app_admins: {
         Row: {
           created_at: string

@@ -22,7 +22,7 @@ import { toast } from "sonner";
 import {
   LogIn, Settings2, Send, CheckCircle2, Loader2, Copy, AlertTriangle, Unplug,
   Instagram, HardDrive, ArrowRight, FolderOpen, Plus, Calendar, Clock, MessageCircle, MapPin, Phone, Save, Trash2,
-  Layers, PlusCircle, X, Pencil, Search, ChevronDown,
+  Layers, PlusCircle, X, Pencil, Search, ChevronDown, RefreshCw,
 } from "lucide-react";
 import {
   getMetaLoginUrl, fetchMetaStatus, fetchAdAccounts, fetchAudiences,
@@ -844,14 +844,53 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
 
   const loadAdAccounts = async () => {
     if (!accessToken) return;
+    // 1) Cache COMPARTILHADO no banco (contas são iguais p/ todos — conexão Meta do admin):
+    //    se já populado, usa e NÃO toca na Meta (0 chamada no page load).
+    try {
+      const { data, error } = await supabase.from("ad_accounts_cache").select("accounts").eq("id", "shared").maybeSingle();
+      if (error) {
+        // supabase-js NÃO lança em falha de RLS/permissão/rede — só retorna `error`. Se não logar,
+        // a leitura falha SILENCIOSO e cai no fetch da Meta a cada load (volta os ~1200/dia sem sinal).
+        addLog(`⚠️ [cache] leitura do cache falhou (${error.message}) — buscando da Meta.`);
+      } else if (data?.accounts && Array.isArray(data.accounts) && data.accounts.length > 0) {
+        setAdAccounts(data.accounts as unknown as AdAccount[]);
+        addLog(`✅ ${data.accounts.length} conta(s) do cache compartilhado (0 chamada Meta). Use "Carregar novas contas" p/ atualizar.`);
+        return;
+      }
+    } catch (e) {
+      addLog(`⚠️ [cache] erro inesperado lendo o cache (${e instanceof Error ? e.message : "?"}) — buscando da Meta.`);
+    }
+
+    // 2) Cache vazio → busca da Meta (o edge grava o cache p/ todos os gestores).
     setLoadingAdAccounts(true);
     try {
-      addLog("📡 Carregando todas as contas de anúncios...");
+      addLog("📡 Carregando todas as contas de anúncios da Meta...");
       const accounts = await fetchAdAccounts(accessToken);
       setAdAccounts(accounts);
       addLog(`✅ ${accounts.length} conta(s) encontrada(s)`);
     } catch (err: unknown) {
+      // Erro → mantém o que tem.
       addLog(`❌ Erro ao carregar contas: ${err instanceof Error ? err.message : "Erro"}`);
+    } finally {
+      setLoadingAdAccounts(false);
+    }
+  };
+
+  // Botão manual: força buscar da Meta (force=pula o cache de sessão); o edge regrava o cache
+  // compartilhado no banco p/ TODOS. Única fonte de chamadas Meta p/ contas agora.
+  const refreshAdAccounts = async () => {
+    if (!accessToken) return;
+    setLoadingAdAccounts(true);
+    try {
+      addLog("📡 Buscando contas na Meta (atualiza o cache compartilhado p/ todos)...");
+      const accounts = await fetchAdAccounts(accessToken, true);
+      setAdAccounts(accounts);
+      addLog(`✅ ${accounts.length} conta(s) atualizada(s)`);
+      toast.success(`${accounts.length} conta(s) de anúncios carregada(s).`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Erro";
+      addLog(`❌ Erro ao atualizar contas: ${msg}`);
+      toast.error(`Erro ao carregar contas: ${msg}`);
     } finally {
       setLoadingAdAccounts(false);
     }
@@ -2096,7 +2135,19 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         <>
           {/* Ad Account */}
           <Card className="glass-card p-6 space-y-4">
-            <Label className="font-display font-semibold text-sm">Conta de Anúncios ({adAccounts.length})</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label className="font-display font-semibold text-sm">Conta de Anúncios ({adAccounts.length})</Label>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1 text-xs h-8"
+                onClick={refreshAdAccounts}
+                disabled={loadingAdAccounts}
+                title="Busca as contas na Meta e atualiza o cache compartilhado. Use quando criar/ganhar acesso a uma conta nova."
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingAdAccounts ? "animate-spin" : ""}`} /> Carregar novas contas
+              </Button>
+            </div>
             {loadingAdAccounts && adAccounts.length === 0 ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="w-4 h-4 animate-spin" /> Carregando contas de anúncios...

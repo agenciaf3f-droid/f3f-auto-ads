@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -282,6 +283,25 @@ Deno.serve(async (req) => {
     await Promise.all(bizTasks);
 
     const allAccounts = Array.from(accountMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+
+    // Grava o cache COMPARTILHADO (via service_role) — best-effort: se falhar, loga e segue.
+    // O frontend (PublishForm) lê deste cache no page load, evitando re-varrer a Meta toda vez.
+    // A lista gravada é EXATAMENTE a que retornamos abaixo (mesmo shape AdAccount[]).
+    try {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL");
+      const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      if (supabaseUrl && serviceRoleKey) {
+        const adminClient = createClient(supabaseUrl, serviceRoleKey);
+        const { error: cacheErr } = await adminClient
+          .from("ad_accounts_cache")
+          .upsert({ id: "shared", accounts: allAccounts, updated_at: new Date().toISOString() });
+        if (cacheErr) console.log(`[ad-accounts] cache upsert falhou: ${cacheErr.message}`);
+        else console.log(`[ad-accounts] cache atualizado: ${allAccounts.length} conta(s)`);
+      }
+    } catch (e) {
+      console.log(`[ad-accounts] cache upsert erro: ${(e as Error).message}`);
+    }
+
     return new Response(JSON.stringify({ accounts: allAccounts, businesses_scanned: businesses.length, biz_error: bizError }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
