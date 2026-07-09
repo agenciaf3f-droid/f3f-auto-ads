@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Card } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
@@ -88,6 +89,9 @@ interface CreativeItem {
   // media_id resolvido pela validação IG (evita re-scan no publish). Limpo ao editar link/tipo.
   resolved_instagram_media_id?: string | null;
   resolved_ig_account_id?: string | null;
+  // Texto primário (copy) — só criativo Drive usa; override individual, cai no "texto para
+  // todos" (captionAll) se vazio. Instagram usa a legenda do próprio post.
+  caption?: string;
 }
 
 // Aplica o resultado da validação a um criativo: guarda a validação + o media_id/ig resolvido
@@ -99,6 +103,13 @@ function applyCreativeValidation(c: CreativeItem, r: any): CreativeItem {
     resolved_instagram_media_id: r?.ok ? (r.instagram_media_id ?? null) : null,
     resolved_ig_account_id: r?.ok ? (r.ig_account_id ?? null) : null,
   };
+}
+
+// Resolve o texto primário final de um criativo: override individual (c.caption) tem
+// prioridade; vazio cai no "texto para todos" (captionAll). Usada ao montar o payload
+// validado — o publish reusa o valor já resolvido (não recalcula contra captionAll ao vivo).
+function resolveCreativeCaption(c: CreativeItem, captionAll: string): string | undefined {
+  return c.caption?.trim() ? c.caption.trim() : (captionAll.trim() || undefined);
 }
 
 const PRESETS = [
@@ -416,6 +427,10 @@ export default function PublishForm() {
   const [creatives, setCreatives] = useState<CreativeItem[]>([blankCreative()]);
   // Bulk: quantidade de slots a gerar de uma vez.
   const [bulkCount, setBulkCount] = useState("");
+  // Copy (texto primário) — modal "Adicionar copy". captionAll = fallback pra todo criativo
+  // Drive sem override; overrides individuais vivem em creatives[].caption.
+  const [captionAll, setCaptionAll] = useState("");
+  const [copyModalOpen, setCopyModalOpen] = useState(false);
 
   // FASE 3 fields
   const [whatsappNumbers, setWhatsappNumbers] = useState<WhatsAppNumber[]>([]);
@@ -617,7 +632,10 @@ export default function PublishForm() {
       // (senão handlePublish leria o modo antigo do payload validado e publicaria o gasto errado).
       fase2BudgetSplitMode,
       // Mudar posicionamentos muda o adset → re-validar (placementSelected é Set novo a cada toggle).
-      placementSelected]);
+      placementSelected,
+      // Texto "para todos" do modal de copy — não é per-criativo (por isso não está em
+      // creativeSignature); mudar sem tocar em nenhum override também invalida o payload.
+      captionAll]);
 
   // Posicionamentos: ao trocar de preset, reseta pra TODOS os válidos ligados (= automático).
   // Cada preset tem um conjunto válido diferente; não faz sentido carregar seleção do preset anterior.
@@ -628,10 +646,10 @@ export default function PublishForm() {
     setPlacementSelected(new Set(allPlacementKeys(placementGroupsFor(kind))));
   }, [preset]);
 
-  // Reset validação quando o user MUDA algo visível em criativos (link/type/name/count).
+  // Reset validação quando o user MUDA algo visível em criativos (link/type/name/count/caption).
   // NÃO inclui `validation` em si — então gravar resultado de validação não dispara reset.
   const creativeSignature = useMemo(
-    () => creatives.map(c => `${c.id}:${c.type}:${c.link}:${c.name}`).join("|"),
+    () => creatives.map(c => `${c.id}:${c.type}:${c.link}:${c.name}:${c.caption ?? ""}`).join("|"),
     [creatives]
   );
   useEffect(() => {
@@ -1783,6 +1801,9 @@ export default function PublishForm() {
           // media_id resolvido na validação → o publish reusa e NÃO re-escaneia (só quando existe).
           resolved_instagram_media_id: c.resolved_instagram_media_id || undefined,
           resolved_ig_account_id: c.resolved_ig_account_id || undefined,
+          // Copy (Drive): override individual > "texto para todos" > sem texto. Resolvido AQUI
+          // (não recalculado no publish) — o publish reusa vp.creatives[i].caption como está.
+          caption: resolveCreativeCaption(c, captionAll),
         })),
         creative_link: finalCreatives[0].link,
         creative_type: finalCreatives[0].type,
@@ -1925,7 +1946,7 @@ export default function PublishForm() {
 
     try {
       const vp = validatedPayload as Record<string, unknown>;
-      const allCreatives = (Array.isArray(vp.creatives) ? vp.creatives : []) as Array<{ type: string; link: string; name: string }>;
+      const allCreatives = (Array.isArray(vp.creatives) ? vp.creatives : []) as Array<{ type: string; link: string; name: string; caption?: string }>;
 
       // Modo lido do PAYLOAD VALIDADO (não do estado do form, que pode ter mudado).
       const isVpFase2 = Array.isArray(vp.fase2_audiences) && (vp.fase2_audiences as string[]).length > 0;
@@ -1951,7 +1972,7 @@ export default function PublishForm() {
           return publishAd({
             ...vp,
             creatives: [c],
-            creative_link: c.link, creative_type: c.type, creative_name: c.name, ad_name: c.name,
+            creative_link: c.link, creative_type: c.type, creative_name: c.name, creative_caption: c.caption, ad_name: c.name,
             campaign_name: nameFor(i),
             generated_name: nameFor(i),
             budget: perCampaignBudget, // override do vp.budget (divide no modo split)
@@ -2070,7 +2091,7 @@ export default function PublishForm() {
         const total = allCreatives.length;
         const callFor = (idx: number, extra: Record<string, unknown>) => {
           const c = allCreatives[idx];
-          return publishAd({ ...vp, creatives: [c], creative_link: c.link, creative_type: c.type, creative_name: c.name, ad_name: c.name, ...extra });
+          return publishAd({ ...vp, creatives: [c], creative_link: c.link, creative_type: c.type, creative_name: c.name, creative_caption: c.caption, ad_name: c.name, ...extra });
         };
 
         // Lote grande (>5) → serial + delay entre criativos (espaça, reduz o #4). ≤5 → paralelo.
@@ -2610,6 +2631,11 @@ export default function PublishForm() {
                     </Button>
                   </>
                 )}
+                {creatives.some(c => c.type === "drive") && (
+                  <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setCopyModalOpen(true)}>
+                    <Pencil className="w-3.5 h-3.5" /> Adicionar copy
+                  </Button>
+                )}
                 <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={addCreative}>
                   <PlusCircle className="w-3.5 h-3.5" /> Adicionar criativo
                 </Button>
@@ -2701,6 +2727,45 @@ export default function PublishForm() {
               );
             })}
           </Card>
+
+          {/* Modal "Adicionar copy": texto primário pra criativos Drive (Instagram usa a legenda
+              do próprio post, sem campo aqui). */}
+          <Dialog open={copyModalOpen} onOpenChange={setCopyModalOpen}>
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Adicionar copy</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 min-w-0">
+                <div className="space-y-1.5 min-w-0">
+                  <Label className="text-xs text-muted-foreground">Texto para todos</Label>
+                  <Textarea
+                    placeholder="Texto primário aplicado a todo criativo Drive sem override individual"
+                    value={captionAll}
+                    onChange={(e) => setCaptionAll(e.target.value)}
+                    className="text-sm min-h-20"
+                  />
+                </div>
+                <div className="space-y-3 max-h-[45vh] overflow-y-auto pr-1">
+                  {creatives.filter(c => c.type === "drive").map((cr) => (
+                    <div key={cr.id} className="space-y-1.5 min-w-0">
+                      <Label className="text-xs text-muted-foreground truncate block">
+                        {cr.name || "Criativo Drive sem nome"}
+                      </Label>
+                      <Textarea
+                        placeholder="Override individual — vazio usa o texto para todos"
+                        value={cr.caption ?? ""}
+                        onChange={(e) => updateCreative(cr.id, { caption: e.target.value })}
+                        className="text-sm min-h-16"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <DialogFooter>
+                <Button type="button" onClick={() => setCopyModalOpen(false)}>Concluir</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           {/* Audience — single (FASE 1/3) ou multi (FASE 2).
               L.T + Advantage+ esconde a seleção: o Meta acha o público sozinho. */}
