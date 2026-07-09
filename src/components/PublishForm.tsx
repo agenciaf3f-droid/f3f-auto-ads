@@ -1332,6 +1332,9 @@ export default function PublishForm() {
   const selectedPreset = PRESETS.find(p => p.id === preset)!;
   const isFase3 = selectedPreset.requires_whatsapp;
   const isFase3Lp = selectedPreset.destination_type === "WEBSITE";
+  // isFase3Lp = "destino é site" (vale pra fase3-leads-lp E fase3-vendas-lp/L.T).
+  // isLt = só o preset Low-Ticket — o naming "[PRODUTO] [L.T] ..." é exclusivo dele.
+  const isLt = selectedPreset.id === "fase3-vendas-lp";
   const isFase3VendasZap = selectedPreset.id === "fase3-vendas-zap";
   const isFase2 = selectedPreset.fase === "FASE 2";
   const isFase2Adaptado = selectedPreset.id === "fase2-polones-adaptado";
@@ -1412,8 +1415,8 @@ export default function PublishForm() {
   // Adaptado leva "ADAPTADO" no nome pra diferenciar do Completo no Gerenciador — mesmos
   // 2 públicos dariam nome idêntico senão (só a estrutura interna difere: 1 conjunto combinado vs N).
   const fase2NamingLabel = isFase2Adaptado ? "FASE 2 ADAPTADO" : selectedPreset.fase;
-  const computedCampaignName = campaignStructure === "new" && budget && (isFase3Lp ? campaignNameInput : (namingPublicName || isFase2))
-    ? (isFase3Lp
+  const computedCampaignName = campaignStructure === "new" && budget && (isLt ? campaignNameInput : (namingPublicName || isFase2))
+    ? (isLt
         ? generateLtCampaignName({ productName: campaignNameInput, presetLabel: selectedPreset.label, structure: distributionStructure })
         : generateCampaignName({ presetLabel: isFase2 ? fase2NamingLabel : selectedPreset.fase, publicName: namingPublicName || "Multi", budget: Number(budget), campaignName: campaignNameInput }))
     : null;
