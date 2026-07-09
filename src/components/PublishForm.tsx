@@ -205,16 +205,23 @@ type PresetId = typeof PRESETS[number]["id"];
 
 const UTM_DEFAULT = "utm_source=FB&utm_campaign={{campaign.name}}|{{campaign.id}}&utm_medium={{adset.name}}|{{adset.id}}&utm_content={{ad.name}}|{{ad.id}}&utm_term={{placement}}";
 
+// TTL do cache de descoberta: linha mais velha que isso é tratada como cache miss (call site busca
+// da Meta de novo, e o edge regrava o cache). Sem TTL, recurso criado fora do app (público, conta,
+// número) some pra sempre até o gestor clicar em "Atualizar" manualmente.
+const DISCOVERY_CACHE_TTL_MS = 10 * 60 * 1000; // 10min
+
 // Cache de descoberta COMPARTILHADO no banco (tabela meta_discovery_cache, gravada pelos edges).
 // Frontend LÊ daqui primeiro em cada load* = 0 chamada Meta. kind ∈ {ad_accounts, audiences,
 // identity, imported_templates, whatsapp_numbers, pixels}; account_id = conta (ou "shared"
-// p/ ad_accounts). Retorna o `data` só se NÃO-vazio (array com itens / objeto com keys); senão null.
+// p/ ad_accounts). Retorna o `data` só se NÃO-vazio (array com itens / objeto com keys) E dentro do
+// TTL (DISCOVERY_CACHE_TTL_MS); senão null. `updated_at` ausente/inválido conta como stale (falhar
+// pro lado de buscar da Meta é seguro; falhar pro lado de servir cache eterno é o bug original).
 // Loga o error do supabase-js (NÃO lança em falha de RLS) — guard anti-silêncio.
 async function readDiscoveryCache<T = unknown>(kind: string, accountId: string): Promise<T | null> {
   try {
     const { data, error } = await supabase
       .from("meta_discovery_cache")
-      .select("data")
+      .select("data, updated_at")
       .eq("kind", kind)
       .eq("account_id", accountId)
       .maybeSingle();
@@ -222,6 +229,8 @@ async function readDiscoveryCache<T = unknown>(kind: string, accountId: string):
       console.warn(`[discovery-cache] leitura ${kind}/${accountId} falhou: ${error.message}`);
       return null;
     }
+    const updatedAtMs = data?.updated_at ? new Date(data.updated_at).getTime() : NaN;
+    if (!Number.isFinite(updatedAtMs) || Date.now() - updatedAtMs > DISCOVERY_CACHE_TTL_MS) return null;
     const d = data?.data as unknown;
     if (Array.isArray(d)) return d.length ? (d as T) : null;
     if (d && typeof d === "object" && Object.keys(d).length > 0) return d as T;
