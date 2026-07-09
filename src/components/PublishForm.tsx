@@ -14,6 +14,9 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from "@/components/ui/dialog";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -80,6 +83,7 @@ interface CreativeItem {
   type: CreativeType;
   link: string;
   name: string;
+  caption?: string;
   validation?: { ok: boolean; error?: string; suggest_drive?: boolean } | null;
 }
 
@@ -345,6 +349,9 @@ export default function PublishForm() {
   const [creatives, setCreatives] = useState<CreativeItem[]>([
     { id: nextCreativeId(), type: "instagram", link: "", name: "", validation: null },
   ]);
+  // Copy (texto primário) p/ criativos Drive: "para todos" + override por criativo.
+  const [captionAll, setCaptionAll] = useState("");
+  const [copyModalOpen, setCopyModalOpen] = useState(false);
 
   // FASE 3 fields
   const [whatsappNumbers, setWhatsappNumbers] = useState<WhatsAppNumber[]>([]);
@@ -523,12 +530,15 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
   }, [selectedAccount, selectedAudience, budget, preset, campaignStructure, distributionStructure,
       selectedCampaign, selectedWhatsappId, greetingText, readyMessage, selectedTemplateId,
       useCustomMessage, scheduleEnabled, scheduleDate, scheduleTime,
-      includedLocations, excludedLocations, campaignNameInput, adsetNameInput]);
+      includedLocations, excludedLocations, campaignNameInput, adsetNameInput,
+      // Texto "para todos" é assado no payload validado (linha ~1428); mudá-lo pós-validação
+      // sem re-validar publicaria a copy velha.
+      captionAll]);
 
   // Reset validação quando o user MUDA algo visível em criativos (link/type/name/count).
   // NÃO inclui `validation` em si — então gravar resultado de validação não dispara reset.
   const creativeSignature = useMemo(
-    () => creatives.map(c => `${c.id}:${c.type}:${c.link}:${c.name}`).join("|"),
+    () => creatives.map(c => `${c.id}:${c.type}:${c.link}:${c.name}:${c.caption ?? ""}`).join("|"),
     [creatives]
   );
   useEffect(() => {
@@ -1383,10 +1393,16 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
         targeting_spec: isMultiAud
           ? (multiAudIds.length >= 2 ? null : (multiSingleAud?.targeting_spec || null))
           : (selectedAud?.targeting_spec || null),
-        creatives: finalCreatives.map(c => ({ type: c.type, link: c.link, name: c.name })),
+        // Copy (texto primário): override por criativo sobrescreve o "para todos"; senão usa o global.
+        // Resolvido AQUI (ponto único) — os 3 call sites de publishAd leem deste array. IG ignora.
+        creatives: finalCreatives.map(c => ({
+          type: c.type, link: c.link, name: c.name,
+          caption: c.caption?.trim() ? c.caption.trim() : captionAll.trim(),
+        })),
         creative_link: finalCreatives[0].link,
         creative_type: finalCreatives[0].type,
         creative_name: finalCreatives[0].name,
+        creative_caption: finalCreatives[0].caption?.trim() ? finalCreatives[0].caption.trim() : captionAll.trim(),
         budget: Number(budget),
         campaign_name: computedCampaignName || campaignNameInput,
         adset_name: computedAdsetName || adsetNameInput,
@@ -1996,9 +2012,16 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               <Label className="font-display font-semibold text-sm">
                 Criativos ({creatives.length})
               </Label>
-              <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={addCreative}>
-                <PlusCircle className="w-3.5 h-3.5" /> Adicionar criativo
-              </Button>
+              <div className="flex items-center gap-2">
+                {creatives.some(c => c.type === "drive") && (
+                  <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setCopyModalOpen(true)}>
+                    <Pencil className="w-3.5 h-3.5" /> Adicionar copy
+                  </Button>
+                )}
+                <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={addCreative}>
+                  <PlusCircle className="w-3.5 h-3.5" /> Adicionar criativo
+                </Button>
+              </div>
             </div>
 
             {creatives.map((cr, idx) => {
@@ -2086,6 +2109,46 @@ const [useCustomMessage, setUseCustomMessage] = useState(false);
               );
             })}
           </Card>
+
+          {/* Modal "Adicionar copy" — texto primário p/ criativos Drive.
+              "para todos" no topo; override por criativo abaixo (sobrescreve quando não-vazio). */}
+          <Dialog open={copyModalOpen} onOpenChange={setCopyModalOpen}>
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Adicionar copy</DialogTitle>
+                <DialogDescription>
+                  Texto primário (legenda) dos anúncios com criativo do Drive. Criativos do Instagram usam a legenda do próprio post.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+                <div className="space-y-1">
+                  <Label className="text-xs">Texto para todos os criativos</Label>
+                  <Textarea
+                    placeholder="Texto primário aplicado a todos os criativos do Drive"
+                    value={captionAll}
+                    onChange={(e) => setCaptionAll(e.target.value)}
+                    className="text-sm min-h-[90px]"
+                  />
+                </div>
+                {creatives.map((cr, idx) => ({ cr, idx })).filter(({ cr }) => cr.type === "drive").map(({ cr, idx }) => (
+                  <div key={cr.id} className="space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">
+                      Criativo {idx + 1}{cr.name ? ` — ${cr.name}` : ""}
+                    </Label>
+                    <Textarea
+                      placeholder="Usa o texto para todos se vazio"
+                      value={cr.caption ?? ""}
+                      onChange={(e) => updateCreative(cr.id, { caption: e.target.value })}
+                      className="text-sm min-h-[70px]"
+                    />
+                  </div>
+                ))}
+              </div>
+              <DialogFooter>
+                <Button size="sm" onClick={() => setCopyModalOpen(false)}>Concluir</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           {/* Audience — single (FASE 1/3) ou multi (FASE 2).
               L.T + Advantage+ esconde a seleção: o Meta acha o público sozinho. */}
