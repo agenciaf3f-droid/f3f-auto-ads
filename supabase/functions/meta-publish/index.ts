@@ -974,6 +974,7 @@ async function buildFase1Creative(
   logs: StepLog[],
   preResolvedMediaId?: string,
   preResolvedIgAccountId?: string,
+  caption?: string,
 ): Promise<{ spec?: Record<string, any>; error?: string }> {
   const igProfileLink = igUsername ? `https://www.instagram.com/${igUsername}/` : `https://www.instagram.com/`;
   const isIgLink = creativeType === "instagram" || (!creativeType && creativeLink?.includes("instagram.com"));
@@ -1012,6 +1013,7 @@ async function buildFase1Creative(
         link: igProfileLink,
         call_to_action: { type: "VIEW_INSTAGRAM_PROFILE", value: { link: igProfileLink } },
       };
+      if (caption?.trim()) linkData.message = caption.trim();
       const storySpec: Record<string, any> = { page_id: pageId, link_data: linkData };
       if (igActorId) storySpec.instagram_user_id = igActorId;
       console.log(`[FASE1-creative] OK: image_hash, CTA=VIEW_INSTAGRAM_PROFILE, link=${igProfileLink}`);
@@ -1027,6 +1029,7 @@ async function buildFase1Creative(
         ...thumbnailField,
         call_to_action: { type: "VIEW_INSTAGRAM_PROFILE", value: { link: igProfileLink } },
       };
+      if (caption?.trim()) videoData.message = caption.trim();
       const storySpec: Record<string, any> = { page_id: pageId, video_data: videoData };
       if (igActorId) storySpec.instagram_user_id = igActorId;
       console.log(`[FASE1-creative] OK: video_id=${result.video_id}, CTA=VIEW_INSTAGRAM_PROFILE`);
@@ -1129,6 +1132,7 @@ async function buildFase2Creative(
   logs: StepLog[],
   preResolvedMediaId?: string,
   preResolvedIgAccountId?: string,
+  caption?: string,
 ): Promise<{ spec?: Record<string, any>; error?: string; videoId?: string }> {
   const isIgLink = creativeType === "instagram" || (!creativeType && creativeLink?.includes("instagram.com"));
   const isDriveLink = creativeType === "drive" || (!creativeType && (creativeLink?.includes("drive.google.com") || creativeLink?.includes("docs.google.com")));
@@ -1166,6 +1170,7 @@ async function buildFase2Creative(
       video_id: result.video_id,
       ...thumbnailField,
     };
+    if (caption?.trim()) videoData.message = caption.trim();
     const storySpec: Record<string, any> = { page_id: pageId, video_data: videoData };
     if (igActorId) storySpec.instagram_user_id = igActorId;
     console.log(`[FASE2-creative] Drive video: ${result.video_id}`);
@@ -1198,6 +1203,7 @@ async function buildFase3LpCreative(
   logs: StepLog[],
   preResolvedMediaId?: string,
   preResolvedIgAccountId?: string,
+  caption?: string,
 ): Promise<{ spec?: Record<string, any>; error?: string }> {
   if (!lpUrl) return { error: "URL de destino (lp_url) ausente." };
   const callToAction = { type: "LEARN_MORE", value: { link: lpUrl } };
@@ -1232,6 +1238,7 @@ async function buildFase3LpCreative(
         link: lpUrl,
         call_to_action: callToAction,
       };
+      if (caption?.trim()) linkData.message = caption.trim();
       const storySpec: Record<string, any> = { page_id: pageId, link_data: linkData };
       if (igActorId) storySpec.instagram_user_id = igActorId;
       console.log(`[FASE3-LP-creative] OK (drive/image): hash=${result.image_hash}, link=${lpUrl}`);
@@ -1248,6 +1255,7 @@ async function buildFase3LpCreative(
         ...thumbnailField,
         call_to_action: callToAction,
       };
+      if (caption?.trim()) videoData.message = caption.trim();
       const storySpec: Record<string, any> = { page_id: pageId, video_data: videoData };
       if (igActorId) storySpec.instagram_user_id = igActorId;
       console.log(`[FASE3-LP-creative] OK (drive/video): video_id=${result.video_id}, link=${lpUrl}`);
@@ -1274,6 +1282,7 @@ async function buildFase3Creative(
   logs: StepLog[],
   preResolvedMediaId?: string,
   preResolvedIgAccountId?: string,
+  caption?: string,
 ): Promise<{ spec?: Record<string, any>; error?: string }> {
   // ── FIXED by preset ──
   const waLink = buildWhatsAppLink(whatsappPhone, greetingText, readyMessage);
@@ -1329,6 +1338,8 @@ async function buildFase3Creative(
       // ready_message NÃO vai pro texto do anúncio (link_data.message) — é só prefill
       // do WhatsApp (waLink ?text=) + autofill do page_welcome_message. Ver path IG que
       // não seta message. Punha a "Mensagem pronta" como copy visível do anúncio (bug).
+      // A copy visível vem SÓ do `caption` (campo próprio do gestor). Sem caption → sem message.
+      if (caption?.trim()) linkData.message = caption.trim();
       const storySpec: Record<string, any> = { page_id: pageId, link_data: linkData };
       if (igActorId) storySpec.instagram_user_id = igActorId;
       console.log(`[FASE3-creative] OK (drive/image): hash=${result.image_hash}`);
@@ -1348,6 +1359,8 @@ async function buildFase3Creative(
       // ready_message NÃO vai pro texto do anúncio (video_data.message) — é só prefill
       // do WhatsApp (waLink ?text=) + autofill do page_welcome_message. Ver path IG que
       // não seta message. Punha a "Mensagem pronta" como copy visível do anúncio (bug).
+      // A copy visível vem SÓ do `caption` (campo próprio do gestor). Sem caption → sem message.
+      if (caption?.trim()) videoData.message = caption.trim();
       const storySpec: Record<string, any> = { page_id: pageId, video_data: videoData };
       if (igActorId) storySpec.instagram_user_id = igActorId;
       console.log(`[FASE3-creative] OK (drive/video): video_id=${result.video_id}`);
@@ -1426,7 +1439,7 @@ Deno.serve(async (req) => {
       distribution_structure,
       creatives,
       identity,
-      creative_link, creative_type, creative_name,
+      creative_link, creative_type, creative_name, creative_caption,
       resolved_instagram_media_id, resolved_ig_account_id,
       whatsapp_number, whatsapp_number_id, location_targeting, cta_text, greeting_text, ready_message,
       imported_template_json,
@@ -1515,10 +1528,12 @@ Deno.serve(async (req) => {
     // Build creatives list
     // resolved_instagram_media_id/resolved_ig_account_id: dica opcional do meta-validate-creative
     // (por criativo). Presente → buildOne pula o re-scan de mídia IG no publish (Onda 2).
-    const creativesList: { type: string; link: string; name: string; resolved_instagram_media_id?: string; resolved_ig_account_id?: string }[] =
+    // caption: texto primário opcional, só aplicado no path Drive dos builders (o path IG usa a
+    // legenda do próprio post). Payload legado (1 criativo) traz em `creative_caption`.
+    const creativesList: { type: string; link: string; name: string; caption?: string; resolved_instagram_media_id?: string; resolved_ig_account_id?: string }[] =
       creatives && creatives.length > 0
         ? creatives
-        : [{ type: creative_type, link: creative_link, name: creative_name || ad_name || "Ad", resolved_instagram_media_id, resolved_ig_account_id }];
+        : [{ type: creative_type, link: creative_link, name: creative_name || ad_name || "Ad", caption: creative_caption, resolved_instagram_media_id, resolved_ig_account_id }];
 
     // --- Resolve Page & IG ---
     let pageId: string;
@@ -1632,14 +1647,14 @@ Deno.serve(async (req) => {
         const preMediaId = cr.resolved_instagram_media_id;
         const preIgAccountId = cr.resolved_ig_account_id;
         if (isVideoEngagementPreset) {
-          return buildFase2Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, logs, preMediaId, preIgAccountId);
+          return buildFase2Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, logs, preMediaId, preIgAccountId, cr.caption);
         } else if (isWebsitePreset) {
-          return buildFase3LpCreative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, lp_url || "", logs, preMediaId, preIgAccountId);
+          return buildFase3LpCreative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, lp_url || "", logs, preMediaId, preIgAccountId, cr.caption);
         } else if (isWhatsAppPreset) {
-          return buildFase3Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, whatsapp_number || "", greeting_text, ready_message, imported_template_json, logs, preMediaId, preIgAccountId);
+          return buildFase3Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, whatsapp_number || "", greeting_text, ready_message, imported_template_json, logs, preMediaId, preIgAccountId, cr.caption);
         } else {
           // FASE 1 OR generic fallback (mesmo builder)
-          return buildFase1Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, identity?.instagram_username || undefined, logs, preMediaId, preIgAccountId);
+          return buildFase1Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, identity?.instagram_username || undefined, logs, preMediaId, preIgAccountId, cr.caption);
         }
       };
 
