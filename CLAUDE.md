@@ -93,7 +93,7 @@ supabase/functions/   # 21 functions + _shared/
 - Adset: `optimization_goal: PROFILE_VISIT` + `destination_type: INSTAGRAM_PROFILE` — **NÃO** `VISIT_INSTAGRAM_PROFILE` (revertido 2026-07-04: diagnóstico contra campanha gabarito real mostrou que a Meta só anexa o `tracking_specs` `action.type=visit_instagram_profile` no ad — sinal de reconhecimento do goal — sob `PROFILE_VISIT`; `VISIT_INSTAGRAM_PROFILE` faz o sistema entregar pior sem erro nenhum, silenciosamente)
 - `promoted_object`: **só** `{ page_id }` — sem `instagram_profile_id` (confirmado no gabarito real; ver comentário em `buildFase1Adset`)
 - `attribution_spec: [{ event_type: CLICK_THROUGH, window_days: 1 }]` (presente no gabarito; sem isso a Meta usa janela default)
-- `targeting_automation: { advantage_audience: 0 }` (desativado)
+- `targeting_automation`: **espelha o público salvo** — `advantage_audience` vem do `targeting_spec` do público (1 → publica com Advantage+ ligado, `age_range` preservado como sugestão + controle `age_min`/`age_max` normalizado p/ 18/65; 0/ausente → comportamento rígido anterior, byte a byte). Decisão do usuário 2026-07-10, motivada por dump real (Gerenciador espelha o público e entrega melhor; o app sobrescrevia). Ver `buildFase1Targeting` em `meta-publish`.
 - Creative: `source_instagram_media_id` + `instagram_user_id` + `call_to_action: VIEW_INSTAGRAM_PROFILE`
 
 ### FASE 2 (engajamento de vídeo)
