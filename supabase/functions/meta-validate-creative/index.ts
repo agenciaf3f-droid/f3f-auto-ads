@@ -88,10 +88,47 @@ Deno.serve(async (req) => {
         let mediaApiCalls = 0;
         let mediaChecked = 0;
 
+        // Rajada no token compartilhado (vários criativos validando de uma vez): a Meta pode
+        // rejeitar o fetch (timeout/reset) ou devolver uma página de erro NÃO-JSON / HTTP 5xx →
+        // `res.json()` estoura. Isso subia como exceção crua pro catch-all (500) → o front só via
+        // "non-2xx" genérico. Espelha o tratamento de rajada do caminho Drive: re-tenta a MESMA
+        // página com backoff curto antes de desistir.
+        const IG_RETRY_BACKOFFS_MS = [800, 2000];
+        const fetchMediaPage = async (url: string): Promise<{ ok: true; data: any } | { ok: false }> => {
+          for (let attempt = 0; attempt <= IG_RETRY_BACKOFFS_MS.length; attempt++) {
+            try {
+              const res = await fetchMeta(url);
+              if (res.status >= 500) throw new Error(`Graph HTTP ${res.status}`);
+              return { ok: true, data: await res.json() };
+            } catch (err) {
+              if (attempt < IG_RETRY_BACKOFFS_MS.length) {
+                console.log(`[validate-creative] FAST PATH página falhou (${(err as Error).message}) — retry ${attempt + 1}/${IG_RETRY_BACKOFFS_MS.length} em ${IG_RETRY_BACKOFFS_MS[attempt]}ms`);
+                await new Promise((rr) => setTimeout(rr, IG_RETRY_BACKOFFS_MS[attempt]));
+                continue;
+              }
+              console.error(`[validate-creative] FAST PATH página esgotou retries: ${(err as Error).message}`);
+              return { ok: false };
+            }
+          }
+          return { ok: false }; // inalcançável (satisfaz o tipo)
+        };
+
         while (mediaUrl && mediaChecked < 500) { // alinhado com o scan do publish (resolveInstagramMediaId < 500) — reduz falso "post não encontrado"
           mediaApiCalls++;
-          const mediaRes = await fetchMeta(mediaUrl);
-          const mediaData = await mediaRes.json();
+          const page = await fetchMediaPage(mediaUrl);
+          if (!page.ok) {
+            // Retries esgotados = instabilidade real da Meta (não "post não encontrado"): não dá
+            // pra concluir ausência sem terminar de varrer. Falha graciosa, transiente, acionável.
+            mark("search_media_direct", tDirect);
+            mark("TOTAL", t0);
+            console.error(`[validate-creative] FAST PATH abortado por instabilidade da Meta após ${mediaApiCalls} chamadas`);
+            return new Response(JSON.stringify({
+              ok: false, transient: true,
+              error: "Instabilidade momentânea da Meta ao validar este criativo — clique em validar novamente.",
+              shortcode_searched: shortcode, media_checked: mediaChecked, timings,
+            }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          }
+          const mediaData = page.data;
 
           if (mediaData.error) {
             console.log(`[validate-creative] FAST PATH media error: ${mediaData.error.message}`);
@@ -280,8 +317,14 @@ Deno.serve(async (req) => {
       ok: false, error: "Tipo de criativo não reconhecido.", timings,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
-    return new Response(JSON.stringify({ ok: false, error: e.message, timings }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    // Qualquer exceção inesperada vira 200 ok:false com a mensagem REAL. O supabase-js
+    // (functions.invoke) converte QUALQUER non-2xx no genérico "Edge Function returned a
+    // non-2xx status code" e descarta o body → o front perdia a causa. Com 200 ok:false o
+    // contrato do front (validateCreative → applyCreativeValidation → erro por criativo) mostra
+    // o motivo real. O console.error mantém a exceção rastreável no painel do Supabase.
+    console.error(`[validate-creative] exceção não tratada:`, e);
+    return new Response(JSON.stringify({ ok: false, error: (e as Error)?.message ?? String(e), timings }), {
+      status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
