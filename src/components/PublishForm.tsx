@@ -2644,11 +2644,16 @@ export default function PublishForm() {
 
           {/* Creatives - Multi */}
           <Card className="glass-card p-6 space-y-4">
-            <div className="flex items-center justify-between gap-2">
-              <Label className="font-display font-semibold text-sm">
-                Criativos ({creatives.length})
-              </Label>
-              <div className="flex items-center gap-2 flex-wrap justify-end">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <Label className="font-display font-semibold text-sm">
+                  Criativos ({creatives.length})
+                </Label>
+                <Button variant="outline" size="sm" className="gap-1 text-xs h-8" onClick={addCreative}>
+                  <PlusCircle className="w-3.5 h-3.5" /> Adicionar criativo
+                </Button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
                 {!isFase2Adaptado && (
                   <>
                     <div className="flex items-center gap-1">
@@ -2673,13 +2678,10 @@ export default function PublishForm() {
                   </>
                 )}
                 {creatives.some(c => c.type === "drive") && (
-                  <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setCopyModalOpen(true)}>
+                  <Button variant="outline" size="sm" className="gap-1 text-xs h-8" onClick={() => setCopyModalOpen(true)}>
                     <Pencil className="w-3.5 h-3.5" /> Adicionar copy
                   </Button>
                 )}
-                <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={addCreative}>
-                  <PlusCircle className="w-3.5 h-3.5" /> Adicionar criativo
-                </Button>
               </div>
             </div>
 
