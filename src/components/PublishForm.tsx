@@ -397,10 +397,10 @@ export default function PublishForm() {
   // Multi-público (FASE 1 / FASE 3): N linhas de público, combinadas (OR) em 1 conjunto.
   const [audienceRows, setAudienceRows] = useState<AudienceRow[]>([{ id: nextAudienceRowId(), audienceId: "" }]);
   const [campaignNameInput, setCampaignNameInput] = useState("");
-  // L.T: 1º bloco do nome (livre, ex: "LDX") e sufixo opcional após o traço final.
-  // Desacoplados do "Nome do produto" (campaignNameInput) — produto NÃO entra mais no nome.
+  // L.T: 1º bloco do nome ("Nomenclatura", ex: "LDX") — mesmo campo/função que "Nome do produto"
+  // nas outras fases-LP (picker de produto quando o cliente tem produtos cadastrados, senão livre).
+  // O sufixo do L.T reusa campaignNameInput ("Nome da Campanha", igual às demais fases) — sem estado próprio.
   const [ltNomenclatura, setLtNomenclatura] = useState("");
-  const [ltSuffix, setLtSuffix] = useState("");
   // Produtos L.T cadastrados em Clientes p/ a conta selecionada (alimenta dropdown de produto).
   const [ltProducts, setLtProducts] = useState<{ id: string; name: string }[]>([]);
   const [ltProductsClientId, setLtProductsClientId] = useState<string | null>(null);
@@ -641,9 +641,10 @@ export default function PublishForm() {
       selectedCampaign, selectedWhatsappId, greetingText, readyMessage, selectedTemplateId,
       useCustomMessage, scheduleEnabled, scheduleDate, scheduleTime,
       includedLocations, excludedLocations, campaignNameInput, adsetNameInput,
-      // L.T: nomenclatura/sufixo compõem o campaign_name (computedCampaignName) — mudar
-      // qualquer um invalida o payload validado, senão publish sai com nome desatualizado.
-      ltNomenclatura, ltSuffix,
+      // L.T: nomenclatura compõe o campaign_name (computedCampaignName) junto com campaignNameInput
+      // (já listado acima, serve de sufixo no L.T) — mudar invalida o payload validado, senão
+      // publish sai com nome desatualizado.
+      ltNomenclatura,
       // Mudar a distribuição de orçamento (FASE 2 COMPLETO) muda o gasto → re-validar obrigatório
       // (senão handlePublish leria o modo antigo do payload validado e publicaria o gasto errado).
       fase2BudgetSplitMode,
@@ -1451,7 +1452,7 @@ export default function PublishForm() {
   const fase2NamingLabel = isFase2Adaptado ? "FASE 2 ADAPTADO" : selectedPreset.fase;
   const computedCampaignName = campaignStructure === "new" && budget && (isLt ? ltNomenclatura : (namingPublicName || isFase2))
     ? (isLt
-        ? generateLtCampaignName({ nomenclatura: ltNomenclatura, presetLabel: selectedPreset.label, structure: distributionStructure, suffix: ltSuffix })
+        ? generateLtCampaignName({ nomenclatura: ltNomenclatura, presetLabel: selectedPreset.label, structure: distributionStructure, suffix: campaignNameInput })
         : generateCampaignName({ presetLabel: isFase2 ? fase2NamingLabel : selectedPreset.fase, publicName: namingPublicName || "Multi", budget: Number(budget), campaignName: campaignNameInput }))
     : null;
   const computedAdsetName = adsetNameInput && (namingPublicName || isFase2)
@@ -2583,16 +2584,26 @@ export default function PublishForm() {
                 {isLt && (
                   <div className="space-y-2">
                     <Label className="text-xs font-medium text-muted-foreground">Nomenclatura</Label>
-                    <Input
-                      placeholder='Ex: "LDX"'
-                      value={ltNomenclatura}
-                      onChange={(e) => setLtNomenclatura(e.target.value)}
-                    />
+                    {ltProducts.length > 0 ? (
+                      <SearchableSelect
+                        options={ltProductOptions}
+                        value={ltNomenclatura}
+                        onValueChange={setLtNomenclatura}
+                        placeholder="Selecione o produto"
+                        searchPlaceholder="Pesquisar produto..."
+                      />
+                    ) : (
+                      <Input
+                        placeholder='Ex: "LDX"'
+                        value={ltNomenclatura}
+                        onChange={(e) => setLtNomenclatura(e.target.value)}
+                      />
+                    )}
                   </div>
                 )}
                 <div className="space-y-2">
-                  <Label className="text-xs font-medium text-muted-foreground">{isFase3Lp ? "Nome do produto" : "Nome da Campanha"}</Label>
-                  {isFase3Lp && ltProducts.length > 0 ? (
+                  <Label className="text-xs font-medium text-muted-foreground">{isFase3Lp && !isLt ? "Nome do produto" : "Nome da Campanha"}</Label>
+                  {isFase3Lp && !isLt && ltProducts.length > 0 ? (
                     <SearchableSelect
                       options={ltProductOptions}
                       value={campaignNameInput}
@@ -2602,25 +2613,15 @@ export default function PublishForm() {
                     />
                   ) : (
                     <Input
-                      placeholder={isFase3Lp ? 'Ex: "LDX"' : 'Ex: "Campanha Tráfego - Joelho"'}
+                      placeholder={isFase3Lp && !isLt ? 'Ex: "LDX"' : 'Ex: "Campanha Tráfego - Joelho"'}
                       value={campaignNameInput}
                       onChange={(e) => setCampaignNameInput(e.target.value)}
                     />
                   )}
                 </div>
-                {isLt && (
-                  <div className="space-y-2">
-                    <Label className="text-xs font-medium text-muted-foreground">Final do nome (opcional)</Label>
-                    <Input
-                      placeholder='Ex: "Vídeo 1"'
-                      value={ltSuffix}
-                      onChange={(e) => setLtSuffix(e.target.value)}
-                    />
-                  </div>
-                )}
                 {isFase3Lp && (
                   <p className="text-[10px] text-muted-foreground">
-                    Nome final: <span className="font-mono">{computedCampaignName || (isLt ? "[NOMENCLATURA] [L.T] [dd/mm] [ABO] [TESTE] [CRIATIVO] - SUFIXO" : "[PRODUTO] [L.T] [dd/mm] [ABO] [TESTE] [CRIATIVO] -")}</span>
+                    Nome final: <span className="font-mono">{computedCampaignName || (isLt ? "[NOMENCLATURA] [L.T] [dd/mm] [ABO] [TESTE] [CRIATIVO] - NOME DA CAMPANHA" : "[PRODUTO] [L.T] [dd/mm] [ABO] [TESTE] [CRIATIVO] -")}</span>
                   </p>
                 )}
               </div>
