@@ -447,8 +447,10 @@ function buildTargeting(audienceType: string, audienceIds: string[], targetingSp
     };
   }
   // age_range só é válido com targeting_automation ativado (Advantage+ Audience).
-  // Todos os presets forçam advantage_audience=0, então removemos age_range —
-  // age_min/age_max (campos manuais) cobrem o targeting de idade.
+  // Este é o default seguro: os presets que forçam advantage_audience=0 não podem mandar
+  // age_range (Meta erro 100/1487079) — age_min/age_max cobrem a idade.
+  // Exceção: FASE 1 espelha o público e, quando ele traz advantage_audience=1, reintroduz o
+  // age_range a partir do targeting_spec cru (ver buildFase1Targeting).
   delete base.age_range;
 
   if (locationTargeting?.included && locationTargeting.included.length > 0) {
@@ -1800,10 +1802,66 @@ Deno.serve(async (req) => {
     //  ADSET BUILDERS — completely isolated per preset
     // ══════════════════════════════════════════════════════════════════
 
+    // === FASE 1 targeting — ESPELHA o público salvo ===
+    //
+    // Regra (2026-07-10): o adset FASE 1 reproduz o público selecionado. Se o público tem
+    // Advantage+ Audience LIGADO, o adset sai ligado; desligado/ausente → desligado (que é o
+    // comportamento anterior, preservado byte a byte).
+    //
+    // Evidência (conta act_778855945247317, público salvo "Fase 1" = 120238739454470495, que
+    // tem advantage_audience:1 + age_range [25,55] + age_min/max 25/65 + flexible_spec):
+    //   • adset do GERENCIADOR (120248252224090495) → advantage_audience:1, age_range [25,55],
+    //     age_min/max 18/65, flexible_spec MANTIDO. Entrega ótima.
+    //   • adset do APP (120248172461590495) → advantage_audience:0, sem age_range, 25/65
+    //     rígido. Entrega péssima.
+    // O app sobrescrevia o público. Aqui paramos de sobrescrever.
+    //
+    // Com adv=1, a idade muda de CANAL: `age_range` é a SUGESTÃO (a Meta pode expandir além
+    // dela) e `age_min/age_max` viram o CONTROLE rígido. Por isso normalizamos o controle pra
+    // 18/65 — é exatamente o que o Gerenciador produziu, e evita 100/1870188 (age_min > 25 como
+    // controle com Advantage+ ligado = rejeição).
+    //
+    // NÃO reconstruímos o targeting por whitelist como o L.T faz (~2045): o gabarito do
+    // Gerenciador MANTÉM flexible_spec/genders com adv=1. Dropar interesses seria regressão.
+    const buildFase1Targeting = (): Record<string, any> => {
+      // O espelhamento só tem matéria-prima quando buildTargeting() usou o targeting_spec do
+      // público salvo (mesma condição de ~441): saved + público único. Nos demais casos o
+      // targeting é {custom_audiences, geo_locations} e não carrega targeting_automation → 0.
+      const savedSpec = (audience_type === "saved" && targeting_spec && audienceIdsArr.length <= 1)
+        ? targeting_spec
+        : null;
+      const adv = savedSpec?.targeting_automation?.advantage_audience === 1 ? 1 : 0;
+
+      const t: Record<string, any> = { ...targeting, targeting_automation: { advantage_audience: adv } };
+      if (adv === 0) return t; // caminho legado, intocado
+
+      // buildTargeting() dropa age_range (~452) porque o resto dos presets força adv=0.
+      // Com adv=1 ele é o canal da idade-sugestão → recuperamos do spec, ou derivamos de
+      // age_min/age_max quando o público segmentou idade sem age_range.
+      // Só aceita age_range do spec se AMBOS os elementos forem numéricos — [null, 55] viraria
+      // [NaN, 55] e, array truthy, venceria o fallback validado. NaN no payload = lixo pra Meta.
+      const specRange = Array.isArray(savedSpec.age_range) && savedSpec.age_range.length === 2
+        ? savedSpec.age_range.map(Number)
+        : null;
+      const range = specRange && specRange.every((n: number) => Number.isFinite(n)) ? specRange : null;
+      const specMin = Number(savedSpec.age_min);
+      const specMax = Number(savedSpec.age_max);
+      const derived = (Number.isFinite(specMin) && specMin > 18) || (Number.isFinite(specMax) && specMax < 65)
+        ? [Number.isFinite(specMin) ? specMin : 18, Number.isFinite(specMax) ? specMax : 65]
+        : null;
+      const ageRange = range ?? derived;
+      if (ageRange) t.age_range = ageRange;
+      t.age_min = 18;
+      t.age_max = 65;
+
+      console.log(`[FASE1-adset] advantage_audience=${adv} (espelhado do público), age_range=${JSON.stringify(t.age_range ?? null)}, age_min/max=${t.age_min}/${t.age_max}`);
+      return t;
+    };
+
     // === FASE 1 AdSet builder ===
     const buildFase1Adset = (name: string): Record<string, any> => {
       // FASE 1 adset:
-      // - advantage_audience FORÇADO = 0 (override user input)
+      // - advantage_audience ESPELHA o público salvo (ver buildFase1Targeting abaixo)
       // - promoted_object SÓ com page_id (formato historicamente funcional, conforme
       //   commit e2da2d5). Adicionar instagram_profile_id causa #1346001 ao linkar o ad
       //   quando user conectado não é admin direto da Page (cenário típico de agência via BM).
@@ -1824,7 +1882,7 @@ Deno.serve(async (req) => {
         // Ver #1346001 na justificativa original: é erro de creative-incompatibility,
         // não de optimization_goal — não há evidência de que PROFILE_VISIT o cause.
         optimization_goal: "PROFILE_VISIT",
-        targeting: { ...targeting, targeting_automation: { advantage_audience: 0 } },
+        targeting: buildFase1Targeting(),
         status: "ACTIVE",
         destination_type: "INSTAGRAM_PROFILE",
         promoted_object: promotedObject,
@@ -1847,7 +1905,9 @@ Deno.serve(async (req) => {
       else p.start_time = new Date().toISOString();
       if (schedule?.end_time) p.end_time = schedule.end_time;
 
-      console.log(`[FASE1-adset] ── FIXED: destination=INSTAGRAM_PROFILE, optimization=PROFILE_VISIT, advantage_audience=0`);
+      // advantage_audience NÃO é mais fixo — espelha o público (ver buildFase1Targeting).
+      console.log(`[FASE1-adset] ── FIXED: destination=INSTAGRAM_PROFILE, optimization=PROFILE_VISIT`);
+      console.log(`[FASE1-adset] ── MIRRORED: advantage_audience=${p.targeting?.targeting_automation?.advantage_audience}`);
       console.log(`[FASE1-adset] ── VARIABLE: name="${name}", page=${pageId}, budget=${p.daily_budget || "CBO"}`);
       return p;
     };
