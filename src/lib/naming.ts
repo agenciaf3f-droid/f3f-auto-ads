@@ -17,24 +17,27 @@ export function generateCampaignName({
 }
 
 // L.T (low-ticket) tem formato próprio (TESTE e CRIATIVO fixos):
-// [PRODUTO] [L.T] [dd/mm] [ABO|CBO] [TESTE] [CRIATIVO] -
+// [NOMENCLATURA] [L.T] [dd/mm] [ABO|CBO] [TESTE] [CRIATIVO] - SUFIXO
 export function generateLtCampaignName({
-  productName,
+  nomenclatura,
   presetLabel,
   structure,
   date,
+  suffix,
 }: {
-  productName: string;
+  nomenclatura: string;
   presetLabel: string;
   structure: string;      // ABO | CBO
   date?: string;          // dd/mm
+  suffix?: string;        // texto livre após o traço (opcional; vazio = termina em "-")
 }) {
   let d = date;
   if (!d) {
     const now = new Date();
     d = `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}`;
   }
-  return `[${productName}] [${presetLabel}] [${d}] [${structure}] [TESTE] [CRIATIVO] -`;
+  const prefix = `[${nomenclatura}] [${presetLabel}] [${d}] [${structure}] [TESTE] [CRIATIVO] -`;
+  return suffix?.trim() ? `${prefix} ${suffix.trim()}` : prefix;
 }
 
 export function generateAdsetName({
