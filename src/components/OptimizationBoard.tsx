@@ -69,13 +69,17 @@ const historyEntryKey = (a: OptimizationActionRecord): string =>
 const fmtActionDate = (iso: string) =>
   new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 
-// Reaproveita a MESMA fórmula de cada métrica (METRIC_REGISTRY) montando um AggregatedBucket
-// sintético de 1 nó só (adset ou ad) — não reinventa cálculo de CTR/CPM/CCP/CPV95%/etc.
-function computeNodeMetricValue(violation: OptimizationViolation, node: MetaNodeInsight): number | null {
-  const def = getMetricDef(violation.metric);
-  if (!def) return null;
-  const agg: AggregatedBucket = {
-    adAccountId: violation.adAccountId,
+// Contagem crua (impressões/cliques) — sem métrica no METRIC_REGISTRY pra isso (registry só tem
+// razões/moeda, não dimensões brutas). Mesmo locale pt-BR de formatMetricValue.
+const fmtCount = (n: number) => n.toLocaleString("pt-BR");
+
+// Empacota um nó (adset/ad) como um AggregatedBucket de 1 elemento só, pra reusar os `compute()`
+// do METRIC_REGISTRY (mesma fórmula usada em Clientes/Otimizações) — não reinventa cálculo de
+// CTR/CPM/CCP/CPV95%/etc. adAccountId/bucket/campaignCount não entram em nenhuma fórmula do
+// registry hoje, só preenchem o shape do tipo.
+function nodeAsAggregatedBucket(node: MetaNodeInsight, adAccountId: string): AggregatedBucket {
+  return {
+    adAccountId,
     bucket: "Outros",
     spend: node.spend,
     impressions: node.impressions,
@@ -84,7 +88,19 @@ function computeNodeMetricValue(violation: OptimizationViolation, node: MetaNode
     actionCounts: node.actionCounts,
     campaignCount: 1,
   };
-  return def.compute(agg);
+}
+
+// Valor da métrica VIOLADA (a do badge de culpado).
+function computeNodeMetricValue(violation: OptimizationViolation, node: MetaNodeInsight): number | null {
+  const def = getMetricDef(violation.metric);
+  return def ? def.compute(nodeAsAggregatedBucket(node, violation.adAccountId)) : null;
+}
+
+// Faixa fixa de CTR/CPM exibida por nó no drill-in — sempre as duas, independente de qual métrica
+// está violada (essa já tem o badge separado acima).
+function computeNodeCtrCpm(node: MetaNodeInsight): { ctr: number | null; cpm: number | null } {
+  const agg = nodeAsAggregatedBucket(node, "");
+  return { ctr: getMetricDef("ctr")?.compute(agg) ?? null, cpm: getMetricDef("cpm")?.compute(agg) ?? null };
 }
 
 // Cap de concorrência do fan-out por conta ao carregar otimizações. Antes era serial (1 conta por vez).
@@ -662,6 +678,7 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     const isPaused = node.effective_status === "PAUSED";
     const def = getMetricDef(campaign.metric);
     const value = computeNodeMetricValue(campaign, node);
+    const { ctr, cpm } = computeNodeCtrCpm(node);
     // Cor pela violação DO PRÓPRIO nó (não a da campanha): vermelho se ESTE conjunto/criativo estoura
     // o limite, verde se está dentro. É o que faz o culpado saltar no meio dos saudáveis.
     const breaches = value != null && (campaign.operator === ">" ? value > campaign.limit : value < campaign.limit);
@@ -710,6 +727,15 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
                   limite {campaign.operator === ">" ? "≤" : "≥"} {formatMetricValue(campaign.limit, def?.unit)}
                 </span>
               )}
+            </div>
+            {/* Faixa compacta de métricas cruas do nó — spend/impressões/cliques já vêm de MetaNodeInsight
+                (a edge meta-node-insights entrega tudo); CTR/CPM reaproveitam METRIC_REGISTRY acima. */}
+            <div className="flex items-center gap-x-3 gap-y-0.5 mt-1 flex-wrap text-[10px] text-muted-foreground">
+              <span>Investimento: {formatMetricValue(node.spend, "currency")}</span>
+              <span>Impressões: {fmtCount(node.impressions)}</span>
+              <span>Cliques: {fmtCount(node.clicks)}</span>
+              <span>CTR: {ctr == null ? "—" : formatMetricValue(ctr, "percent")}</span>
+              <span>CPM: {cpm == null ? "—" : formatMetricValue(cpm, "currency")}</span>
             </div>
           </div>
           <Button
@@ -765,6 +791,13 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
         </div>
 
         <h2 className="font-display text-xl font-bold tracking-tight mb-4">{isLevel2 ? "Criativos" : "Conjuntos"}</h2>
+
+        {/* Mesmo seletor da lista de campanhas — `range` é estado compartilhado do board, e o loader
+            de nós do drill já depende de `range` (useEffect acima), então trocar o período aqui
+            refaz o fetch dos conjuntos/criativos automaticamente. */}
+        <div className="mb-4">
+          <DateRangeSelector value={range} onChange={setRange} />
+        </div>
 
         {drillLoading && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground py-10">
