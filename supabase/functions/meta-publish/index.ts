@@ -964,25 +964,53 @@ async function resolvePageAndIg(accessToken: string, adAccountId?: string): Prom
 //  FASE 1 CREATIVE BUILDER — Instagram Profile Traffic
 // =====================================================================
 
-// Advantage+ Creative — liga o set de melhorias de criativo (degrees_of_freedom_spec).
+// Advantage+ Creative — liga recursos individuais de melhoria (degrees_of_freedom_spec).
 // POR QUÊ: criativos do sistema saíam SEM esse campo → Advantage+ Creative ficava OPT_OUT
 // (default da API) e entregava pior que o Gerenciador, que liga por default de UI. Paridade.
-// FONTE DA VERDADE: o set de 4 features (standard_enhancements/text_optimizations/
-// video_auto_crop/video_uncrop = OPT_IN) veio de dump de campanha boa REAL, rodando ACTIVE
-// junto com source_instagram_media_id — logo a v25.0 aceita o campo nesse tipo de creative.
-// Vai no TOP-LEVEL do creative spec (irmão de object_story_spec/source_instagram_media_id).
-// Em imagem, os video_* são no-op (a Meta enrola só as features aplicáveis, sem erro).
-function creativeEnhancementsSpec() {
-  return {
-    degrees_of_freedom_spec: {
-      creative_features_spec: {
-        standard_enhancements: { enroll_status: "OPT_IN" },
-        text_optimizations:    { enroll_status: "OPT_IN" },
-        video_auto_crop:       { enroll_status: "OPT_IN" },
-        video_uncrop:          { enroll_status: "OPT_IN" },
-      },
-    },
-  };
+//
+// ⚠️ standard_enhancements É PROIBIDO NA ESCRITA na Graph v25.0 (guarda-chuva DESCONTINUADO).
+// A Meta ECOA standard_enhancements na LEITURA (dump de campanha ACTIVE), mas RECUSA no POST:
+// "O recurso de inclusão do campo standard_enhancements foi descontinuado. Defina recursos
+// individuais." echo-de-leitura ≠ aceitação-de-escrita. Já reincidiu 2x: revert e517be8
+// (2026-05) e o incidente do PR #86 (2026-07). NUNCA reintroduzir. Só recursos individuais.
+//
+// ⚠️ Os recursos abaixo vieram do MESMO dump de leitura — logo NÃO estão provados na escrita.
+// Confirme cada um com POST /adcreatives real (PAUSED, sem gasto): scripts/verify-creative-
+// enhancements.sh. Se um for RECUSADO no diagnóstico, REMOVA-O de CREATIVE_FEATURES antes do
+// deploy. Vai no TOP-LEVEL do creative spec (irmão de object_story_spec/source_instagram_media_id).
+//
+// LISTA CANÔNICA (campo Meta ↔ label PT-BR) — o frontend espelha isto nos checkboxes.
+const CREATIVE_FEATURES = [
+  { key: "text_optimizations", label: "Melhorias de texto" },
+  { key: "video_auto_crop",    label: "Corte automático de vídeo" },
+  { key: "video_uncrop",       label: "Expansão de vídeo" },
+] as const;
+
+const CREATIVE_FEATURE_KEYS: string[] = CREATIVE_FEATURES.map((f) => f.key);
+
+// Monta degrees_of_freedom_spec só com os recursos pedidos (todos OPT_IN).
+// Lista vazia → {} (nenhum degrees_of_freedom_spec no creative).
+function creativeEnhancementsSpec(features: readonly string[]) {
+  if (!features || features.length === 0) return {};
+  const creative_features_spec: Record<string, { enroll_status: "OPT_IN" }> = {};
+  for (const key of features) creative_features_spec[key] = { enroll_status: "OPT_IN" };
+  return { degrees_of_freedom_spec: { creative_features_spec } };
+}
+
+// Resolve o payload creative_enhancements → lista de recursos a ligar. BACKWARD-COMPAT
+// (edge pode subir ANTES do frontend novo):
+//   false                       → [] (nenhum recurso)
+//   true | undefined | null     → TODOS os recursos canônicos (é o que o toggle boolean atual manda)
+//   { <feature>: boolean, ... } → só os features === true (frontend futuro; ignora chave desconhecida)
+//   (qualquer outro tipo)       → TODOS (seguro por default)
+function resolveEnhancementFeatures(ce: unknown): string[] {
+  if (ce === false) return [];
+  if (ce === true || ce === undefined || ce === null) return [...CREATIVE_FEATURE_KEYS];
+  if (typeof ce === "object") {
+    const obj = ce as Record<string, unknown>;
+    return CREATIVE_FEATURE_KEYS.filter((key) => obj[key] === true);
+  }
+  return [...CREATIVE_FEATURE_KEYS];
 }
 
 async function buildFase1Creative(
@@ -995,12 +1023,12 @@ async function buildFase1Creative(
   igActorId: string | undefined,
   igUsername: string | undefined,
   logs: StepLog[],
-  enhancementsOn: boolean,
+  enhFeatures: string[],
   preResolvedMediaId?: string,
   preResolvedIgAccountId?: string,
   caption?: string,
 ): Promise<{ spec?: Record<string, any>; error?: string }> {
-  const enhSpec = enhancementsOn ? creativeEnhancementsSpec() : {};
+  const enhSpec = creativeEnhancementsSpec(enhFeatures);
   const igProfileLink = igUsername ? `https://www.instagram.com/${igUsername}/` : `https://www.instagram.com/`;
   const isIgLink = creativeType === "instagram" || (!creativeType && creativeLink?.includes("instagram.com"));
   const isDriveLink = creativeType === "drive" || (!creativeType && (creativeLink?.includes("drive.google.com") || creativeLink?.includes("docs.google.com")));
@@ -1155,12 +1183,12 @@ async function buildFase2Creative(
   pageId: string,
   igActorId: string | undefined,
   logs: StepLog[],
-  enhancementsOn: boolean,
+  enhFeatures: string[],
   preResolvedMediaId?: string,
   preResolvedIgAccountId?: string,
   caption?: string,
 ): Promise<{ spec?: Record<string, any>; error?: string; videoId?: string }> {
-  const enhSpec = enhancementsOn ? creativeEnhancementsSpec() : {};
+  const enhSpec = creativeEnhancementsSpec(enhFeatures);
   const isIgLink = creativeType === "instagram" || (!creativeType && creativeLink?.includes("instagram.com"));
   const isDriveLink = creativeType === "drive" || (!creativeType && (creativeLink?.includes("drive.google.com") || creativeLink?.includes("docs.google.com")));
 
@@ -1228,13 +1256,13 @@ async function buildFase3LpCreative(
   igActorId: string | undefined,
   lpUrl: string,
   logs: StepLog[],
-  enhancementsOn: boolean,
+  enhFeatures: string[],
   preResolvedMediaId?: string,
   preResolvedIgAccountId?: string,
   caption?: string,
 ): Promise<{ spec?: Record<string, any>; error?: string }> {
   if (!lpUrl) return { error: "URL de destino (lp_url) ausente." };
-  const enhSpec = enhancementsOn ? creativeEnhancementsSpec() : {};
+  const enhSpec = creativeEnhancementsSpec(enhFeatures);
   const callToAction = { type: "LEARN_MORE", value: { link: lpUrl } };
 
   const isIgLink = creativeType === "instagram" || (!creativeType && creativeLink?.includes("instagram.com"));
@@ -1309,13 +1337,13 @@ async function buildFase3Creative(
   readyMessage: string | undefined,
   importedTemplateJson: string | undefined,
   logs: StepLog[],
-  enhancementsOn: boolean,
+  enhFeatures: string[],
   preResolvedMediaId?: string,
   preResolvedIgAccountId?: string,
   caption?: string,
 ): Promise<{ spec?: Record<string, any>; error?: string }> {
   // ── FIXED by preset ──
-  const enhSpec = enhancementsOn ? creativeEnhancementsSpec() : {};
+  const enhSpec = creativeEnhancementsSpec(enhFeatures);
   const waLink = buildWhatsAppLink(whatsappPhone, greetingText, readyMessage);
   const callToAction = { type: "WHATSAPP_MESSAGE", value: { link: waLink } };
   // Se user selecionou um modelo importado da própria conta Meta UI, reutiliza o JSON como-está
@@ -1479,9 +1507,10 @@ Deno.serve(async (req) => {
     } = body;
     publishToken = typeof access_token === "string" ? access_token : null;
 
-    // Advantage+ Creative toggle (frontend manda no payload). Default ON: só FALSE explícito
-    // desliga (undefined/ausente → ON, paridade com o default de UI do Gerenciador).
-    const enhancementsOn = body.creative_enhancements !== false;
+    // Advantage+ Creative (frontend manda em body.creative_enhancements). Resolve p/ lista de
+    // recursos individuais a ligar. Default ON: bool true/ausente → todos; false → nenhum;
+    // objeto → só os features true (ver resolveEnhancementFeatures). standard_enhancements NUNCA.
+    const enhFeatures = resolveEnhancementFeatures(body.creative_enhancements);
 
     // Validação de access_token (cobre todos os usos subsequentes)
     if (!access_token || typeof access_token !== "string" || access_token.trim().length === 0) {
@@ -1682,14 +1711,14 @@ Deno.serve(async (req) => {
         const preMediaId = cr.resolved_instagram_media_id;
         const preIgAccountId = cr.resolved_ig_account_id;
         if (isVideoEngagementPreset) {
-          return buildFase2Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, logs, enhancementsOn, preMediaId, preIgAccountId, cr.caption);
+          return buildFase2Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, logs, enhFeatures, preMediaId, preIgAccountId, cr.caption);
         } else if (isWebsitePreset) {
-          return buildFase3LpCreative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, lp_url || "", logs, enhancementsOn, preMediaId, preIgAccountId, cr.caption);
+          return buildFase3LpCreative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, lp_url || "", logs, enhFeatures, preMediaId, preIgAccountId, cr.caption);
         } else if (isWhatsAppPreset) {
-          return buildFase3Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, whatsapp_number || "", greeting_text, ready_message, imported_template_json, logs, enhancementsOn, preMediaId, preIgAccountId, cr.caption);
+          return buildFase3Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, whatsapp_number || "", greeting_text, ready_message, imported_template_json, logs, enhFeatures, preMediaId, preIgAccountId, cr.caption);
         } else {
           // FASE 1 OR generic fallback (mesmo builder)
-          return buildFase1Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, identity?.instagram_username || undefined, logs, enhancementsOn, preMediaId, preIgAccountId, cr.caption);
+          return buildFase1Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, identity?.instagram_username || undefined, logs, enhFeatures, preMediaId, preIgAccountId, cr.caption);
         }
       };
 
