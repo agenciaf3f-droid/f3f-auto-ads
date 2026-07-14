@@ -96,10 +96,11 @@ function computeNodeMetricValue(violation: OptimizationViolation, node: MetaNode
   return def ? def.compute(nodeAsAggregatedBucket(node, violation.adAccountId)) : null;
 }
 
-// Faixa fixa de CTR/CPM exibida por nó no drill-in — sempre as duas, independente de qual métrica
-// está violada (essa já tem o badge separado acima).
-function computeNodeCtrCpm(node: MetaNodeInsight): { ctr: number | null; cpm: number | null } {
-  const agg = nodeAsAggregatedBucket(node, "");
+// Faixa fixa de CTR/CPM a partir de um agregado — usada tanto pro nó no drill-in (via
+// nodeAsAggregatedBucket) quanto pro card de campanha na lista principal (agregado já vem pronto
+// em OptimizationViolation.agg). Sempre as duas, independente de qual métrica está violada (essa
+// já tem o badge/texto separado à parte).
+function computeCtrCpm(agg: AggregatedBucket): { ctr: number | null; cpm: number | null } {
   return { ctr: getMetricDef("ctr")?.compute(agg) ?? null, cpm: getMetricDef("cpm")?.compute(agg) ?? null };
 }
 
@@ -564,6 +565,9 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     const isYellow = v.severity === "yellow";
     const emphasizeRed = meta?.worsened || !isYellow; // piorou sempre em vermelho, independente da severidade
     const snapActual = meta?.action.snapshot?.actual;
+    // Faixa de métricas cruas da campanha (mesma faixa do drill-in, ver renderNodeRow) — só existe
+    // quando compareKpis() conseguiu montar o agregado; sem ele, não renderiza (sem "0" enganoso).
+    const ctrCpm = v.agg ? computeCtrCpm(v.agg) : null;
     const enterDrill = () => setDrill({ campaign: v });
     return (
       <Card
@@ -650,6 +654,15 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
                   ? " — em atenção, dentro de uma margem pequena."
                   : " — performando fora do esperado."}
             </p>
+            {v.agg && ctrCpm && (
+              <div className="flex items-center gap-x-3 gap-y-0.5 mt-1 flex-wrap text-[10px] text-muted-foreground">
+                <span>Investimento: {formatMetricValue(v.agg.spend, "currency")}</span>
+                <span>Impressões: {fmtCount(v.agg.impressions)}</span>
+                <span>Cliques: {fmtCount(v.agg.clicks)}</span>
+                <span>CTR: {ctrCpm.ctr == null ? "—" : formatMetricValue(ctrCpm.ctr, "percent")}</span>
+                <span>CPM: {ctrCpm.cpm == null ? "—" : formatMetricValue(ctrCpm.cpm, "currency")}</span>
+              </div>
+            )}
           </CardContent>
         </div>
         <CardContent className="p-4 pt-0">
@@ -678,7 +691,7 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     const isPaused = node.effective_status === "PAUSED";
     const def = getMetricDef(campaign.metric);
     const value = computeNodeMetricValue(campaign, node);
-    const { ctr, cpm } = computeNodeCtrCpm(node);
+    const { ctr, cpm } = computeCtrCpm(nodeAsAggregatedBucket(node, ""));
     // Cor pela violação DO PRÓPRIO nó (não a da campanha): vermelho se ESTE conjunto/criativo estoura
     // o limite, verde se está dentro. É o que faz o culpado saltar no meio dos saudáveis.
     const breaches = value != null && (campaign.operator === ">" ? value > campaign.limit : value < campaign.limit);

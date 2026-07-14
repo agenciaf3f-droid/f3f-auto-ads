@@ -1,5 +1,12 @@
 import type { ClientKpiConfig } from "./client-kpi-contract";
-import { extractPresetBucket, aggregateByAccountBucket, evaluateRule, bucketKey, type InsightRow } from "./meta-insights";
+import {
+  extractPresetBucket,
+  aggregateByAccountBucket,
+  evaluateRule,
+  bucketKey,
+  type InsightRow,
+  type AggregatedBucket,
+} from "./meta-insights";
 
 export type Campaign = { id: string; name: string; daily_budget?: string; lifetime_budget?: string };
 
@@ -28,6 +35,12 @@ export type OptimizationViolation = {
   // deve mirar o adset ou o criativo específico, não a campanha inteira. ABO (orçamento por
   // adset) idem: só o conjunto ruim deve ser pausado. Ver handleDesligar em OtimizacoesPage.tsx.
   isCbo: boolean;
+  // Agregado bruto (spend/impressions/clicks/vv95/actionCounts) do MESMO bucket (conta+preset) que
+  // gerou essa violação — já computado em compareKpis() pra avaliar a regra, anexado aqui pra o card
+  // de campanha montar a faixa de métricas (Investimento/Impressões/Cliques/CTR/CPM) reusando
+  // METRIC_REGISTRY sem round-trip novo à Meta. Opcional pra não mentir "0" se algum dia uma violação
+  // for construída por outro caminho sem o agregado.
+  agg?: AggregatedBucket;
 };
 
 // Mesma regra de PublishForm.tsx: campanha com daily_budget/lifetime_budget = CBO (orçamento no
@@ -237,6 +250,7 @@ export function compareKpis(
         limit: kpi.value,
         severity: computeSeverity(kpi.operator, evalResult.value as number, kpi.value),
         isCbo: isCboCampaign(campaign),
+        agg,
       });
     }
   }
