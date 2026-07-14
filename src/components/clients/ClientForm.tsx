@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, RefreshCw, ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,6 +6,16 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fetchAdAccounts } from "@/lib/meta-api";
@@ -76,6 +86,12 @@ export default function ClientForm({
   const [accountSearch, setAccountSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loadingAccounts, setLoadingAccounts] = useState(false);
+  // Vínculos já salvos do cliente em edição, carregados 1x na abertura — fonte única de verdade
+  // reusada no handleSave (evita a re-busca que corria em paralelo com o clique em Salvar).
+  const [loadedLinks, setLoadedLinks] = useState<ClientAdAccount[]>([]);
+  const [loadingLinks, setLoadingLinks] = useState(false);
+  const [linksError, setLinksError] = useState(false);
+  const [confirmUnlinkAll, setConfirmUnlinkAll] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dashboards, setDashboards] = useState<ClientDashboard[]>([]);
   const [groupId, setGroupId] = useState("");
@@ -84,23 +100,40 @@ export default function ClientForm({
   const [groupPickerOpen, setGroupPickerOpen] = useState(false);
   const [syncingGroups, setSyncingGroups] = useState(false);
 
+  // Busca os vínculos já salvos do cliente em edição. Usada na abertura E no botão "Tentar
+  // novamente" — mesma função, mesma fonte de verdade depois reusada no handleSave.
+  const loadLinks = useCallback((clientId: string) => {
+    setLoadingLinks(true);
+    setLinksError(false);
+    listClientAdAccounts(clientId)
+      .then((links) => {
+        setLoadedLinks(links);
+        setSelected(new Set(links.map((l) => l.ad_account_id)));
+      })
+      .catch(() => {
+        setLinksError(true);
+        toast.error("Não foi possível carregar as contas vinculadas — clique em Tentar novamente.");
+      })
+      .finally(() => setLoadingLinks(false));
+  }, []);
+
   useEffect(() => {
     if (!open) return;
     setName(client?.name || "");
     setNotes(client?.notes || "");
     setAccountSearch("");
     setSelected(new Set());
+    setLoadedLinks([]);
+    setLinksError(false);
     // Edição: pré-preenche com o grupo já salvo. Criação: vazio (o auto-match preenche depois).
     setGroupId(client?.whatsapp_group_id || "");
     setGroupTouched(false);
     setGroupSearch("");
     setGroupPickerOpen(false);
     if (isEdit && client) {
-      listClientAdAccounts(client.id)
-        .then((links) => setSelected(new Set(links.map((l) => l.ad_account_id))))
-        .catch(() => {});
+      loadLinks(client.id);
     }
-  }, [open, client, isEdit]);
+  }, [open, client, isEdit, loadLinks]);
 
   // Grupos conhecidos (tabela local, sincronizada de Agenciaf3f) — pro dropdown de grupo, na
   // criação E na edição.
@@ -178,30 +211,25 @@ export default function ClientForm({
     });
   };
 
-  const handleSave = async () => {
-    if (!name.trim()) {
-      toast.error("Nome do cliente é obrigatório");
-      return;
-    }
-    const conflicts = [...selected].filter((id) => accountOwner.has(id));
-    if (conflicts.length > 0) {
-      const names = conflicts.map((id) => accounts.find((a) => a.id === id)?.name || id).join(", ");
-      toast.error(`Remova as contas já vinculadas a outro cliente antes de salvar: ${names}`);
-      return;
-    }
+  // Diff removeria TODOS os vínculos que o cliente já tinha (nenhum sobrevive em `selected`) —
+  // dispara a confirmação destrutiva antes de gravar. Remoção parcial não entra aqui.
+  const willRemoveAllLinks = isEdit && loadedLinks.length > 0 && loadedLinks.every((l) => !selected.has(l.ad_account_id));
+
+  const commitSave = async () => {
     setSaving(true);
     try {
       const nameById = new Map(accounts.map((a) => [a.id, a.name]));
       if (isEdit && client) {
         await updateClient(client.id, { name: name.trim(), notes: notes.trim() || null, whatsapp_group_id: groupId || null });
-        const existing = await listClientAdAccounts(client.id);
-        const existingIds = new Set(existing.map((l) => l.ad_account_id));
+        // Reusa loadedLinks (carregado na abertura) em vez de buscar de novo — elimina a corrida
+        // entre essa busca e a da abertura que podia divergir e apagar vínculos por engano.
+        const existingIds = new Set(loadedLinks.map((l) => l.ad_account_id));
         // linka novos
         for (const id of selected) {
           if (!existingIds.has(id)) await linkAdAccount(client.id, id, nameById.get(id) || null);
         }
         // desvincula removidos
-        for (const link of existing) {
+        for (const link of loadedLinks) {
           if (!selected.has(link.ad_account_id)) await unlinkAdAccount(link.id);
         }
         toast.success("Cliente atualizado");
@@ -229,186 +257,236 @@ export default function ClientForm({
     }
   };
 
+  const handleSave = async () => {
+    if (!name.trim()) {
+      toast.error("Nome do cliente é obrigatório");
+      return;
+    }
+    if (isEdit && (loadingLinks || linksError)) {
+      toast.error("Aguarde o carregamento das contas vinculadas antes de salvar.");
+      return;
+    }
+    const conflicts = [...selected].filter((id) => accountOwner.has(id));
+    if (conflicts.length > 0) {
+      const names = conflicts.map((id) => accounts.find((a) => a.id === id)?.name || id).join(", ");
+      toast.error(`Remova as contas já vinculadas a outro cliente antes de salvar: ${names}`);
+      return;
+    }
+    if (willRemoveAllLinks) {
+      setConfirmUnlinkAll(true);
+      return;
+    }
+    await commitSave();
+  };
+
   const q = accountSearch.trim().toLowerCase();
   const filteredAccounts = q
     ? accounts.filter((a) => a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q))
     : accounts;
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{isEdit ? "Editar cliente" : "Novo cliente"}</DialogTitle>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{isEdit ? "Editar cliente" : "Novo cliente"}</DialogTitle>
+          </DialogHeader>
 
-        <div className="space-y-4 min-w-0">
-          <div className="space-y-1.5">
-            <Label htmlFor="client-name">Nome</Label>
-            <Input id="client-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Loja do João" />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="client-notes">Notas (opcional)</Label>
-            <Input id="client-notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Observações internas" />
-          </div>
-
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <Label>Grupo do WhatsApp (cliente)</Label>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-xs text-muted-foreground"
-                onClick={handleSyncGroups}
-                disabled={syncingGroups}
-              >
-                {syncingGroups ? (
-                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                ) : (
-                  <RefreshCw className="h-3 w-3 mr-1" />
-                )}
-                Sincronizar
-              </Button>
+          <div className="space-y-4 min-w-0">
+            <div className="space-y-1.5">
+              <Label htmlFor="client-name">Nome</Label>
+              <Input id="client-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Loja do João" />
             </div>
-            {dashboards.length > 0 ? (
-              <>
-                {/* Trigger colapsado mostra o grupo selecionado (nome + ID). Clicar abre a lista;
-                    selecionar um item colapsa de volta. Inline (não usa portal): SearchableSelect
-                    portala pro body e o Radix Dialog (modal) bloqueia foco/scroll dele. */}
-                <button
+            <div className="space-y-1.5">
+              <Label htmlFor="client-notes">Notas (opcional)</Label>
+              <Input id="client-notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Observações internas" />
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <Label>Grupo do WhatsApp (cliente)</Label>
+                <Button
                   type="button"
-                  onClick={() => { setGroupPickerOpen((o) => !o); setGroupSearch(""); }}
-                  className="w-full flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-accent-soft"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs text-muted-foreground"
+                  onClick={handleSyncGroups}
+                  disabled={syncingGroups}
                 >
-                  <span className="min-w-0 flex-1">
-                    {matchedDashboard ? (
-                      <>
-                        <span className="block truncate">{matchedDashboard.nome}</span>
-                        <span className="block truncate text-[10px] text-muted-foreground font-mono">{matchedDashboard.whatsapp_group_id}</span>
-                      </>
-                    ) : groupId ? (
-                      <span className="block truncate font-mono text-xs">{groupId}</span>
-                    ) : (
-                      <span className="text-muted-foreground">— Sem grupo —</span>
-                    )}
-                  </span>
-                  <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-                </button>
-                {groupPickerOpen && (
-                  <>
-                    <Input
-                      autoFocus
-                      value={groupSearch}
-                      onChange={(e) => setGroupSearch(e.target.value)}
-                      placeholder="Buscar dashboard por nome ou ID…"
-                      className="h-8"
-                    />
-                    <div className="h-40 overflow-y-auto rounded-md border p-2 space-y-1">
-                      <button
-                        type="button"
-                        onClick={() => { setGroupId(""); setGroupTouched(true); setGroupPickerOpen(false); }}
-                        className={cn(
-                          "w-full text-left rounded-md px-2 py-1.5 text-sm transition-colors",
-                          groupId === "" ? "bg-primary/10 text-primary" : "hover:bg-accent-soft",
-                        )}
-                      >
-                        — Sem grupo —
-                      </button>
-                      {filteredDashboards.length === 0 ? (
-                        <p className="text-sm text-muted-foreground px-2 py-1.5">Nenhum dashboard corresponde à busca.</p>
-                      ) : (
-                        filteredDashboards.map((d) => (
-                          <button
-                            key={d.whatsapp_group_id}
-                            type="button"
-                            onClick={() => { setGroupId(d.whatsapp_group_id); setGroupTouched(true); setGroupPickerOpen(false); }}
-                            className={cn(
-                              "w-full text-left rounded-md px-2 py-1.5 transition-colors min-w-0",
-                              groupId === d.whatsapp_group_id ? "bg-primary/10 text-primary" : "hover:bg-accent-soft",
-                            )}
-                          >
-                            <span className="text-sm block truncate">{d.nome}</span>
-                            <span className="block truncate text-[10px] text-muted-foreground font-mono">{d.whatsapp_group_id}</span>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  </>
-                )}
-              </>
-            ) : (
-              <Input
-                value={groupId}
-                onChange={(e) => { setGroupId(e.target.value); setGroupTouched(true); }}
-                placeholder="ID do grupo (ex: 120363...@g.us)"
-              />
-            )}
-          </div>
-
-          <div className="space-y-1.5">
-            <Label>Contas de anúncio</Label>
-            {!accessToken ? (
-              <p className="text-sm text-muted-foreground">Conecte a conta Meta em Configurações para vincular contas.</p>
-            ) : loadingAccounts ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Carregando contas…
-              </div>
-            ) : accounts.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Nenhuma conta encontrada.</p>
-            ) : (
-              <div className="space-y-1.5">
-                <Input
-                  value={accountSearch}
-                  onChange={(e) => setAccountSearch(e.target.value)}
-                  placeholder="Buscar por nome ou ID…"
-                  className="h-8"
-                />
-                <div className="h-48 overflow-y-auto rounded-md border p-2">
-                  {filteredAccounts.length === 0 ? (
-                    <p className="text-sm text-muted-foreground px-2 py-1.5">Nenhuma conta corresponde à busca.</p>
+                  {syncingGroups ? (
+                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
                   ) : (
-                    <div className="space-y-1">
-                      {filteredAccounts.map((acc) => {
-                        const conflict = accountOwner.get(acc.id);
-                        return (
-                          <label
-                            key={acc.id}
-                            className={cn(
-                              "flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors",
-                              conflict ? "opacity-60 cursor-not-allowed" : "hover:bg-accent-soft cursor-pointer",
-                            )}
-                          >
-                            <Checkbox
-                              className="shrink-0"
-                              checked={selected.has(acc.id)}
-                              disabled={!!conflict}
-                              onCheckedChange={() => toggle(acc.id)}
-                            />
-                            <span className="text-sm flex-1 min-w-0 truncate">{acc.name}</span>
-                            {conflict && (
-                              <Badge variant="destructive" className="text-[10px] shrink-0">
-                                Vinculada a {conflict.clientName}
-                              </Badge>
-                            )}
-                          </label>
-                        );
-                      })}
-                    </div>
+                    <RefreshCw className="h-3 w-3 mr-1" />
                   )}
-                </div>
+                  Sincronizar
+                </Button>
               </div>
-            )}
-          </div>
-        </div>
+              {dashboards.length > 0 ? (
+                <>
+                  {/* Trigger colapsado mostra o grupo selecionado (nome + ID). Clicar abre a lista;
+                      selecionar um item colapsa de volta. Inline (não usa portal): SearchableSelect
+                      portala pro body e o Radix Dialog (modal) bloqueia foco/scroll dele. */}
+                  <button
+                    type="button"
+                    onClick={() => { setGroupPickerOpen((o) => !o); setGroupSearch(""); }}
+                    className="w-full flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-accent-soft"
+                  >
+                    <span className="min-w-0 flex-1">
+                      {matchedDashboard ? (
+                        <>
+                          <span className="block truncate">{matchedDashboard.nome}</span>
+                          <span className="block truncate text-[10px] text-muted-foreground font-mono">{matchedDashboard.whatsapp_group_id}</span>
+                        </>
+                      ) : groupId ? (
+                        <span className="block truncate font-mono text-xs">{groupId}</span>
+                      ) : (
+                        <span className="text-muted-foreground">— Sem grupo —</span>
+                      )}
+                    </span>
+                    <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  </button>
+                  {groupPickerOpen && (
+                    <>
+                      <Input
+                        autoFocus
+                        value={groupSearch}
+                        onChange={(e) => setGroupSearch(e.target.value)}
+                        placeholder="Buscar dashboard por nome ou ID…"
+                        className="h-8"
+                      />
+                      <div className="h-40 overflow-y-auto rounded-md border p-2 space-y-1">
+                        <button
+                          type="button"
+                          onClick={() => { setGroupId(""); setGroupTouched(true); setGroupPickerOpen(false); }}
+                          className={cn(
+                            "w-full text-left rounded-md px-2 py-1.5 text-sm transition-colors",
+                            groupId === "" ? "bg-primary/10 text-primary" : "hover:bg-accent-soft",
+                          )}
+                        >
+                          — Sem grupo —
+                        </button>
+                        {filteredDashboards.length === 0 ? (
+                          <p className="text-sm text-muted-foreground px-2 py-1.5">Nenhum dashboard corresponde à busca.</p>
+                        ) : (
+                          filteredDashboards.map((d) => (
+                            <button
+                              key={d.whatsapp_group_id}
+                              type="button"
+                              onClick={() => { setGroupId(d.whatsapp_group_id); setGroupTouched(true); setGroupPickerOpen(false); }}
+                              className={cn(
+                                "w-full text-left rounded-md px-2 py-1.5 transition-colors min-w-0",
+                                groupId === d.whatsapp_group_id ? "bg-primary/10 text-primary" : "hover:bg-accent-soft",
+                              )}
+                            >
+                              <span className="text-sm block truncate">{d.nome}</span>
+                              <span className="block truncate text-[10px] text-muted-foreground font-mono">{d.whatsapp_group_id}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </>
+                  )}
+                </>
+              ) : (
+                <Input
+                  value={groupId}
+                  onChange={(e) => { setGroupId(e.target.value); setGroupTouched(true); }}
+                  placeholder="ID do grupo (ex: 120363...@g.us)"
+                />
+              )}
+            </div>
 
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={saving}>Cancelar</Button>
-          <Button onClick={handleSave} disabled={saving}>
-            {saving && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
-            {isEdit ? "Salvar" : "Criar"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+            <div className="space-y-1.5">
+              <Label>Contas de anúncio</Label>
+              {isEdit && loadingLinks ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Carregando contas vinculadas…
+                </div>
+              ) : isEdit && linksError ? (
+                <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+                  <p className="text-sm text-destructive">Não foi possível carregar as contas já vinculadas a este cliente.</p>
+                  <Button type="button" variant="outline" size="sm" onClick={() => client && loadLinks(client.id)}>
+                    <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Tentar novamente
+                  </Button>
+                </div>
+              ) : !accessToken ? (
+                <p className="text-sm text-muted-foreground">Conecte a conta Meta em Configurações para vincular contas.</p>
+              ) : loadingAccounts ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Carregando contas…
+                </div>
+              ) : accounts.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Nenhuma conta encontrada.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  <Input
+                    value={accountSearch}
+                    onChange={(e) => setAccountSearch(e.target.value)}
+                    placeholder="Buscar por nome ou ID…"
+                    className="h-8"
+                  />
+                  <div className="h-48 overflow-y-auto rounded-md border p-2">
+                    {filteredAccounts.length === 0 ? (
+                      <p className="text-sm text-muted-foreground px-2 py-1.5">Nenhuma conta corresponde à busca.</p>
+                    ) : (
+                      <div className="space-y-1">
+                        {filteredAccounts.map((acc) => {
+                          const conflict = accountOwner.get(acc.id);
+                          return (
+                            <label
+                              key={acc.id}
+                              className={cn(
+                                "flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors",
+                                conflict ? "opacity-60 cursor-not-allowed" : "hover:bg-accent-soft cursor-pointer",
+                              )}
+                            >
+                              <Checkbox
+                                className="shrink-0"
+                                checked={selected.has(acc.id)}
+                                disabled={!!conflict}
+                                onCheckedChange={() => toggle(acc.id)}
+                              />
+                              <span className="text-sm flex-1 min-w-0 truncate">{acc.name}</span>
+                              {conflict && (
+                                <Badge variant="destructive" className="text-[10px] shrink-0">
+                                  Vinculada a {conflict.clientName}
+                                </Badge>
+                              )}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={onClose} disabled={saving}>Cancelar</Button>
+            <Button onClick={handleSave} disabled={saving || (isEdit && (loadingLinks || linksError))}>
+              {(saving || (isEdit && loadingLinks)) && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+              {isEdit && loadingLinks ? "Carregando contas..." : isEdit ? "Salvar" : "Criar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={confirmUnlinkAll} onOpenChange={(o) => !o && setConfirmUnlinkAll(false)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover todas as contas vinculadas?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Isso desvincula {loadedLinks.length === 1 ? "a única conta" : `todas as ${loadedLinks.length} contas`} de anúncio de "{client?.name}" — as regras de KPI configuradas para {loadedLinks.length === 1 ? "ela" : "elas"} também serão apagadas. Não afeta nada no Meta.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={commitSave}>Remover todas</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
