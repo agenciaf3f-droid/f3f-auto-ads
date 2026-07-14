@@ -104,6 +104,17 @@ export const bucketKey = (adAccountId: string, bucket: BucketKey) => `${adAccoun
 // compute() devolve null quando não é computável (denominador 0) — evita NaN/Infinity
 // e divisão por zero em bucket vazio. `verified` = action_type confirmado contra um
 // payload REAL de /insights. Escalares (spend/ctr/cpm/cpc) são certos.
+// Componente exibível de uma métrica na faixa de contexto (Otimizações): um "ingrediente" cru
+// (spend/impressions/clicks/actionCounts) que ajuda a explicar o valor da métrica. O ÚLTIMO
+// componente listado em cada MetricDef.components é sempre o próprio valor do KPI, reusando o
+// MESMO compute() do MetricDef (ver loop logo após METRIC_REGISTRY) — nunca uma fórmula duplicada,
+// que poderia divergir se um dos dois mudasse sozinho.
+export interface MetricComponent {
+  label: string;
+  unit: MetricDef["unit"];
+  compute: (agg: AggregatedBucket) => number | null;
+}
+
 export interface MetricDef {
   key: string;
   label: string;
@@ -113,6 +124,10 @@ export interface MetricDef {
   // Buckets em que a métrica aparece no dropdown de KPI. Omitido = todos (comportamento
   // pré-existente das genéricas: spend/ctr/cpm/cpc/whatsapp/purchase).
   buckets?: PresetBucket[];
+  // Ingredientes crus da faixa de métricas do card de violação/nó — SÓ os relevantes a esse KPI
+  // (ex.: CTR mostra Impressões/Cliques/CTR, não Investimento/CPM). Preenchido pra TODAS as
+  // métricas do registry logo abaixo.
+  components: MetricComponent[];
 }
 
 // action_type confirmado contra o catálogo oficial de campos da Meta (ads_get_field_context):
@@ -136,6 +151,7 @@ export const METRIC_REGISTRY: MetricDef[] = [
     unit: "currency",
     verified: true,
     compute: (a) => a.spend,
+    components: [],
   },
   {
     key: "ctr",
@@ -143,6 +159,10 @@ export const METRIC_REGISTRY: MetricDef[] = [
     unit: "percent",
     verified: true,
     compute: (a) => (a.impressions > 0 ? (a.clicks / a.impressions) * 100 : null),
+    components: [
+      { label: "Impressões", unit: "count", compute: (a) => a.impressions },
+      { label: "Cliques", unit: "count", compute: (a) => a.clicks },
+    ],
   },
   {
     key: "cpm",
@@ -150,6 +170,10 @@ export const METRIC_REGISTRY: MetricDef[] = [
     unit: "currency",
     verified: true,
     compute: (a) => (a.impressions > 0 ? (a.spend / a.impressions) * 1000 : null),
+    components: [
+      { label: "Investimento", unit: "currency", compute: (a) => a.spend },
+      { label: "Impressões", unit: "count", compute: (a) => a.impressions },
+    ],
   },
   {
     key: "cpc",
@@ -157,6 +181,10 @@ export const METRIC_REGISTRY: MetricDef[] = [
     unit: "currency",
     verified: true,
     compute: (a) => (a.clicks > 0 ? a.spend / a.clicks : null),
+    components: [
+      { label: "Investimento", unit: "currency", compute: (a) => a.spend },
+      { label: "Cliques", unit: "count", compute: (a) => a.clicks },
+    ],
   },
   {
     key: "cost_per_whatsapp_conversation",
@@ -167,6 +195,10 @@ export const METRIC_REGISTRY: MetricDef[] = [
       const c = a.actionCounts[CONFIRMED_ACTION_TYPES.whatsappConversation] || 0;
       return c > 0 ? a.spend / c : null;
     },
+    components: [
+      { label: "Investimento", unit: "currency", compute: (a) => a.spend },
+      { label: "Conversas", unit: "count", compute: (a) => a.actionCounts[CONFIRMED_ACTION_TYPES.whatsappConversation] || 0 },
+    ],
   },
   {
     key: "cost_per_purchase",
@@ -177,6 +209,10 @@ export const METRIC_REGISTRY: MetricDef[] = [
       const c = a.actionCounts[CONFIRMED_ACTION_TYPES.purchase] || 0;
       return c > 0 ? a.spend / c : null;
     },
+    components: [
+      { label: "Investimento", unit: "currency", compute: (a) => a.spend },
+      { label: "Vendas", unit: "count", compute: (a) => a.actionCounts[CONFIRMED_ACTION_TYPES.purchase] || 0 },
+    ],
   },
   {
     key: "ccp",
@@ -190,6 +226,10 @@ export const METRIC_REGISTRY: MetricDef[] = [
       const nonLinkClicks = a.clicks - (a.actionCounts["link_click"] || 0);
       return nonLinkClicks > 0 ? a.spend / nonLinkClicks : null;
     },
+    components: [
+      { label: "Investimento", unit: "currency", compute: (a) => a.spend },
+      { label: "Cliques (não-link)", unit: "count", compute: (a) => a.clicks - (a.actionCounts["link_click"] || 0) },
+    ],
   },
   {
     key: "cpv95",
@@ -200,8 +240,18 @@ export const METRIC_REGISTRY: MetricDef[] = [
     // Valor usado ÷ VV95% (video_p95_watched_actions — campo padrão da Meta, fora do array
     // genérico de actions).
     compute: (a) => (a.vv95 > 0 ? a.spend / a.vv95 : null),
+    components: [
+      { label: "Investimento", unit: "currency", compute: (a) => a.spend },
+      { label: "VV95%", unit: "count", compute: (a) => a.vv95 },
+    ],
   },
 ];
+
+// Anexa o próprio KPI como último componente de cada métrica (ver comentário na interface
+// MetricComponent, acima) — mesmo compute() já definido no registry, nunca uma fórmula duplicada.
+for (const m of METRIC_REGISTRY) {
+  m.components.push({ label: m.label, unit: m.unit, compute: m.compute });
+}
 
 export const getMetricDef = (key: string): MetricDef | undefined =>
   METRIC_REGISTRY.find((m) => m.key === key);

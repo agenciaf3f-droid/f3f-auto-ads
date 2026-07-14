@@ -75,10 +75,15 @@ Deno.serve(async (req) => {
     // devolve uma linha por adset_id/ad_id, sem precisar de 1 chamada por nó).
     const structureFields = level === "adset" ? "id,name,effective_status" : "id,name,effective_status,adset_id";
     const structureUrl = `https://graph.facebook.com/v25.0/${campaign_id}/${level}s?fields=${structureFields}&limit=200&access_token=${access_token}`;
+    // A Graph NÃO devolve adset_id/ad_id na linha de insights só por causa do level= — o campo precisa
+    // estar em fields, senão o join por row[idField] (abaixo) nunca casa e todo nó sai zerado (mesmo
+    // motivo do campaign_id explícito em meta-client-insights).
+    const idField = level === "adset" ? "adset_id" : "ad_id";
+    const insightsFields = `${INSIGHTS_FIELDS},${idField}`;
     // limit=200 no insights TAMBÉM: o /insights?level=adset|ad pagina em ~25 por default. Sem isso,
     // campanha com >25 nós (FASE 2 = 1 criativo + N adsets) traz métrica só dos 25 primeiros e o
     // resto renderiza "sem dados" — gestor pausaria o nó errado.
-    const insightsUrl = `https://graph.facebook.com/v25.0/${campaign_id}/insights?level=${level}&fields=${INSIGHTS_FIELDS}&${rangeParam}&limit=200&access_token=${access_token}`;
+    const insightsUrl = `https://graph.facebook.com/v25.0/${campaign_id}/insights?level=${level}&fields=${insightsFields}&${rangeParam}&limit=200&access_token=${access_token}`;
 
     // Retry com backoff em erro transiente/rate-limit da Meta (code 17/613/…). O drill-in dispara as
     // 2 chamadas Graph logo depois do board já ter queimado insights de todas as campanhas — pico que
@@ -104,7 +109,6 @@ Deno.serve(async (req) => {
     if (structureData.error) return metaErrorResponse(structureData.error);
     if (insightsData.error) return metaErrorResponse(insightsData.error);
 
-    const idField = level === "adset" ? "adset_id" : "ad_id";
     const insightsByNodeId = new Map<string, Record<string, unknown>>();
     for (const row of (insightsData.data || []) as Record<string, unknown>[]) {
       const id = row[idField] as string | undefined;

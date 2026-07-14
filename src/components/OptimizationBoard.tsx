@@ -26,7 +26,7 @@ import {
   type OptimizationActionRecord,
   type OptimizationHistoryEntry,
 } from "@/lib/optimization-engine";
-import { getMetricDef, formatMetricValue, rangeKey, type AggregatedBucket, type DateRangeSelection } from "@/lib/meta-insights";
+import { getMetricDef, formatMetricValue, rangeKey, type AggregatedBucket, type DateRangeSelection, type MetricComponent } from "@/lib/meta-insights";
 import DateRangeSelector from "@/components/clients/DateRangeSelector";
 
 type ActionKind = "dismissed" | "paused";
@@ -73,6 +73,14 @@ const fmtActionDate = (iso: string) =>
 // razões/moeda, não dimensões brutas). Mesmo locale pt-BR de formatMetricValue.
 const fmtCount = (n: number) => n.toLocaleString("pt-BR");
 
+// Formata um componente da faixa de métricas (ver MetricDef.components em meta-insights.ts):
+// "count" é dimensão crua (impressões/cliques/vendas/...) → fmtCount; currency/percent reusam
+// formatMetricValue, igual ao resto do board. Não-computável (null) vira "—".
+function formatComponentValue(value: number | null, unit: MetricComponent["unit"]): string {
+  if (value == null) return "—";
+  return unit === "count" ? fmtCount(value) : formatMetricValue(value, unit);
+}
+
 // Empacota um nó (adset/ad) como um AggregatedBucket de 1 elemento só, pra reusar os `compute()`
 // do METRIC_REGISTRY (mesma fórmula usada em Clientes/Otimizações) — não reinventa cálculo de
 // CTR/CPM/CCP/CPV95%/etc. adAccountId/bucket/campaignCount não entram em nenhuma fórmula do
@@ -94,14 +102,6 @@ function nodeAsAggregatedBucket(node: MetaNodeInsight, adAccountId: string): Agg
 function computeNodeMetricValue(violation: OptimizationViolation, node: MetaNodeInsight): number | null {
   const def = getMetricDef(violation.metric);
   return def ? def.compute(nodeAsAggregatedBucket(node, violation.adAccountId)) : null;
-}
-
-// Faixa fixa de CTR/CPM a partir de um agregado — usada tanto pro nó no drill-in (via
-// nodeAsAggregatedBucket) quanto pro card de campanha na lista principal (agregado já vem pronto
-// em OptimizationViolation.agg). Sempre as duas, independente de qual métrica está violada (essa
-// já tem o badge/texto separado à parte).
-function computeCtrCpm(agg: AggregatedBucket): { ctr: number | null; cpm: number | null } {
-  return { ctr: getMetricDef("ctr")?.compute(agg) ?? null, cpm: getMetricDef("cpm")?.compute(agg) ?? null };
 }
 
 // Cap de concorrência do fan-out por conta ao carregar otimizações. Antes era serial (1 conta por vez).
@@ -565,9 +565,11 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     const isYellow = v.severity === "yellow";
     const emphasizeRed = meta?.worsened || !isYellow; // piorou sempre em vermelho, independente da severidade
     const snapActual = meta?.action.snapshot?.actual;
-    // Faixa de métricas cruas da campanha (mesma faixa do drill-in, ver renderNodeRow) — só existe
-    // quando compareKpis() conseguiu montar o agregado; sem ele, não renderiza (sem "0" enganoso).
-    const ctrCpm = v.agg ? computeCtrCpm(v.agg) : null;
+    // Faixa com só os componentes relevantes ao KPI violado (mesma faixa do drill-in, ver
+    // renderNodeRow) — só existe quando compareKpis() conseguiu montar o agregado; sem ele, não
+    // renderiza (sem "0" enganoso).
+    const agg = v.agg;
+    const components = getMetricDef(v.metric)?.components ?? [];
     const enterDrill = () => setDrill({ campaign: v });
     return (
       <Card
@@ -654,13 +656,11 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
                   ? " — em atenção, dentro de uma margem pequena."
                   : " — performando fora do esperado."}
             </p>
-            {v.agg && ctrCpm && (
+            {agg && (
               <div className="flex items-center gap-x-3 gap-y-0.5 mt-1 flex-wrap text-[10px] text-muted-foreground">
-                <span>Investimento: {formatMetricValue(v.agg.spend, "currency")}</span>
-                <span>Impressões: {fmtCount(v.agg.impressions)}</span>
-                <span>Cliques: {fmtCount(v.agg.clicks)}</span>
-                <span>CTR: {ctrCpm.ctr == null ? "—" : formatMetricValue(ctrCpm.ctr, "percent")}</span>
-                <span>CPM: {ctrCpm.cpm == null ? "—" : formatMetricValue(ctrCpm.cpm, "currency")}</span>
+                {components.map((c) => (
+                  <span key={c.label}>{c.label}: {formatComponentValue(c.compute(agg), c.unit)}</span>
+                ))}
               </div>
             )}
           </CardContent>
@@ -691,7 +691,7 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     const isPaused = node.effective_status === "PAUSED";
     const def = getMetricDef(campaign.metric);
     const value = computeNodeMetricValue(campaign, node);
-    const { ctr, cpm } = computeCtrCpm(nodeAsAggregatedBucket(node, ""));
+    const nodeAgg = nodeAsAggregatedBucket(node, "");
     // Cor pela violação DO PRÓPRIO nó (não a da campanha): vermelho se ESTE conjunto/criativo estoura
     // o limite, verde se está dentro. É o que faz o culpado saltar no meio dos saudáveis.
     const breaches = value != null && (campaign.operator === ">" ? value > campaign.limit : value < campaign.limit);
@@ -741,14 +741,12 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
                 </span>
               )}
             </div>
-            {/* Faixa compacta de métricas cruas do nó — spend/impressões/cliques já vêm de MetaNodeInsight
-                (a edge meta-node-insights entrega tudo); CTR/CPM reaproveitam METRIC_REGISTRY acima. */}
+            {/* Faixa compacta com só os componentes relevantes ao KPI violado neste nó — mesma lista
+                de components() do METRIC_REGISTRY usada no card de campanha (ver renderViolationCard). */}
             <div className="flex items-center gap-x-3 gap-y-0.5 mt-1 flex-wrap text-[10px] text-muted-foreground">
-              <span>Investimento: {formatMetricValue(node.spend, "currency")}</span>
-              <span>Impressões: {fmtCount(node.impressions)}</span>
-              <span>Cliques: {fmtCount(node.clicks)}</span>
-              <span>CTR: {ctr == null ? "—" : formatMetricValue(ctr, "percent")}</span>
-              <span>CPM: {cpm == null ? "—" : formatMetricValue(cpm, "currency")}</span>
+              {(def?.components ?? []).map((c) => (
+                <span key={c.label}>{c.label}: {formatComponentValue(c.compute(nodeAgg), c.unit)}</span>
+              ))}
             </div>
           </div>
           <Button
