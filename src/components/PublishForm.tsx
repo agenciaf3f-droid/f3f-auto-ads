@@ -444,6 +444,10 @@ export default function PublishForm() {
   // Drive sem override; overrides individuais vivem em creatives[].caption.
   const [captionAll, setCaptionAll] = useState("");
   const [copyModalOpen, setCopyModalOpen] = useState(false);
+  // Melhorias de criativo (Advantage+ Creative) — a Meta ajusta automaticamente o anúncio
+  // (corte, brilho, texto) pra melhorar a entrega; o post original não muda. Ligado por padrão
+  // (sem isso os criativos entregavam pior que o Gerenciador); visível em TODOS os presets.
+  const [creativeEnhancements, setCreativeEnhancements] = useState(true);
 
   // FASE 3 fields
   const [whatsappNumbers, setWhatsappNumbers] = useState<WhatsAppNumber[]>([]);
@@ -652,7 +656,9 @@ export default function PublishForm() {
       placementSelected,
       // Texto "para todos" do modal de copy — não é per-criativo (por isso não está em
       // creativeSignature); mudar sem tocar em nenhum override também invalida o payload.
-      captionAll]);
+      captionAll,
+      // Melhorias de criativo muda o payload publicado (creative_enhancements) — re-validar obrigatório.
+      creativeEnhancements]);
 
   // Posicionamentos: ao trocar de preset, reseta pra TODOS os válidos ligados (= automático).
   // Cada preset tem um conjunto válido diferente; não faz sentido carregar seleção do preset anterior.
@@ -1880,6 +1886,9 @@ export default function PublishForm() {
         // divisão é feita no frontend por chamada; viaja no payload só p/ handlePublish ler o modo.
         fase2_budget_split_mode: fase2MultiCreative ? fase2BudgetSplitMode : undefined,
         lt_advantage: isFase3Lp ? ltAdvantage : undefined,
+        // Melhorias de criativo (Advantage+ Creative) — universal a todos os presets (não gated
+        // por preset como lt_advantage). Edge trata !== false como ligado (default ON).
+        creative_enhancements: creativeEnhancements,
         // Posicionamentos: só envia quando MANUAL (subconjunto). Automático (todos ligados) ou
         // L.T Advantage+ ON → undefined = Advantage+ Placements no backend.
         placements: placementManualAvailable ? buildPlacementsObject(placementGroups, placementSelected) : undefined,
@@ -2676,6 +2685,24 @@ export default function PublishForm() {
                   </Button>
                 )}
               </div>
+            </div>
+
+            {/* Melhorias de criativo (Advantage+ Creative) — visível em todos os presets, ligado por padrão. */}
+            <div className="space-y-3 pt-1 border-t border-border/40">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-col">
+                  <Label className="text-xs font-medium">Melhorias de criativo</Label>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    A Meta pode ajustar automaticamente o anúncio (corte, brilho, texto) para melhorar a entrega. O post original não muda.
+                  </p>
+                </div>
+                <Switch checked={creativeEnhancements} onCheckedChange={setCreativeEnhancements} disabled={loading} />
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                {creativeEnhancements
+                  ? "Ligado — recomendado pela Meta (melhora a entrega)."
+                  : "Desligado — o anúncio publica exatamente como está, sem ajustes automáticos."}
+              </p>
             </div>
 
             {creatives.map((cr, idx) => {

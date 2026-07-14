@@ -964,6 +964,27 @@ async function resolvePageAndIg(accessToken: string, adAccountId?: string): Prom
 //  FASE 1 CREATIVE BUILDER — Instagram Profile Traffic
 // =====================================================================
 
+// Advantage+ Creative — liga o set de melhorias de criativo (degrees_of_freedom_spec).
+// POR QUÊ: criativos do sistema saíam SEM esse campo → Advantage+ Creative ficava OPT_OUT
+// (default da API) e entregava pior que o Gerenciador, que liga por default de UI. Paridade.
+// FONTE DA VERDADE: o set de 4 features (standard_enhancements/text_optimizations/
+// video_auto_crop/video_uncrop = OPT_IN) veio de dump de campanha boa REAL, rodando ACTIVE
+// junto com source_instagram_media_id — logo a v25.0 aceita o campo nesse tipo de creative.
+// Vai no TOP-LEVEL do creative spec (irmão de object_story_spec/source_instagram_media_id).
+// Em imagem, os video_* são no-op (a Meta enrola só as features aplicáveis, sem erro).
+function creativeEnhancementsSpec() {
+  return {
+    degrees_of_freedom_spec: {
+      creative_features_spec: {
+        standard_enhancements: { enroll_status: "OPT_IN" },
+        text_optimizations:    { enroll_status: "OPT_IN" },
+        video_auto_crop:       { enroll_status: "OPT_IN" },
+        video_uncrop:          { enroll_status: "OPT_IN" },
+      },
+    },
+  };
+}
+
 async function buildFase1Creative(
   accessToken: string,
   adAccountId: string,
@@ -974,10 +995,12 @@ async function buildFase1Creative(
   igActorId: string | undefined,
   igUsername: string | undefined,
   logs: StepLog[],
+  enhancementsOn: boolean,
   preResolvedMediaId?: string,
   preResolvedIgAccountId?: string,
   caption?: string,
 ): Promise<{ spec?: Record<string, any>; error?: string }> {
+  const enhSpec = enhancementsOn ? creativeEnhancementsSpec() : {};
   const igProfileLink = igUsername ? `https://www.instagram.com/${igUsername}/` : `https://www.instagram.com/`;
   const isIgLink = creativeType === "instagram" || (!creativeType && creativeLink?.includes("instagram.com"));
   const isDriveLink = creativeType === "drive" || (!creativeType && (creativeLink?.includes("drive.google.com") || creativeLink?.includes("docs.google.com")));
@@ -1003,7 +1026,7 @@ async function buildFase1Creative(
 
     console.log(`[FASE1-creative] OK: media=${result.instagram_media_id}, ig=${resolvedIgActor}, CTA=VIEW_INSTAGRAM_PROFILE`);
     logs.push({ step: "fase1_creative", status: "success", ts: ts(), detail: `media=${result.instagram_media_id}, CTA=VIEW_INSTAGRAM_PROFILE` });
-    return { spec };
+    return { spec: { ...spec, ...enhSpec } };
 
   } else if (isDriveLink) {
     const result = await uploadDriveCreative(accessToken, adAccountId, creativeLink);
@@ -1020,7 +1043,7 @@ async function buildFase1Creative(
       if (igActorId) storySpec.instagram_user_id = igActorId;
       console.log(`[FASE1-creative] OK: image_hash, CTA=VIEW_INSTAGRAM_PROFILE, link=${igProfileLink}`);
       logs.push({ step: "fase1_creative", status: "success", ts: ts(), detail: `image_hash=${result.image_hash}, CTA=VIEW_INSTAGRAM_PROFILE` });
-      return { spec: { object_story_spec: storySpec } };
+      return { spec: { object_story_spec: storySpec, ...enhSpec } };
 
     } else if (result.video_id) {
       // Vídeo precisa de thumbnail no video_data (senão Meta erro 100/1443226).
@@ -1036,7 +1059,7 @@ async function buildFase1Creative(
       if (igActorId) storySpec.instagram_user_id = igActorId;
       console.log(`[FASE1-creative] OK: video_id=${result.video_id}, CTA=VIEW_INSTAGRAM_PROFILE`);
       logs.push({ step: "fase1_creative", status: "success", ts: ts(), detail: `video_id=${result.video_id}, CTA=VIEW_INSTAGRAM_PROFILE` });
-      return { spec: { object_story_spec: storySpec } };
+      return { spec: { object_story_spec: storySpec, ...enhSpec } };
     }
   }
 
@@ -1132,10 +1155,12 @@ async function buildFase2Creative(
   pageId: string,
   igActorId: string | undefined,
   logs: StepLog[],
+  enhancementsOn: boolean,
   preResolvedMediaId?: string,
   preResolvedIgAccountId?: string,
   caption?: string,
 ): Promise<{ spec?: Record<string, any>; error?: string; videoId?: string }> {
+  const enhSpec = enhancementsOn ? creativeEnhancementsSpec() : {};
   const isIgLink = creativeType === "instagram" || (!creativeType && creativeLink?.includes("instagram.com"));
   const isDriveLink = creativeType === "drive" || (!creativeType && (creativeLink?.includes("drive.google.com") || creativeLink?.includes("docs.google.com")));
 
@@ -1157,7 +1182,7 @@ async function buildFase2Creative(
     console.log(`[FASE2-creative] IG flat spec: media=${result.instagram_media_id}, ig=${resolvedIgActor}`);
     logs.push({ step: "fase2_creative", status: "success", ts: ts(), detail: `IG source_instagram_media_id=${result.instagram_media_id}` });
     // Sem videoId disponível (IG media_id != FB video_id), audience VV50% será SKIP.
-    return { spec };
+    return { spec: { ...spec, ...enhSpec } };
   }
 
   if (isDriveLink) {
@@ -1177,7 +1202,7 @@ async function buildFase2Creative(
     if (igActorId) storySpec.instagram_user_id = igActorId;
     console.log(`[FASE2-creative] Drive video: ${result.video_id}`);
     logs.push({ step: "fase2_creative", status: "success", ts: ts(), detail: `Drive video_id=${result.video_id}` });
-    return { spec: { object_story_spec: storySpec }, videoId: result.video_id };
+    return { spec: { object_story_spec: storySpec, ...enhSpec }, videoId: result.video_id };
   }
 
   return { error: "Link inválido para FASE 2 (use IG post/reel ou Drive video)." };
@@ -1203,11 +1228,13 @@ async function buildFase3LpCreative(
   igActorId: string | undefined,
   lpUrl: string,
   logs: StepLog[],
+  enhancementsOn: boolean,
   preResolvedMediaId?: string,
   preResolvedIgAccountId?: string,
   caption?: string,
 ): Promise<{ spec?: Record<string, any>; error?: string }> {
   if (!lpUrl) return { error: "URL de destino (lp_url) ausente." };
+  const enhSpec = enhancementsOn ? creativeEnhancementsSpec() : {};
   const callToAction = { type: "LEARN_MORE", value: { link: lpUrl } };
 
   const isIgLink = creativeType === "instagram" || (!creativeType && creativeLink?.includes("instagram.com"));
@@ -1227,7 +1254,7 @@ async function buildFase3LpCreative(
     };
     console.log(`[FASE3-LP-creative] OK (instagram): media=${result.instagram_media_id}, link=${lpUrl}`);
     logs.push({ step: "fase3lp_creative", status: "success", ts: ts(), detail: `source=instagram, link=${lpUrl}` });
-    return { spec };
+    return { spec: { ...spec, ...enhSpec } };
   }
 
   if (isDriveLink) {
@@ -1245,7 +1272,7 @@ async function buildFase3LpCreative(
       if (igActorId) storySpec.instagram_user_id = igActorId;
       console.log(`[FASE3-LP-creative] OK (drive/image): hash=${result.image_hash}, link=${lpUrl}`);
       logs.push({ step: "fase3lp_creative", status: "success", ts: ts(), detail: `source=drive/image, hash=${result.image_hash}` });
-      return { spec: { object_story_spec: storySpec } };
+      return { spec: { object_story_spec: storySpec, ...enhSpec } };
     }
 
     if (result.video_id) {
@@ -1262,7 +1289,7 @@ async function buildFase3LpCreative(
       if (igActorId) storySpec.instagram_user_id = igActorId;
       console.log(`[FASE3-LP-creative] OK (drive/video): video_id=${result.video_id}, link=${lpUrl}`);
       logs.push({ step: "fase3lp_creative", status: "success", ts: ts(), detail: `source=drive/video, video_id=${result.video_id}` });
-      return { spec: { object_story_spec: storySpec } };
+      return { spec: { object_story_spec: storySpec, ...enhSpec } };
     }
   }
 
@@ -1282,11 +1309,13 @@ async function buildFase3Creative(
   readyMessage: string | undefined,
   importedTemplateJson: string | undefined,
   logs: StepLog[],
+  enhancementsOn: boolean,
   preResolvedMediaId?: string,
   preResolvedIgAccountId?: string,
   caption?: string,
 ): Promise<{ spec?: Record<string, any>; error?: string }> {
   // ── FIXED by preset ──
+  const enhSpec = enhancementsOn ? creativeEnhancementsSpec() : {};
   const waLink = buildWhatsAppLink(whatsappPhone, greetingText, readyMessage);
   const callToAction = { type: "WHATSAPP_MESSAGE", value: { link: waLink } };
   // Se user selecionou um modelo importado da própria conta Meta UI, reutiliza o JSON como-está
@@ -1324,7 +1353,7 @@ async function buildFase3Creative(
 
     console.log(`[FASE3-creative] OK (instagram): media=${result.instagram_media_id}, ig=${resolvedIgActor}`);
     logs.push({ step: "fase3_creative", status: "success", ts: ts(), detail: `source=instagram, media=${result.instagram_media_id}, CTA=WHATSAPP_MESSAGE` });
-    return { spec };
+    return { spec: { ...spec, ...enhSpec } };
 
   } else if (isDriveLink) {
     const result = await uploadDriveCreative(accessToken, adAccountId, creativeLink);
@@ -1346,7 +1375,7 @@ async function buildFase3Creative(
       if (igActorId) storySpec.instagram_user_id = igActorId;
       console.log(`[FASE3-creative] OK (drive/image): hash=${result.image_hash}`);
       logs.push({ step: "fase3_creative", status: "success", ts: ts(), detail: `source=drive/image, hash=${result.image_hash}, CTA=WHATSAPP_MESSAGE` });
-      return { spec: { object_story_spec: storySpec } };
+      return { spec: { object_story_spec: storySpec, ...enhSpec } };
 
     } else if (result.video_id) {
       // Vídeo precisa de thumbnail no video_data (senão Meta erro 100/1443226).
@@ -1367,7 +1396,7 @@ async function buildFase3Creative(
       if (igActorId) storySpec.instagram_user_id = igActorId;
       console.log(`[FASE3-creative] OK (drive/video): video_id=${result.video_id}`);
       logs.push({ step: "fase3_creative", status: "success", ts: ts(), detail: `source=drive/video, video_id=${result.video_id}, CTA=WHATSAPP_MESSAGE` });
-      return { spec: { object_story_spec: storySpec } };
+      return { spec: { object_story_spec: storySpec, ...enhSpec } };
     }
   }
 
@@ -1449,6 +1478,10 @@ Deno.serve(async (req) => {
       schedule, utm_template,
     } = body;
     publishToken = typeof access_token === "string" ? access_token : null;
+
+    // Advantage+ Creative toggle (frontend manda no payload). Default ON: só FALSE explícito
+    // desliga (undefined/ausente → ON, paridade com o default de UI do Gerenciador).
+    const enhancementsOn = body.creative_enhancements !== false;
 
     // Validação de access_token (cobre todos os usos subsequentes)
     if (!access_token || typeof access_token !== "string" || access_token.trim().length === 0) {
@@ -1649,14 +1682,14 @@ Deno.serve(async (req) => {
         const preMediaId = cr.resolved_instagram_media_id;
         const preIgAccountId = cr.resolved_ig_account_id;
         if (isVideoEngagementPreset) {
-          return buildFase2Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, logs, preMediaId, preIgAccountId, cr.caption);
+          return buildFase2Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, logs, enhancementsOn, preMediaId, preIgAccountId, cr.caption);
         } else if (isWebsitePreset) {
-          return buildFase3LpCreative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, lp_url || "", logs, preMediaId, preIgAccountId, cr.caption);
+          return buildFase3LpCreative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, lp_url || "", logs, enhancementsOn, preMediaId, preIgAccountId, cr.caption);
         } else if (isWhatsAppPreset) {
-          return buildFase3Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, whatsapp_number || "", greeting_text, ready_message, imported_template_json, logs, preMediaId, preIgAccountId, cr.caption);
+          return buildFase3Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, whatsapp_number || "", greeting_text, ready_message, imported_template_json, logs, enhancementsOn, preMediaId, preIgAccountId, cr.caption);
         } else {
           // FASE 1 OR generic fallback (mesmo builder)
-          return buildFase1Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, identity?.instagram_username || undefined, logs, preMediaId, preIgAccountId, cr.caption);
+          return buildFase1Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, identity?.instagram_username || undefined, logs, enhancementsOn, preMediaId, preIgAccountId, cr.caption);
         }
       };
 
