@@ -216,6 +216,16 @@ type PresetId = typeof PRESETS[number]["id"];
 
 const UTM_DEFAULT = "utm_source=FB&utm_campaign={{campaign.name}}|{{campaign.id}}&utm_medium={{adset.name}}|{{adset.id}}&utm_content={{ad.name}}|{{ad.id}}&utm_term={{placement}}";
 
+// Melhorias de criativo (Advantage+ Creative) — lista canônica de recursos; espelha
+// CREATIVE_FEATURES do edge (supabase/functions/meta-publish/index.ts). Mesma ordem/labels —
+// se adicionar um recurso lá, adicione aqui também.
+const CREATIVE_ENHANCEMENT_OPTIONS = [
+  { key: "text_optimizations", label: "Melhorias de texto" },
+  { key: "video_auto_crop", label: "Corte automático de vídeo" },
+  { key: "video_uncrop", label: "Expansão de vídeo" },
+] as const;
+type CreativeEnhancementKey = typeof CREATIVE_ENHANCEMENT_OPTIONS[number]["key"];
+
 // TTL do cache de descoberta: linha mais velha que isso é tratada como cache miss (call site busca
 // da Meta de novo, e o edge regrava o cache). Sem TTL, recurso criado fora do app (público, conta,
 // número) some pra sempre até o gestor clicar em "Atualizar" manualmente.
@@ -445,9 +455,14 @@ export default function PublishForm() {
   const [captionAll, setCaptionAll] = useState("");
   const [copyModalOpen, setCopyModalOpen] = useState(false);
   // Melhorias de criativo (Advantage+ Creative) — a Meta ajusta automaticamente o anúncio
-  // (corte, brilho, texto) pra melhorar a entrega; o post original não muda. Ligado por padrão
-  // (sem isso os criativos entregavam pior que o Gerenciador); visível em TODOS os presets.
-  const [creativeEnhancements, setCreativeEnhancements] = useState(true);
+  // (corte, brilho, texto) pra melhorar a entrega; o post original não muda. Visível em TODOS
+  // os presets. Default = todos os 3 recursos ligados (automático); gestor desmarca pra desligar 1.
+  const [enhancementsFeatures, setEnhancementsFeatures] = useState<Record<CreativeEnhancementKey, boolean>>({
+    text_optimizations: true,
+    video_auto_crop: true,
+    video_uncrop: true,
+  });
+  const [enhancementsExpanded, setEnhancementsExpanded] = useState(false);
 
   // FASE 3 fields
   const [whatsappNumbers, setWhatsappNumbers] = useState<WhatsAppNumber[]>([]);
@@ -658,7 +673,7 @@ export default function PublishForm() {
       // creativeSignature); mudar sem tocar em nenhum override também invalida o payload.
       captionAll,
       // Melhorias de criativo muda o payload publicado (creative_enhancements) — re-validar obrigatório.
-      creativeEnhancements]);
+      enhancementsFeatures]);
 
   // Posicionamentos: ao trocar de preset, reseta pra TODOS os válidos ligados (= automático).
   // Cada preset tem um conjunto válido diferente; não faz sentido carregar seleção do preset anterior.
@@ -1408,6 +1423,11 @@ export default function PublishForm() {
       return next;
     });
   };
+
+  // ── Melhorias de criativo (Advantage+ Creative) ──
+  const enhancementsAllOn = Object.values(enhancementsFeatures).every(Boolean);
+  const enhancementsOnCount = Object.values(enhancementsFeatures).filter(Boolean).length;
+
   // Memoizados (deps: audienceRows/audiences) pra não recalcular O(n·m) a cada keystroke em
   // qualquer campo do form — só quando os públicos/linhas realmente mudam.
   const multiAudIds = useMemo(() => [...new Set(audienceRows.map(r => r.audienceId).filter(Boolean))], [audienceRows]);
@@ -1887,8 +1907,10 @@ export default function PublishForm() {
         fase2_budget_split_mode: fase2MultiCreative ? fase2BudgetSplitMode : undefined,
         lt_advantage: isFase3Lp ? ltAdvantage : undefined,
         // Melhorias de criativo (Advantage+ Creative) — universal a todos os presets (não gated
-        // por preset como lt_advantage). Edge trata !== false como ligado (default ON).
-        creative_enhancements: creativeEnhancements,
+        // por preset como lt_advantage). Todos os 3 ligados → manda true (edge liga todos os
+        // recursos válidos, future-proof a recurso novo); subconjunto → manda o objeto por-recurso
+        // (edge só liga os === true).
+        creative_enhancements: enhancementsAllOn ? true : enhancementsFeatures,
         // Posicionamentos: só envia quando MANUAL (subconjunto). Automático (todos ligados) ou
         // L.T Advantage+ ON → undefined = Advantage+ Placements no backend.
         placements: placementManualAvailable ? buildPlacementsObject(placementGroups, placementSelected) : undefined,
@@ -2687,22 +2709,60 @@ export default function PublishForm() {
               </div>
             </div>
 
-            {/* Melhorias de criativo (Advantage+ Creative) — visível em todos os presets, ligado por padrão. */}
+            {/* Melhorias de criativo (Advantage+ Creative) — visível em todos os presets, todas
+                ligadas por padrão. Colapsável, espelha o bloco de Posicionamentos abaixo. */}
             <div className="space-y-3 pt-1 border-t border-border/40">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex flex-col">
-                  <Label className="text-xs font-medium">Melhorias de criativo</Label>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
-                    A Meta pode ajustar automaticamente o anúncio (corte, brilho, texto) para melhorar a entrega. O post original não muda.
+              <button
+                type="button"
+                onClick={() => setEnhancementsExpanded((v) => !v)}
+                className="w-full flex items-center justify-between gap-3"
+              >
+                <div className="text-left">
+                  <Label className="font-display font-semibold text-sm cursor-pointer">Melhorias de criativo</Label>
+                  <p className="text-[10px] text-muted-foreground">
+                    {enhancementsAllOn
+                      ? "Automático — todas ligadas, melhor entrega"
+                      : `Manual — ${enhancementsOnCount} de ${CREATIVE_ENHANCEMENT_OPTIONS.length} ligadas`}
                   </p>
                 </div>
-                <Switch checked={creativeEnhancements} onCheckedChange={setCreativeEnhancements} disabled={loading} />
-              </div>
-              <p className="text-[10px] text-muted-foreground">
-                {creativeEnhancements
-                  ? "Ligado — recomendado pela Meta (melhora a entrega)."
-                  : "Desligado — o anúncio publica exatamente como está, sem ajustes automáticos."}
-              </p>
+                <ChevronDown className={`w-4 h-4 text-muted-foreground shrink-0 transition-transform ${enhancementsExpanded ? "rotate-180" : ""}`} />
+              </button>
+
+              {enhancementsExpanded && (
+                <div className="space-y-3">
+                  {!enhancementsAllOn && (
+                    <p className="text-[10px] text-warning flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3 shrink-0" />
+                      Desligar melhorias pode reduzir a entrega. Deixe todas ligadas se não tiver certeza.
+                    </p>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() =>
+                      setEnhancementsFeatures({ text_optimizations: true, video_auto_crop: true, video_uncrop: true })
+                    }
+                    disabled={loading || enhancementsAllOn}
+                  >
+                    Ligar todas (automático)
+                  </Button>
+                  <div className="space-y-1.5">
+                    {CREATIVE_ENHANCEMENT_OPTIONS.map((opt) => (
+                      <label key={opt.key} className="flex items-center gap-2 cursor-pointer">
+                        <Checkbox
+                          checked={enhancementsFeatures[opt.key]}
+                          onCheckedChange={() =>
+                            setEnhancementsFeatures((prev) => ({ ...prev, [opt.key]: !prev[opt.key] }))
+                          }
+                          disabled={loading}
+                        />
+                        <span className="text-xs">{opt.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {creatives.map((cr, idx) => {
