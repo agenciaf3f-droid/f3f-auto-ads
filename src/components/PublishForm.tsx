@@ -407,8 +407,9 @@ export default function PublishForm() {
   // Multi-público (FASE 1 / FASE 3): N linhas de público, combinadas (OR) em 1 conjunto.
   const [audienceRows, setAudienceRows] = useState<AudienceRow[]>([{ id: nextAudienceRowId(), audienceId: "" }]);
   const [campaignNameInput, setCampaignNameInput] = useState("");
-  // L.T: 1º bloco do nome ("Nomenclatura", ex: "LDX") — mesmo campo/função que "Nome do produto"
-  // nas outras fases-LP (picker de produto quando o cliente tem produtos cadastrados, senão livre).
+  // L.T: 1º bloco do nome ("Nomenclatura", ex: "LDX") — picker de produto quando o cliente tem
+  // produtos cadastrados, senão livre. Exclusivo do L.T; fase3-leads-lp (também destino WEBSITE)
+  // usa "Nome da Campanha" normal, como as demais fases — sem esse campo/dropdown de produto.
   // O sufixo do L.T reusa campaignNameInput ("Nome da Campanha", igual às demais fases) — sem estado próprio.
   const [ltNomenclatura, setLtNomenclatura] = useState("");
   // Produtos L.T cadastrados em Clientes p/ a conta selecionada (alimenta dropdown de produto).
@@ -2630,26 +2631,16 @@ export default function PublishForm() {
                   </div>
                 )}
                 <div className="space-y-2">
-                  <Label className="text-xs font-medium text-muted-foreground">{isFase3Lp && !isLt ? "Nome do produto" : "Nome da Campanha"}</Label>
-                  {isFase3Lp && !isLt && ltProducts.length > 0 ? (
-                    <SearchableSelect
-                      options={ltProductOptions}
-                      value={campaignNameInput}
-                      onValueChange={setCampaignNameInput}
-                      placeholder="Selecione o produto"
-                      searchPlaceholder="Pesquisar produto..."
-                    />
-                  ) : (
-                    <Input
-                      placeholder={isFase3Lp && !isLt ? 'Ex: "LDX"' : 'Ex: "Campanha Tráfego - Joelho"'}
-                      value={campaignNameInput}
-                      onChange={(e) => setCampaignNameInput(e.target.value)}
-                    />
-                  )}
+                  <Label className="text-xs font-medium text-muted-foreground">Nome da Campanha</Label>
+                  <Input
+                    placeholder='Ex: "Campanha Tráfego - Joelho"'
+                    value={campaignNameInput}
+                    onChange={(e) => setCampaignNameInput(e.target.value)}
+                  />
                 </div>
                 {isFase3Lp && (
                   <p className="text-[10px] text-muted-foreground">
-                    Nome final: <span className="font-mono">{computedCampaignName || (isLt ? "[NOMENCLATURA] [L.T] [dd/mm] [ABO] [TESTE] [CRIATIVO] - NOME DA CAMPANHA" : "[PRODUTO] [L.T] [dd/mm] [ABO] [TESTE] [CRIATIVO] -")}</span>
+                    Nome final: <span className="font-mono">{computedCampaignName || (isLt ? "[NOMENCLATURA] [L.T] [dd/mm] [ABO] [TESTE] [CRIATIVO] - NOME DA CAMPANHA" : "[FASE 3] [GERENCIADOR] [aaaa-mm-dd] [PÚBLICO] [R$VALOR] - NOME DA CAMPANHA")}</span>
                   </p>
                 )}
               </div>
