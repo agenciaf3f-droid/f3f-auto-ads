@@ -457,7 +457,9 @@ export default function PublishForm() {
   const [copyModalOpen, setCopyModalOpen] = useState(false);
   // Melhorias de criativo (Advantage+ Creative) — a Meta ajusta automaticamente o anúncio
   // (corte, brilho, texto) pra melhorar a entrega; o post original não muda. Visível em TODOS
-  // os presets. Default = todos os 3 recursos ligados (automático); gestor desmarca pra desligar 1.
+  // os presets EXCETO FASE 1 (edge ignora o campo lá — Meta aplica livre, igual ao Gerenciador;
+  // ver gate isFase1 no JSX). Default = todos os 3 recursos ligados (automático); gestor
+  // desmarca pra desligar 1.
   const [enhancementsFeatures, setEnhancementsFeatures] = useState<Record<CreativeEnhancementKey, boolean>>({
     text_optimizations: true,
     video_auto_crop: true,
@@ -1384,6 +1386,7 @@ export default function PublishForm() {
   const selectedAud = useMemo(() => audiences.find((a) => a.id === selectedAudience), [audiences, selectedAudience]);
   const selectedAudienceName = selectedAud?.name || "";
   const selectedPreset = PRESETS.find(p => p.id === preset)!;
+  const isFase1 = selectedPreset.id === "fase1-trafego";
   const isFase3 = selectedPreset.requires_whatsapp;
   const isFase3Lp = selectedPreset.destination_type === "WEBSITE";
   // isFase3Lp = "destino é site" (vale pra fase3-leads-lp E fase3-vendas-lp/L.T).
@@ -2700,61 +2703,65 @@ export default function PublishForm() {
               </div>
             </div>
 
-            {/* Melhorias de criativo (Advantage+ Creative) — visível em todos os presets, todas
-                ligadas por padrão. Colapsável, espelha o bloco de Posicionamentos abaixo. */}
-            <div className="space-y-3 pt-1 border-t border-border/40">
-              <button
-                type="button"
-                onClick={() => setEnhancementsExpanded((v) => !v)}
-                className="w-full flex items-center justify-between gap-3"
-              >
-                <div className="text-left">
-                  <Label className="font-display font-semibold text-sm cursor-pointer">Melhorias de criativo</Label>
-                  <p className="text-[10px] text-muted-foreground">
-                    {enhancementsAllOn
-                      ? "Automático — todas ligadas, melhor entrega"
-                      : `Manual — ${enhancementsOnCount} de ${CREATIVE_ENHANCEMENT_OPTIONS.length} ligadas`}
-                  </p>
-                </div>
-                <ChevronDown className={`w-4 h-4 text-muted-foreground shrink-0 transition-transform ${enhancementsExpanded ? "rotate-180" : ""}`} />
-              </button>
-
-              {enhancementsExpanded && (
-                <div className="space-y-3">
-                  {!enhancementsAllOn && (
-                    <p className="text-[10px] text-warning flex items-center gap-1">
-                      <AlertTriangle className="w-3 h-3 shrink-0" />
-                      Desligar melhorias pode reduzir a entrega. Deixe todas ligadas se não tiver certeza.
+            {/* Melhorias de criativo (Advantage+ Creative) — visível em todos os presets
+                exceto FASE 1 (edge ignora o campo lá; Meta aplica livre, igual ao Gerenciador —
+                ver gate isFase1). Todas ligadas por padrão. Colapsável, espelha o bloco de
+                Posicionamentos abaixo. */}
+            {!isFase1 && (
+              <div className="space-y-3 pt-1 border-t border-border/40">
+                <button
+                  type="button"
+                  onClick={() => setEnhancementsExpanded((v) => !v)}
+                  className="w-full flex items-center justify-between gap-3"
+                >
+                  <div className="text-left">
+                    <Label className="font-display font-semibold text-sm cursor-pointer">Melhorias de criativo</Label>
+                    <p className="text-[10px] text-muted-foreground">
+                      {enhancementsAllOn
+                        ? "Automático — todas ligadas, melhor entrega"
+                        : `Manual — ${enhancementsOnCount} de ${CREATIVE_ENHANCEMENT_OPTIONS.length} ligadas`}
                     </p>
-                  )}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={() =>
-                      setEnhancementsFeatures({ text_optimizations: true, video_auto_crop: true, video_uncrop: true })
-                    }
-                    disabled={loading || enhancementsAllOn}
-                  >
-                    Ligar todas (automático)
-                  </Button>
-                  <div className="space-y-1.5">
-                    {CREATIVE_ENHANCEMENT_OPTIONS.map((opt) => (
-                      <label key={opt.key} className="flex items-center gap-2 cursor-pointer">
-                        <Checkbox
-                          checked={enhancementsFeatures[opt.key]}
-                          onCheckedChange={() =>
-                            setEnhancementsFeatures((prev) => ({ ...prev, [opt.key]: !prev[opt.key] }))
-                          }
-                          disabled={loading}
-                        />
-                        <span className="text-xs">{opt.label}</span>
-                      </label>
-                    ))}
                   </div>
-                </div>
-              )}
-            </div>
+                  <ChevronDown className={`w-4 h-4 text-muted-foreground shrink-0 transition-transform ${enhancementsExpanded ? "rotate-180" : ""}`} />
+                </button>
+
+                {enhancementsExpanded && (
+                  <div className="space-y-3">
+                    {!enhancementsAllOn && (
+                      <p className="text-[10px] text-warning flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3 shrink-0" />
+                        Desligar melhorias pode reduzir a entrega. Deixe todas ligadas se não tiver certeza.
+                      </p>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() =>
+                        setEnhancementsFeatures({ text_optimizations: true, video_auto_crop: true, video_uncrop: true })
+                      }
+                      disabled={loading || enhancementsAllOn}
+                    >
+                      Ligar todas (automático)
+                    </Button>
+                    <div className="space-y-1.5">
+                      {CREATIVE_ENHANCEMENT_OPTIONS.map((opt) => (
+                        <label key={opt.key} className="flex items-center gap-2 cursor-pointer">
+                          <Checkbox
+                            checked={enhancementsFeatures[opt.key]}
+                            onCheckedChange={() =>
+                              setEnhancementsFeatures((prev) => ({ ...prev, [opt.key]: !prev[opt.key] }))
+                            }
+                            disabled={loading}
+                          />
+                          <span className="text-xs">{opt.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {creatives.map((cr, idx) => {
               const borderAccent = cr.validation?.ok

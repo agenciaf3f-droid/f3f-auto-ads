@@ -1718,7 +1718,15 @@ Deno.serve(async (req) => {
           return buildFase3Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, whatsapp_number || "", greeting_text, ready_message, imported_template_json, logs, enhFeatures, preMediaId, preIgAccountId, cr.caption);
         } else {
           // FASE 1 OR generic fallback (mesmo builder)
-          return buildFase1Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, identity?.instagram_username || undefined, logs, enhFeatures, preMediaId, preIgAccountId, cr.caption);
+          // enhFeatures FORÇADO a [] AQUI (override incondicional): FASE 1 NUNCA lê body.creative_enhancements —
+          // mesmo que o frontend mande creative_enhancements=true ou um objeto com tudo true, é ignorado.
+          // Array vazio → creativeEnhancementsSpec([]) retorna {} → creative sai com ZERO degrees_of_freedom_spec.
+          // Isso NÃO é "desligar melhorias" — é o OPOSTO: sem spec, a Meta aplica as melhorias livremente por padrão
+          // (igual ao Gerenciador). Evidência (dump 2026-07-17, conta 321396121284985): a campanha BOA do Gerenciador
+          // 6966176029411 tem degrees_of_freedom_spec=null e entrega melhor; a RUIM do sistema 52531228076215 mandava
+          // ~80 features TODAS OPT_OUT que travavam tudo desligado. Não dá pra copiar uma lista "all-on" (ela inclui
+          // recursos que reescrevem copy/CTA — nunca ligar); a única forma de replicar a BOA (null) é mandar [].
+          return buildFase1Creative(access_token, ad_account_id, cr.link, cr.type, cr.name, pageId, igActorId, identity?.instagram_username || undefined, logs, [], preMediaId, preIgAccountId, cr.caption);
         }
       };
 
