@@ -184,6 +184,11 @@ export type MetaNodeInsight = {
   // Só presente no level "ad" — id do adset dono do criativo. Permite filtrar os criativos de
   // um conjunto específico no drill-in do OptimizationBoard sem outra chamada.
   adsetId?: string;
+  // Só presentes no level "adset" (orçamento ABO vive no conjunto, não no criativo) — string CRUA
+  // da Meta (centavos), mesma convenção de Campaign.daily_budget/lifetime_budget. Usado pelo drill-in
+  // de orçamento (budgetDrill) do OptimizationBoard pra montar os botões +10%/25%/50%/75%/100%.
+  dailyBudget?: string;
+  lifetimeBudget?: string;
 };
 
 export async function fetchNodeInsights(
@@ -238,6 +243,23 @@ export async function activateCampaign(accessToken: string, campaignId: string) 
     body: { access_token: accessToken, campaign_id: campaignId, status: "ACTIVE" },
   });
   if (error && data) return data;
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+// Aumenta o orçamento de uma campanha (CBO) ou conjunto (ABO) — mesmo node_id serve pros dois,
+// igual pauseCampaign (POST /{id} é idêntico pra campaign/adset). `value` já vem calculada pelo
+// chamador (valor cru atual × (1+pct/100), mesma unidade da Meta — sem conversão aqui).
+export async function updateNodeBudget(
+  accessToken: string,
+  nodeId: string,
+  field: "daily_budget" | "lifetime_budget",
+  value: number,
+) {
+  const { data, error } = await supabase.functions.invoke("meta-campaign-budget-update", {
+    body: { access_token: accessToken, node_id: nodeId, field, value },
+  });
+  if (error && data) throw new Error(data.error || error.message);
   if (error) throw new Error(error.message);
   return data;
 }

@@ -40,6 +40,9 @@ export interface ClientKpiRule {
   threshold_value: number;
   label_if_triggered: string;
   campaign_name_filter: string | null;
+  // Meta "boa" do mesmo metric_key — opcional. Ambos null/ausentes = regra sem meta boa (só avalia "ruim").
+  good_comparator: ">" | "<" | null;
+  good_threshold_value: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -191,6 +194,10 @@ export interface UpsertKpiRuleInput {
   // que o gestor digita uma vez e o sistema reusa pra casar campanhas reais com essa regra.
   // FASE 1/2/3 não usam — bucket fixo já basta.
   campaign_name_filter?: string | null;
+  // Meta boa (opcional). Sempre reenviar as duas juntas (ou nenhuma) — upsert reescreve a linha
+  // inteira, então um editor que só mexe na meta boa precisa levar os campos "ruim" já existentes.
+  good_comparator?: ">" | "<" | null;
+  good_threshold_value?: number | null;
 }
 
 export async function upsertKpiRule(rule: UpsertKpiRuleInput): Promise<void> {
@@ -207,6 +214,8 @@ export async function upsertKpiRule(rule: UpsertKpiRuleInput): Promise<void> {
         threshold_value: rule.threshold_value,
         label_if_triggered: rule.label_if_triggered || "ruim",
         campaign_name_filter: rule.campaign_name_filter || "",
+        good_comparator: rule.good_comparator ?? null,
+        good_threshold_value: rule.good_threshold_value ?? null,
       },
       { onConflict: "client_ad_account_id,preset_bucket,metric_key,campaign_name_filter" },
     );

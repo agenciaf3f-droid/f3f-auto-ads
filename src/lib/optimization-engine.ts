@@ -49,6 +49,26 @@ export function isCboCampaign(campaign: Pick<Campaign, "daily_budget" | "lifetim
   return !!(campaign.daily_budget || campaign.lifetime_budget);
 }
 
+// Campanha performando dentro da meta BOA da mesma regra (contraparte "positiva" de
+// OptimizationViolation) — habilita o card verde com os botões de aumentar orçamento.
+// dailyBudget/lifetimeBudget: string CRUA da Meta (mesma vinda de fetchCampaigns), só populada
+// quando isCbo (orçamento na campanha). ABO não popula nenhum dos dois — o orçamento vive nos
+// adsets, resolvido via drill-in próprio (budgetDrill em OptimizationBoard.tsx), não aqui.
+export type OptimizationOpportunity = {
+  campaignId: string;
+  campaignName: string;
+  clientName: string;
+  adAccountId: string;
+  metric: string;
+  operator: ">" | "<";
+  actual: number;
+  threshold: number;
+  isCbo: boolean;
+  dailyBudget?: string;
+  lifetimeBudget?: string;
+  agg?: AggregatedBucket;
+};
+
 function computeSeverity(operator: ">" | "<", actual: number, limit: number): ViolationSeverity {
   if (limit === 0) return "red"; // sem base pra calcular desvio percentual — trata como pior caso
   const deviation = operator === ">" ? (actual - limit) / limit : (limit - actual) / limit;
@@ -189,8 +209,9 @@ export function compareKpis(
   campaigns: Campaign[],
   insights: InsightsMap,
   config: ClientKpiConfig
-): OptimizationViolation[] {
+): { violations: OptimizationViolation[]; opportunities: OptimizationOpportunity[] } {
   const violations: OptimizationViolation[] = [];
+  const opportunities: OptimizationOpportunity[] = [];
 
   for (const campaign of campaigns) {
     const insight = insights[campaign.id];
@@ -237,23 +258,49 @@ export function compareKpis(
         { metric_key: kpi.metric, comparator: kpi.operator, threshold_value: kpi.value },
         agg
       );
-      if (!evalResult.computable || !evalResult.triggered) continue;
+      if (evalResult.computable && evalResult.triggered) {
+        violations.push({
+          campaignId: campaign.id,
+          campaignName: campaign.name,
+          clientName: config.clientName,
+          adAccountId: config.adAccountId,
+          metric: kpi.metric,
+          operator: kpi.operator,
+          actual: evalResult.value as number,
+          limit: kpi.value,
+          severity: computeSeverity(kpi.operator, evalResult.value as number, kpi.value),
+          isCbo: isCboCampaign(campaign),
+          agg,
+        });
+      }
 
-      violations.push({
-        campaignId: campaign.id,
-        campaignName: campaign.name,
-        clientName: config.clientName,
-        adAccountId: config.adAccountId,
-        metric: kpi.metric,
-        operator: kpi.operator,
-        actual: evalResult.value as number,
-        limit: kpi.value,
-        severity: computeSeverity(kpi.operator, evalResult.value as number, kpi.value),
-        isCbo: isCboCampaign(campaign),
-        agg,
-      });
+      // Meta boa (opcional, mesma linha da regra) — mesma evaluateRule genérica, só troca
+      // comparator/threshold_value pelo par "bom". Independente da avaliação "ruim" acima: uma
+      // regra mal configurada pode disparar as duas (não validamos sobreposição aqui).
+      if (kpi.good) {
+        const goodEval = evaluateRule(
+          { metric_key: kpi.metric, comparator: kpi.good.operator, threshold_value: kpi.good.value },
+          agg
+        );
+        if (goodEval.computable && goodEval.triggered) {
+          opportunities.push({
+            campaignId: campaign.id,
+            campaignName: campaign.name,
+            clientName: config.clientName,
+            adAccountId: config.adAccountId,
+            metric: kpi.metric,
+            operator: kpi.good.operator,
+            actual: goodEval.value as number,
+            threshold: kpi.good.value,
+            isCbo: isCboCampaign(campaign),
+            dailyBudget: campaign.daily_budget,
+            lifetimeBudget: campaign.lifetime_budget,
+            agg,
+          });
+        }
+      }
     }
   }
 
-  return violations;
+  return { violations, opportunities };
 }

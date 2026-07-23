@@ -38,6 +38,8 @@ type NodeOut = {
   actionCounts: Record<string, number>;
   vv95: number;
   adsetId?: string;
+  dailyBudget?: string;
+  lifetimeBudget?: string;
 };
 
 const num = (v?: string | number): number => {
@@ -73,7 +75,11 @@ Deno.serve(async (req) => {
 
     // Estrutura (lista de nós) e insights nativamente agregados por nó (level=adset/ad já
     // devolve uma linha por adset_id/ad_id, sem precisar de 1 chamada por nó).
-    const structureFields = level === "adset" ? "id,name,effective_status" : "id,name,effective_status,adset_id";
+    // daily_budget/lifetime_budget só fazem sentido no nível adset (orçamento ABO vive no conjunto,
+    // não no criativo) — alimenta o drill-in de orçamento do OptimizationBoard.
+    const structureFields = level === "adset"
+      ? "id,name,effective_status,daily_budget,lifetime_budget"
+      : "id,name,effective_status,adset_id";
     const structureUrl = `https://graph.facebook.com/v25.0/${campaign_id}/${level}s?fields=${structureFields}&limit=200&access_token=${access_token}`;
     // A Graph NÃO devolve adset_id/ad_id na linha de insights só por causa do level= — o campo precisa
     // estar em fields, senão o join por row[idField] (abaixo) nunca casa e todo nó sai zerado (mesmo
@@ -137,6 +143,8 @@ Deno.serve(async (req) => {
         actionCounts,
         vv95,
         adsetId: n.adset_id as string | undefined,
+        dailyBudget: n.daily_budget as string | undefined,
+        lifetimeBudget: n.lifetime_budget as string | undefined,
       };
     });
 

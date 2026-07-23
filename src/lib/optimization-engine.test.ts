@@ -16,7 +16,7 @@ const config: ClientKpiConfig = {
   clientId: "client-1",
   clientName: "Cliente X",
   adAccountId: "act_1",
-  kpi: [{ metric: "cpc", operator: ">", value: 2, presetBucket: "FASE 1", campaignNameFilter: null }],
+  kpi: [{ metric: "cpc", operator: ">", value: 2, presetBucket: "FASE 1", campaignNameFilter: null, good: null }],
 };
 
 const campaigns = [{ id: "c1", name: "[FASE 1] [GERENCIADOR] [2026-07-02] [Publico] [R$100]" }];
@@ -24,105 +24,147 @@ const campaigns = [{ id: "c1", name: "[FASE 1] [GERENCIADOR] [2026-07-02] [Publi
 describe("compareKpis", () => {
   it("flags a campaign when the metric exceeds the '>' threshold", () => {
     // cpc = spend / clicks = 35 / 10 = 3.5
-    const violations = compareKpis(campaigns, { c1: { spend: "35", clicks: "10" } }, config);
+    const { violations } = compareKpis(campaigns, { c1: { spend: "35", clicks: "10" } }, config);
     expect(violations).toHaveLength(1);
     expect(violations[0]).toMatchObject({ campaignId: "c1", metric: "cpc", actual: 3.5, limit: 2 });
   });
 
   it("does not flag a campaign within the threshold", () => {
     // cpc = 12 / 10 = 1.2
-    const violations = compareKpis(campaigns, { c1: { spend: "12", clicks: "10" } }, config);
+    const { violations } = compareKpis(campaigns, { c1: { spend: "12", clicks: "10" } }, config);
     expect(violations).toHaveLength(0);
   });
 
   it("flags a campaign when the metric is below a '<' threshold", () => {
     const belowConfig: ClientKpiConfig = {
       ...config,
-      kpi: [{ metric: "ctr", operator: "<", value: 1, presetBucket: "FASE 1", campaignNameFilter: null }],
+      kpi: [{ metric: "ctr", operator: "<", value: 1, presetBucket: "FASE 1", campaignNameFilter: null, good: null }],
     };
     // ctr = (clicks / impressions) * 100 = (4 / 1000) * 100 = 0.4
-    const violations = compareKpis(campaigns, { c1: { impressions: "1000", clicks: "4" } }, belowConfig);
+    const { violations } = compareKpis(campaigns, { c1: { impressions: "1000", clicks: "4" } }, belowConfig);
     expect(violations).toHaveLength(1);
   });
 
   it("skips campaigns with no insight data yet", () => {
-    const violations = compareKpis(campaigns, { c1: null }, config);
+    const { violations } = compareKpis(campaigns, { c1: null }, config);
     expect(violations).toHaveLength(0);
   });
 
   it("skips campaigns whose insight returned an error", () => {
-    const violations = compareKpis(campaigns, { c1: { error: "no data" } }, config);
+    const { violations } = compareKpis(campaigns, { c1: { error: "no data" } }, config);
     expect(violations).toHaveLength(0);
   });
 
   it("skips a metric that isn't computable from the insight payload (no clicks for cpc)", () => {
-    const violations = compareKpis(campaigns, { c1: { spend: "100" } }, config);
+    const { violations } = compareKpis(campaigns, { c1: { spend: "100" } }, config);
     expect(violations).toHaveLength(0);
   });
 
   it("does not apply a FASE 1 rule to a FASE 3 campaign in the same account", () => {
     const fase3Campaigns = [{ id: "c2", name: "[FASE 3] [GERENCIADOR] [2026-07-02] [Publico] [R$100]" }];
-    const violations = compareKpis(fase3Campaigns, { c2: { spend: "990", clicks: "10" } }, config);
+    const { violations } = compareKpis(fase3Campaigns, { c2: { spend: "990", clicks: "10" } }, config);
     expect(violations).toHaveLength(0);
   });
 
   it("matches a FASE 2 ADAPTADO campaign against the FASE 2 bucket", () => {
     const adaptadoConfig: ClientKpiConfig = {
       ...config,
-      kpi: [{ metric: "cpc", operator: ">", value: 2, presetBucket: "FASE 2", campaignNameFilter: null }],
+      kpi: [{ metric: "cpc", operator: ">", value: 2, presetBucket: "FASE 2", campaignNameFilter: null, good: null }],
     };
     const adaptadoCampaigns = [{ id: "c3", name: "[FASE 2 ADAPTADO] [GERENCIADOR] [2026-07-02] [Publico] [R$100]" }];
     // cpc = 50 / 10 = 5
-    const violations = compareKpis(adaptadoCampaigns, { c3: { spend: "50", clicks: "10" } }, adaptadoConfig);
+    const { violations } = compareKpis(adaptadoCampaigns, { c3: { spend: "50", clicks: "10" } }, adaptadoConfig);
     expect(violations).toHaveLength(1);
   });
 
   it("skips campaigns whose bucket isn't recognized (Outros)", () => {
     const outrosCampaigns = [{ id: "c4", name: "Campanha manual sem prefixo" }];
-    const violations = compareKpis(outrosCampaigns, { c4: { spend: "990", clicks: "10" } }, config);
+    const { violations } = compareKpis(outrosCampaigns, { c4: { spend: "990", clicks: "10" } }, config);
     expect(violations).toHaveLength(0);
   });
 
   it("applies an L.T rule to a campaign whose name contains the saved product filter", () => {
     const ltConfig: ClientKpiConfig = {
       ...config,
-      kpi: [{ metric: "cpc", operator: ">", value: 2, presetBucket: "L.T", campaignNameFilter: "DDX" }],
+      kpi: [{ metric: "cpc", operator: ">", value: 2, presetBucket: "L.T", campaignNameFilter: "DDX", good: null }],
     };
     const ltCampaigns = [{ id: "c5", name: "[DDX] [L.T] [02/07] [ABO] [TESTE] [CRIATIVO] -" }];
     // cpc = 50 / 10 = 5
-    const violations = compareKpis(ltCampaigns, { c5: { spend: "50", clicks: "10" } }, ltConfig);
+    const { violations } = compareKpis(ltCampaigns, { c5: { spend: "50", clicks: "10" } }, ltConfig);
     expect(violations).toHaveLength(1);
   });
 
   it("does not apply an L.T rule to a same-bucket campaign of a different product", () => {
     const ltConfig: ClientKpiConfig = {
       ...config,
-      kpi: [{ metric: "cpc", operator: ">", value: 2, presetBucket: "L.T", campaignNameFilter: "DDX" }],
+      kpi: [{ metric: "cpc", operator: ">", value: 2, presetBucket: "L.T", campaignNameFilter: "DDX", good: null }],
     };
     const otherProductCampaigns = [{ id: "c6", name: "[OUTROPRODUTO] [L.T] [02/07] [ABO] [TESTE] [CRIATIVO] -" }];
-    const violations = compareKpis(otherProductCampaigns, { c6: { spend: "50", clicks: "10" } }, ltConfig);
+    const { violations } = compareKpis(otherProductCampaigns, { c6: { spend: "50", clicks: "10" } }, ltConfig);
     expect(violations).toHaveLength(0);
   });
 
   it("does not apply an L.T rule to a campaign whose product token merely starts with the filter (prefix collision)", () => {
     const ltConfig: ClientKpiConfig = {
       ...config,
-      kpi: [{ metric: "cpc", operator: ">", value: 2, presetBucket: "L.T", campaignNameFilter: "DDX" }],
+      kpi: [{ metric: "cpc", operator: ">", value: 2, presetBucket: "L.T", campaignNameFilter: "DDX", good: null }],
     };
     // "[DDXPRO]" contém "ddx" como substring, mas NÃO como token [ddx] — não deve casar.
     const prefixCampaigns = [{ id: "c8", name: "[DDXPRO] [L.T] [02/07] [ABO] [TESTE] [CRIATIVO] -" }];
-    const violations = compareKpis(prefixCampaigns, { c8: { spend: "50", clicks: "10" } }, ltConfig);
+    const { violations } = compareKpis(prefixCampaigns, { c8: { spend: "50", clicks: "10" } }, ltConfig);
     expect(violations).toHaveLength(0);
   });
 
   it("falls back to bucket-only matching for legacy L.T rules with no saved filter", () => {
     const legacyLtConfig: ClientKpiConfig = {
       ...config,
-      kpi: [{ metric: "cpc", operator: ">", value: 2, presetBucket: "L.T", campaignNameFilter: null }],
+      kpi: [{ metric: "cpc", operator: ">", value: 2, presetBucket: "L.T", campaignNameFilter: null, good: null }],
     };
     const ltCampaigns = [{ id: "c7", name: "[DDX] [L.T] [02/07] [ABO] [TESTE] [CRIATIVO] -" }];
-    const violations = compareKpis(ltCampaigns, { c7: { spend: "50", clicks: "10" } }, legacyLtConfig);
+    const { violations } = compareKpis(ltCampaigns, { c7: { spend: "50", clicks: "10" } }, legacyLtConfig);
     expect(violations).toHaveLength(1);
+  });
+
+  it("flags an opportunity when the metric meets the good threshold", () => {
+    const goodConfig: ClientKpiConfig = {
+      ...config,
+      kpi: [{
+        metric: "cpc", operator: ">", value: 5, presetBucket: "FASE 1", campaignNameFilter: null,
+        good: { operator: "<", value: 2 },
+      }],
+    };
+    // cpc = 8 / 10 = 0.8 — abaixo da meta boa (< 2), longe do limite ruim (> 5)
+    const { violations, opportunities } = compareKpis(campaigns, { c1: { spend: "8", clicks: "10" } }, goodConfig);
+    expect(violations).toHaveLength(0);
+    expect(opportunities).toHaveLength(1);
+    expect(opportunities[0]).toMatchObject({ campaignId: "c1", metric: "cpc", actual: 0.8, threshold: 2, operator: "<" });
+  });
+
+  it("does not flag an opportunity when the metric doesn't meet the good threshold", () => {
+    const goodConfig: ClientKpiConfig = {
+      ...config,
+      kpi: [{
+        metric: "cpc", operator: ">", value: 5, presetBucket: "FASE 1", campaignNameFilter: null,
+        good: { operator: "<", value: 2 },
+      }],
+    };
+    // cpc = 30 / 10 = 3 — nem ruim (> 5) nem bom (< 2), zona neutra
+    const { violations, opportunities } = compareKpis(campaigns, { c1: { spend: "30", clicks: "10" } }, goodConfig);
+    expect(violations).toHaveLength(0);
+    expect(opportunities).toHaveLength(0);
+  });
+
+  it("carries isCbo and the raw daily_budget onto the opportunity for a CBO campaign", () => {
+    const goodConfig: ClientKpiConfig = {
+      ...config,
+      kpi: [{
+        metric: "cpc", operator: ">", value: 5, presetBucket: "FASE 1", campaignNameFilter: null,
+        good: { operator: "<", value: 2 },
+      }],
+    };
+    const cboCampaigns = [{ ...campaigns[0], daily_budget: "5000" }];
+    const { opportunities } = compareKpis(cboCampaigns, { c1: { spend: "8", clicks: "10" } }, goodConfig);
+    expect(opportunities[0]).toMatchObject({ isCbo: true, dailyBudget: "5000" });
   });
 });
 

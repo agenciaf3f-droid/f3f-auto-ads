@@ -95,6 +95,8 @@ export type Database = {
           client_ad_account_id: string
           comparator: string
           created_at: string
+          good_comparator: string | null
+          good_threshold_value: number | null
           id: string
           label_if_triggered: string
           metric_key: string
@@ -108,6 +110,8 @@ export type Database = {
           client_ad_account_id: string
           comparator: string
           created_at?: string
+          good_comparator?: string | null
+          good_threshold_value?: number | null
           id?: string
           label_if_triggered?: string
           metric_key: string
@@ -121,6 +125,8 @@ export type Database = {
           client_ad_account_id?: string
           comparator?: string
           created_at?: string
+          good_comparator?: string | null
+          good_threshold_value?: number | null
           id?: string
           label_if_triggered?: string
           metric_key?: string
