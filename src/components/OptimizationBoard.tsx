@@ -100,10 +100,12 @@ function nodeAsAggregatedBucket(node: MetaNodeInsight, adAccountId: string): Agg
   };
 }
 
-// Valor da métrica VIOLADA (a do badge de culpado).
-function computeNodeMetricValue(violation: OptimizationViolation, node: MetaNodeInsight): number | null {
-  const def = getMetricDef(violation.metric);
-  return def ? def.compute(nodeAsAggregatedBucket(node, violation.adAccountId)) : null;
+// Valor da métrica de referência (a do badge de culpado no drill de pausa, ou da meta boa no
+// drill de orçamento) — mesmo shape mínimo (metric+adAccountId) serve OptimizationViolation E
+// OptimizationOpportunity, sem duplicar o cálculo entre os dois drill-ins.
+function computeNodeMetricValue(ref: { metric: string; adAccountId: string }, node: MetaNodeInsight): number | null {
+  const def = getMetricDef(ref.metric);
+  return def ? def.compute(nodeAsAggregatedBucket(node, ref.adAccountId)) : null;
 }
 
 // Cap de concorrência do fan-out por conta ao carregar otimizações. Antes era serial (1 conta por vez).
@@ -822,12 +824,13 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
             {header}
             {body}
             <CardContent className="p-4 pt-0">
-              <div className="flex gap-2 flex-wrap">
+              <div className="flex gap-1.5 flex-wrap">
                 {BUDGET_PCTS.map((pct) => (
                   <Button
                     key={pct}
                     variant="outline"
                     size="sm"
+                    className="h-6 px-2 text-[10px]"
                     disabled={!rawBudget || !budgetField || increasingId === o.campaignId}
                     onClick={() => budgetField && rawBudget && increaseBudget(o.campaignId, budgetField, rawBudget, pct, o.campaignName)}
                   >
@@ -1040,19 +1043,57 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
             {budgetDrillNodes.map((node) => {
               const field: "daily_budget" | "lifetime_budget" | null = node.dailyBudget ? "daily_budget" : node.lifetimeBudget ? "lifetime_budget" : null;
               const raw = node.dailyBudget ?? node.lifetimeBudget ?? null;
+              const isPaused = node.effective_status === "PAUSED";
+              const def = getMetricDef(o.metric);
+              const value = computeNodeMetricValue(o, node);
+              const nodeAgg = nodeAsAggregatedBucket(node, "");
+              // Verde se ESTE conjunto (não só o agregado da campanha) bate a meta boa — mesmo
+              // espírito do "breaches" de renderNodeRow, só invertido (aqui é "atinge", não "estoura").
+              const meetsGood = value != null && (o.operator === ">" ? value > o.threshold : value < o.threshold);
               return (
                 <Card key={node.id} className="fade-in-up">
                   <CardContent className="p-3">
                     <p className="text-sm truncate font-medium">{node.name}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
+                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                      <Badge
+                        variant={isPaused ? "outline" : "secondary"}
+                        className={`text-[10px] px-1.5 py-0 font-normal ${isPaused ? "text-muted-foreground" : ""}`}
+                      >
+                        {isPaused ? "Pausado" : node.effective_status}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] px-1.5 py-0 font-normal ${
+                          value == null
+                            ? "border-border text-muted-foreground"
+                            : meetsGood
+                              ? "border-success/30 text-success"
+                              : "border-border text-muted-foreground"
+                        }`}
+                      >
+                        {def?.label ?? o.metric}: {formatMetricValue(value, def?.unit)}
+                      </Badge>
+                      {value != null && (
+                        <span className="text-[10px] text-muted-foreground">
+                          meta {o.operator === ">" ? "≥" : "≤"} {formatMetricValue(o.threshold, def?.unit)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-x-3 gap-y-0.5 mt-1 flex-wrap text-[10px] text-muted-foreground">
+                      {(def?.components ?? []).map((c) => (
+                        <span key={c.label}>{c.label}: {formatComponentValue(c.compute(nodeAgg), c.unit)}</span>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-1.5">
                       {raw ? <>Orçamento atual: {formatMetricValue(parseFloat(raw) / 100, "currency")}</> : "Sem orçamento próprio (compartilhado)"}
                     </p>
-                    <div className="flex gap-2 flex-wrap mt-2">
+                    <div className="flex gap-1.5 flex-wrap mt-2">
                       {BUDGET_PCTS.map((pct) => (
                         <Button
                           key={pct}
                           variant="outline"
                           size="sm"
+                          className="h-6 px-2 text-[10px]"
                           disabled={!raw || !field || increasingId === node.id}
                           onClick={() => field && raw && increaseBudget(node.id, field, raw, pct, node.name)}
                         >
