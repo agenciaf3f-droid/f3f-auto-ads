@@ -85,6 +85,128 @@ export default function ClientKpiRulesEditor({ adAccounts, products }: { adAccou
   );
 }
 
+const metricLabel = (key: string) => METRIC_REGISTRY.find((m) => m.key === key)?.label || key;
+
+// Linha de uma regra existente. A meta boa é editada/removida aqui, direto na linha — o form de
+// criação (BucketRules.add) só cria a meta ruim; "boa" é sempre um passo posterior e opcional.
+function RuleRow({
+  rule,
+  accountId,
+  bucket,
+  onChanged,
+  onRemove,
+}: {
+  rule: ClientKpiRule;
+  accountId: string;
+  bucket: PresetBucket;
+  onChanged: () => void;
+  onRemove: () => void;
+}) {
+  const [editingGood, setEditingGood] = useState(false);
+  const [goodComparator, setGoodComparator] = useState<">" | "<">(rule.good_comparator || "<");
+  const [goodThreshold, setGoodThreshold] = useState(rule.good_threshold_value != null ? String(rule.good_threshold_value) : "");
+  const [saving, setSaving] = useState(false);
+  const unit = getMetricDef(rule.metric_key)?.unit;
+  const hasGood = rule.good_comparator != null && rule.good_threshold_value != null;
+
+  // Sempre reenvia os campos "ruim" já existentes da própria `rule` — upsert reescreve a linha
+  // inteira, e essa edição só deve tocar good_comparator/good_threshold_value.
+  const persistGood = async (comparator: ">" | "<" | null, value: number | null) => {
+    setSaving(true);
+    try {
+      await upsertKpiRule({
+        client_ad_account_id: accountId,
+        preset_bucket: bucket,
+        metric_key: rule.metric_key,
+        comparator: rule.comparator,
+        threshold_value: rule.threshold_value,
+        label_if_triggered: rule.label_if_triggered,
+        campaign_name_filter: rule.campaign_name_filter,
+        good_comparator: comparator,
+        good_threshold_value: value,
+      });
+      setEditingGood(false);
+      onChanged();
+    } catch (e) {
+      toast.error((e as Error).message || "Erro ao salvar meta boa");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveGood = () => {
+    const parsed = parseThreshold(goodThreshold);
+    if (goodThreshold.trim() === "" || Number.isNaN(parsed)) {
+      toast.error("Escolha um valor numérico pra meta boa");
+      return;
+    }
+    persistGood(goodComparator, parsed);
+  };
+
+  return (
+    <div className="flex flex-col gap-1.5 text-sm rounded-md border border-border/60 bg-muted/20 px-3 py-2">
+      <div className="flex items-center gap-2">
+        <span className="flex-1">
+          {metricLabel(rule.metric_key)} <span className="text-muted-foreground">{rule.comparator === ">" ? "acima de" : "abaixo de"}</span>{" "}
+          <span className="font-medium">{formatMetricValue(rule.threshold_value, unit)}</span> → <span className="text-destructive">{rule.label_if_triggered}</span>
+          {rule.preset_bucket === "L.T" && rule.campaign_name_filter && (
+            <Badge variant="outline" className="ml-2 text-[10px]">produto: {rule.campaign_name_filter}</Badge>
+          )}
+        </span>
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onRemove}>
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+
+      {hasGood && !editingGood && (
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="text-[10px] border-success/30 text-success">
+            bom {rule.good_comparator === ">" ? "acima de" : "abaixo de"} {formatMetricValue(rule.good_threshold_value, unit)}
+          </Badge>
+          <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[11px]" onClick={() => setEditingGood(true)}>editar</Button>
+          <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[11px] text-muted-foreground" disabled={saving} onClick={() => persistGood(null, null)}>
+            remover
+          </Button>
+        </div>
+      )}
+
+      {!hasGood && !editingGood && (
+        <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[11px] w-fit text-success" onClick={() => setEditingGood(true)}>
+          + definir meta boa
+        </Button>
+      )}
+
+      {editingGood && (
+        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+          <Select value={goodComparator} onValueChange={(v) => setGoodComparator(v as ">" | "<")}>
+            <SelectTrigger className="w-[110px] h-7 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value=">">acima de</SelectItem>
+              <SelectItem value="<">abaixo de</SelectItem>
+            </SelectContent>
+          </Select>
+          <div className="flex items-center gap-1">
+            {unit === "currency" && <span className="text-xs text-muted-foreground">R$</span>}
+            <Input
+              type="text"
+              inputMode="decimal"
+              value={goodThreshold}
+              onChange={(e) => setGoodThreshold(e.target.value)}
+              placeholder={unit === "currency" ? "0,00" : "valor"}
+              className="w-[90px] h-7 text-xs"
+            />
+            {unit === "percent" && <span className="text-xs text-muted-foreground">%</span>}
+          </div>
+          <Button size="sm" className="h-7" onClick={saveGood} disabled={saving}>
+            {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : "Salvar"}
+          </Button>
+          <Button variant="ghost" size="sm" className="h-7" disabled={saving} onClick={() => setEditingGood(false)}>Cancelar</Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BucketRules({
   bucket,
   accountId,
@@ -149,24 +271,11 @@ function BucketRules({
     catch (e) { toast.error((e as Error).message); }
   };
 
-  const metricLabel = (key: string) => METRIC_REGISTRY.find((m) => m.key === key)?.label || key;
-
   return (
     <div className="space-y-3 pt-2">
       {rules.length === 0 && <p className="text-sm text-muted-foreground">Nenhuma regra para {bucket}.</p>}
       {rules.map((r) => (
-        <div key={r.id} className="flex items-center gap-2 text-sm rounded-md border border-border/60 bg-muted/20 px-3 py-2">
-          <span className="flex-1">
-            {metricLabel(r.metric_key)} <span className="text-muted-foreground">{r.comparator === ">" ? "acima de" : "abaixo de"}</span>{" "}
-            <span className="font-medium">{formatMetricValue(r.threshold_value, getMetricDef(r.metric_key)?.unit)}</span> → <span className="text-destructive">{r.label_if_triggered}</span>
-            {r.preset_bucket === "L.T" && r.campaign_name_filter && (
-              <Badge variant="outline" className="ml-2 text-[10px]">produto: {r.campaign_name_filter}</Badge>
-            )}
-          </span>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => remove(r.id)}>
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        </div>
+        <RuleRow key={r.id} rule={r} accountId={accountId} bucket={bucket} onChanged={onChanged} onRemove={() => remove(r.id)} />
       ))}
 
       {isLt && products.length === 0 ? (

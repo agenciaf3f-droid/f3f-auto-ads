@@ -13,6 +13,7 @@ import {
   fetchNodeInsights,
   pauseCampaign,
   activateCampaign,
+  updateNodeBudget,
   notifyClientPause,
   type MetaNodeInsight,
   type NotifyClientPauseParams,
@@ -23,6 +24,7 @@ import {
   buildOptimizationView,
   type MetricSnapshot,
   type OptimizationViolation,
+  type OptimizationOpportunity,
   type OptimizationActionRecord,
   type OptimizationHistoryEntry,
 } from "@/lib/optimization-engine";
@@ -124,6 +126,10 @@ async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) =>
 // `variant` só decide qual fatia renderizar: "pendentes" (Otimizações) ou "historico" (aba Histórico).
 export type BoardVariant = "pendentes" | "historico";
 
+// Percentuais fixos do card verde (meta boa) — aumentar orçamento é sempre um clique manual do
+// gestor, nunca automático.
+const BUDGET_PCTS = [10, 25, 50, 75, 100];
+
 // Estado do dialog de aviso ao cliente. 3 estados via campos opcionais (não união estrita — property
 // access numa união quebraria mesmo no strict:false): carregando (só params) / mensagem pronta
 // (text+grupo) / sem-grupo (noGroup). `params` já vem com dry_run:false pronto pro envio.
@@ -141,12 +147,22 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [violations, setViolations] = useState<OptimizationViolation[]>([]);
+  const [opportunities, setOpportunities] = useState<OptimizationOpportunity[]>([]);
   const [history, setHistory] = useState<OptimizationHistoryEntry[]>([]);
   const [accountErrors, setAccountErrors] = useState<string[]>([]);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   // Id do nó (adset ou ad) sendo pausado agora — desabilita só o botão daquele nó.
   const [pausingId, setPausingId] = useState<string | null>(null);
+  // Id do nó (campanha CBO ou conjunto ABO) tendo o orçamento aumentado agora.
+  const [increasingId, setIncreasingId] = useState<string | null>(null);
   const [range, setRange] = useState<DateRangeSelection>({ mode: "preset", preset: "last_7d" });
+
+  // Drill-in de orçamento (só ABO — CBO aumenta direto no card, sem entrar aqui): campanha cujos
+  // conjuntos estão sendo listados pra escolher em qual aumentar. Estado separado do `drill` de
+  // pausa (abaixo) — são fluxos independentes, sem interseção de código.
+  const [budgetDrill, setBudgetDrill] = useState<OptimizationOpportunity | null>(null);
+  const [budgetDrillNodes, setBudgetDrillNodes] = useState<MetaNodeInsight[]>([]);
+  const [budgetDrillLoading, setBudgetDrillLoading] = useState(false);
 
   // Preview do aviso ao grupo de WhatsApp do cliente. Abre IMEDIATO após a pausa (com spinner) e é
   // preenchido quando o Graph resolve os links — sem dead time. Ver NotifyPreviewState.
@@ -171,14 +187,14 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
       try {
         const status = await fetchMetaStatus();
         if (!status.connected || !status.access_token) {
-          if (!cancelled) { setViolations([]); setHistory([]); }
+          if (!cancelled) { setViolations([]); setOpportunities([]); setHistory([]); }
           return;
         }
         if (!cancelled) setAccessToken(status.access_token);
 
         const configs = await fetchClientKpiConfigs();
         if (configs.length === 0) {
-          if (!cancelled) { setViolations([]); setHistory([]); }
+          if (!cancelled) { setViolations([]); setOpportunities([]); setHistory([]); }
           return;
         }
 
@@ -204,6 +220,7 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
         // é isolado por conta — uma conta que falha vai pra failedAccounts sem derrubar as outras.
         // Ordem final de `found`/`failedAccounts` não é garantida (lista sem ordenação, como antes).
         const found: OptimizationViolation[] = [];
+        const foundOpportunities: OptimizationOpportunity[] = [];
         const failedAccounts: string[] = [];
         // IDs de todas as campanhas ATIVAS agora (fetchCampaigns já filtra effective_status=ACTIVE).
         // O engine usa isso pra sumir com pausa de CAMPANHA cuja campanha voltou a ficar ativa
@@ -231,7 +248,9 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
               return;
             }
 
-            found.push(...compareKpis(campaigns, insights, config));
+            const result = compareKpis(campaigns, insights, config);
+            found.push(...result.violations);
+            foundOpportunities.push(...result.opportunities);
           } catch (e) {
             console.error(`Falha ao avaliar otimizações da conta ${config.adAccountId} (${config.clientName})`, e);
             failedAccounts.push(config.clientName);
@@ -244,6 +263,7 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
 
         if (!cancelled) {
           setViolations(pendentes);
+          setOpportunities(foundOpportunities);
           setHistory(historyEntries);
           setAccountErrors(failedAccounts);
         }
@@ -299,6 +319,35 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     loadDrillNodes();
     return () => { cancelled = true; };
   }, [drill, accessToken, range, toast]);
+
+  // Carrega os conjuntos (só nível adset — orçamento ABO não desce a criativo) da campanha ABO
+  // aberta em budgetDrill. Mais simples que o drill-in de pausa (1 nível só, sem "adset" in drill).
+  useEffect(() => {
+    if (!budgetDrill || !accessToken) {
+      setBudgetDrillNodes([]);
+      return;
+    }
+    const campaignId = budgetDrill.campaignId;
+    const token = accessToken;
+    let cancelled = false;
+    async function loadBudgetDrillNodes() {
+      setBudgetDrillLoading(true);
+      setBudgetDrillNodes([]);
+      try {
+        const nodes = await fetchNodeInsights(token, campaignId, "adset", range);
+        if (!cancelled) setBudgetDrillNodes(nodes);
+      } catch (e) {
+        if (!cancelled) {
+          toast({ variant: "destructive", title: "Erro ao carregar conjuntos", description: (e as Error).message });
+          setBudgetDrill(null);
+        }
+      } finally {
+        if (!cancelled) setBudgetDrillLoading(false);
+      }
+    }
+    loadBudgetDrillNodes();
+    return () => { cancelled = true; };
+  }, [budgetDrill, accessToken, range, toast]);
 
   // Registra manter/desligar. `node` presente = pausa de um NÓ (conjunto/criativo): grava nível+id+nome
   // no snapshot → vira registro SEPARADO no Histórico ("Conjunto X desligado"), NÃO marca a campanha
@@ -525,6 +574,38 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     }
   }
 
+  // Aumenta o orçamento em `pct`% — nodeId é a CAMPANHA (CBO, botão direto no card) ou um CONJUNTO
+  // (ABO, botão dentro do budgetDrill). `currentRaw` é a string CRUA da Meta (centavos); escalamos
+  // em cima dela e devolvemos na MESMA unidade — a Meta é quem interpreta, nunca convertemos aqui.
+  // Só o /100 na exibição do toast é conversão de verdade (formatMetricValue espera reais, não centavos).
+  async function increaseBudget(nodeId: string, field: "daily_budget" | "lifetime_budget", currentRaw: string, pct: number, label: string) {
+    if (!accessToken) return;
+    const current = parseFloat(currentRaw);
+    if (!Number.isFinite(current) || current <= 0) return;
+    const next = Math.round(current * (1 + pct / 100));
+    setIncreasingId(nodeId);
+    try {
+      await updateNodeBudget(accessToken, nodeId, field, next);
+    } catch (e) {
+      toast({ variant: "destructive", title: "Erro ao aumentar orçamento", description: (e as Error).message });
+      setIncreasingId(null);
+      return;
+    }
+    setIncreasingId(null);
+    toast({
+      title: `+${pct}% aplicado`,
+      description: `${label}: ${formatMetricValue(current / 100, "currency")} → ${formatMetricValue(next / 100, "currency")}`,
+    });
+    // Reflete localmente pro card/conjunto não ficar com o valor ANTIGO até o próximo load do board —
+    // sem isso, um 2º clique no mesmo card CBO recalcularia em cima do orçamento pré-aumento (stale) e
+    // POSTaria um valor errado pra Meta (ex.: +100% seguido de +25% aplicaria +25% sobre o valor de
+    // ANTES do +100%, não sobre o que está na Meta agora). Atualiza os dois: nodeId bate com o.campaignId
+    // no caso CBO (card) ou com n.id no caso ABO (drill-in) — nunca os dois ao mesmo tempo.
+    const key = field === "daily_budget" ? "dailyBudget" : "lifetimeBudget";
+    setBudgetDrillNodes((prev) => prev.map((n) => (n.id === nodeId ? { ...n, [key]: String(next) } : n)));
+    setOpportunities((prev) => prev.map((o) => (o.campaignId === nodeId ? { ...o, [key]: String(next) } : o)));
+  }
+
   // Fecha o dialog de aviso E invalida qualquer preview em voo (senão um await tardio reabriria o
   // dialog dispensado). TODOS os caminhos de fechar passam por aqui: Escape/click-fora, "Agora não"
   // e "Fechar" — o botão "Agora não" também fica visível durante o loading, então tem a mesma corrida.
@@ -685,6 +766,98 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     );
   };
 
+  // Card de oportunidade (meta BOA atingida) — contraparte verde do renderViolationCard. CBO tem
+  // orçamento na própria campanha: botões +% direto no card. ABO não tem botão aqui — o orçamento
+  // vive nos conjuntos, o card inteiro é clicável e abre o budgetDrill (mesmo padrão de enterDrill).
+  const renderOpportunityCard = (o: OptimizationOpportunity, i: number) => {
+    const components = getMetricDef(o.metric)?.components ?? [];
+    const agg = o.agg;
+    const budgetField: "daily_budget" | "lifetime_budget" | null = o.dailyBudget ? "daily_budget" : o.lifetimeBudget ? "lifetime_budget" : null;
+    const rawBudget = o.dailyBudget ?? o.lifetimeBudget ?? null;
+    const enterBudgetDrill = () => setBudgetDrill(o);
+
+    const header = (
+      <CardHeader className="p-4 pb-2">
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-md border flex items-center justify-center shrink-0 bg-success/10 border-success/20">
+            <CheckCircle2 className="w-3.5 h-3.5 text-success" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <CardTitle className="text-sm truncate">{o.campaignName}</CardTitle>
+            <p className="text-xs text-muted-foreground truncate">{o.clientName}</p>
+          </div>
+          {!o.isCbo && <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />}
+        </div>
+      </CardHeader>
+    );
+    const body = (
+      <CardContent className="p-4 pt-0 pb-3">
+        <p className="text-xs text-muted-foreground">
+          <strong className="text-foreground">{getMetricDef(o.metric)?.label ?? o.metric}</strong> em{" "}
+          <strong className="text-foreground">{o.actual.toFixed(2)}</strong>,{" "}
+          {o.operator === ">" ? "acima" : "abaixo"} da meta boa de{" "}
+          <strong className="text-foreground">{o.threshold}</strong> — performando bem.
+        </p>
+        {agg && (
+          <div className="flex items-center gap-x-3 gap-y-0.5 mt-1 flex-wrap text-[10px] text-muted-foreground">
+            {components.map((c) => (
+              <span key={c.label}>{c.label}: {formatComponentValue(c.compute(agg), c.unit)}</span>
+            ))}
+          </div>
+        )}
+        {!o.isCbo && (
+          <p className="text-[11px] text-muted-foreground mt-2">Orçamento por conjunto — toque para ver e aumentar.</p>
+        )}
+      </CardContent>
+    );
+
+    return (
+      <Card
+        key={`${o.campaignId}:${o.metric}`}
+        className="border-l-[3px] border-l-success/70 bg-success/[0.03] fade-in-up"
+        style={{ animationDelay: `${i * 60}ms` }}
+      >
+        {o.isCbo ? (
+          <>
+            {header}
+            {body}
+            <CardContent className="p-4 pt-0">
+              <div className="flex gap-2 flex-wrap">
+                {BUDGET_PCTS.map((pct) => (
+                  <Button
+                    key={pct}
+                    variant="outline"
+                    size="sm"
+                    disabled={!rawBudget || !budgetField || increasingId === o.campaignId}
+                    onClick={() => budgetField && rawBudget && increaseBudget(o.campaignId, budgetField, rawBudget, pct, o.campaignName)}
+                  >
+                    {increasingId === o.campaignId ? "..." : `+${pct}%`}
+                  </Button>
+                ))}
+              </div>
+            </CardContent>
+          </>
+        ) : (
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={enterBudgetDrill}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                enterBudgetDrill();
+              }
+            }}
+            className="cursor-pointer rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          >
+            {header}
+            {body}
+          </div>
+        )}
+      </Card>
+    );
+  };
+
   // Linha de um nó (conjunto ou criativo) no drill-in. `canEnter` só é true no Nível 1 (conjunto),
   // que desce pra criativos — Nível 2 é folha, sem chevron nem clique de navegação na linha.
   const renderNodeRow = (node: MetaNodeInsight, campaign: OptimizationViolation, canEnter: boolean) => {
@@ -829,9 +1002,77 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
     );
   };
 
+  // Drill-in de orçamento (ABO): lista os conjuntos da campanha aberta em budgetDrill, cada um com
+  // seu orçamento atual e os mesmos botões +% do card CBO. Só 1 nível (adset) — sem descer a criativo.
+  const renderBudgetDrillView = () => {
+    if (!budgetDrill) return null;
+    const o = budgetDrill;
+    return (
+      <div className="fade-in-up">
+        <Button variant="ghost" size="sm" className="-ml-2 mb-3 gap-1 text-muted-foreground hover:text-foreground" onClick={() => setBudgetDrill(null)}>
+          <ChevronLeft className="w-4 h-4" /> Voltar
+        </Button>
+
+        <div className="mb-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+          <span>{o.clientName}</span>
+          <span>/</span>
+          <span className="text-foreground font-medium truncate max-w-[14rem]">{o.campaignName}</span>
+        </div>
+
+        <h2 className="font-display text-xl font-bold tracking-tight mb-4">Conjuntos</h2>
+
+        <div className="mb-4">
+          <DateRangeSelector value={range} onChange={setRange} />
+        </div>
+
+        {budgetDrillLoading && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground py-10">
+            <Loader2 className="w-4 h-4 animate-spin" /> Carregando conjuntos...
+          </div>
+        )}
+
+        {!budgetDrillLoading && budgetDrillNodes.length === 0 && (
+          <p className="text-sm text-muted-foreground text-center py-10">Nenhum conjunto encontrado nessa campanha.</p>
+        )}
+
+        {!budgetDrillLoading && budgetDrillNodes.length > 0 && (
+          <div className="space-y-2">
+            {budgetDrillNodes.map((node) => {
+              const field: "daily_budget" | "lifetime_budget" | null = node.dailyBudget ? "daily_budget" : node.lifetimeBudget ? "lifetime_budget" : null;
+              const raw = node.dailyBudget ?? node.lifetimeBudget ?? null;
+              return (
+                <Card key={node.id} className="fade-in-up">
+                  <CardContent className="p-3">
+                    <p className="text-sm truncate font-medium">{node.name}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {raw ? <>Orçamento atual: {formatMetricValue(parseFloat(raw) / 100, "currency")}</> : "Sem orçamento próprio (compartilhado)"}
+                    </p>
+                    <div className="flex gap-2 flex-wrap mt-2">
+                      {BUDGET_PCTS.map((pct) => (
+                        <Button
+                          key={pct}
+                          variant="outline"
+                          size="sm"
+                          disabled={!raw || !field || increasingId === node.id}
+                          onClick={() => field && raw && increaseBudget(node.id, field, raw, pct, node.name)}
+                        >
+                          {increasingId === node.id ? "..." : `+${pct}%`}
+                        </Button>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-10">
-      {!drill && (
+      {!drill && !budgetDrill && (
       <>
         <div className="mb-8 fade-in-up">
           <div className="flex items-center gap-2 mb-3">
@@ -874,7 +1115,7 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
         {/* ── PENDENTES (aba Otimizações) ── */}
         {!isHistorico && !loading && (
           <>
-            {violations.length === 0 && accountErrors.length === 0 && (
+            {violations.length === 0 && opportunities.length === 0 && accountErrors.length === 0 && (
               <div className="text-center py-16 fade-in-up">
                 <div className="w-12 h-12 rounded-xl bg-success/10 border border-success/20 flex items-center justify-center mx-auto mb-4">
                   <CheckCircle2 className="w-6 h-6 text-success" />
@@ -886,9 +1127,19 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
                 </p>
               </div>
             )}
-            <div className="space-y-2">
-              {violations.map((v, i) => renderViolationCard(v, i))}
-            </div>
+            {violations.length > 0 && (
+              <div className="space-y-2">
+                {violations.map((v, i) => renderViolationCard(v, i))}
+              </div>
+            )}
+            {opportunities.length > 0 && (
+              <div className={violations.length > 0 ? "mt-8" : ""}>
+                <h2 className="text-sm font-medium text-success mb-2">Indo bem — considere aumentar orçamento</h2>
+                <div className="space-y-2">
+                  {opportunities.map((o, i) => renderOpportunityCard(o, i))}
+                </div>
+              </div>
+            )}
           </>
         )}
 
@@ -967,6 +1218,7 @@ export default function OptimizationBoard({ variant }: { variant: BoardVariant }
       )}
 
       {drill && renderDrillView()}
+      {budgetDrill && renderBudgetDrillView()}
 
       <Dialog open={!!notifyPreview} onOpenChange={(o) => { if (!o) dismissNotify(); }}>
         <DialogContent>

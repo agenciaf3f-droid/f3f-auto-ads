@@ -19,6 +19,8 @@ export type ClientKpiConfig = {
     // Só populado (e relevante) pra presetBucket "L.T" — nome do produto salvo na regra,
     // usado por compareKpis pra restringir o match a campanhas desse produto específico.
     campaignNameFilter: string | null;
+    // Meta boa do mesmo metric_key — opcional. Ausente/null = regra sem meta boa (só avalia "ruim").
+    good: { operator: ">" | "<"; value: number } | null;
   }[];
 };
 
@@ -55,6 +57,9 @@ export async function fetchClientKpiConfigs(): Promise<ClientKpiConfig[]> {
         value: r.threshold_value,
         presetBucket: r.preset_bucket as PresetBucket,
         campaignNameFilter: r.campaign_name_filter,
+        good: r.good_comparator && r.good_threshold_value != null
+          ? { operator: r.good_comparator, value: r.good_threshold_value }
+          : null,
       })),
     });
   }
