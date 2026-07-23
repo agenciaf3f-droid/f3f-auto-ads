@@ -33,6 +33,23 @@ Deno.serve(async (req) => {
       });
     }
 
+    // A Meta pode aceitar o POST (200, sem error) e não aplicar de fato — mesma armadilha já
+    // vista neste projeto com standard_enhancements/Advantage+ Creative: POST-accept ≠ aplicado.
+    // Read-back confirma o valor ANTES de devolver sucesso — sem isso o toast "+X% aplicado"
+    // podia mentir numa campanha CBO.
+    const expected = Math.round(value);
+    const readbackRes = await fetch(`https://graph.facebook.com/v25.0/${node_id}?fields=${field}&access_token=${access_token}`);
+    const readback = await readbackRes.json();
+    const applied = Number(readback?.[field]);
+
+    if (!Number.isFinite(applied) || applied !== expected) {
+      return new Response(JSON.stringify({
+        error: `A Meta aceitou o pedido mas o orçamento não mudou (esperado ${expected}, lido ${readback?.[field] ?? "ausente"}).`,
+      }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
