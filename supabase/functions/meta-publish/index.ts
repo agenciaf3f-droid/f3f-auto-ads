@@ -835,6 +835,81 @@ function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
+// Sobe um vídeo pra biblioteca da conta (act_.../advideos) a partir de uma URL pública de vídeo
+// — ex: a media_url de uma mídia IG PRÓPRIA (FASE 2). Devolve um video_id REAL da conta (não uma
+// referência), que é o que o público VV50%/Balde precisa como object_id. Espelha o CORE do
+// uploadDriveCreative: file_url (Meta baixa direto da própria CDN dela) → fallback bytes multipart.
+// NÃO passa por assertSafeDriveUrl/extractDriveFileId (guards são específicos do Drive e rejeitam
+// host não-Drive); a URL aqui vem da Graph API da própria Meta (CDN IG), não de input cru do usuário.
+// Pula o dance de interstitial/confirm (isso é anti-abuso do Google Drive; a CDN do IG devolve bytes).
+async function uploadVideoFromUrl(
+  accessToken: string,
+  adAccountId: string,
+  videoUrl: string,
+): Promise<{ video_id?: string; error?: string }> {
+  // Fast-path: file_url — a Meta baixa o vídeo direto da CDN dela (sem bufferizar na edge → evita OOM).
+  try {
+    const fd = new FormData();
+    fd.append("access_token", accessToken);
+    fd.append("file_url", videoUrl);
+    const up = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/advideos`, { method: "POST", body: fd });
+    const upd = await up.json();
+    if (!upd.error && upd.id) {
+      const videoId = upd.id;
+      let sawError = false;
+      for (let i = 0; i < 5; i++) {
+        await new Promise((r) => setTimeout(r, 2500));
+        try {
+          const stRes = await fetch(`https://graph.facebook.com/v25.0/${videoId}?fields=status&access_token=${accessToken}`);
+          const stData = await stRes.json();
+          const vs = stData?.status?.video_status || stData?.status;
+          console.log(`[ig-video-upload] file_url video ${videoId} poll ${i + 1}: ${JSON.stringify(stData?.status)}`);
+          if (vs === "ready") return { video_id: videoId };
+          if (vs === "error") { sawError = true; break; }
+        } catch (e) { console.log(`[ig-video-upload] file_url poll error: ${(e as Error).message}`); }
+      }
+      if (!sawError) return { video_id: videoId }; // ainda processando → assume ok (ad creation reporta se não)
+      // Meta processou e deu erro no vídeo via file_url → apaga o órfão antes do fallback buffered.
+      try {
+        await fetch(`https://graph.facebook.com/v25.0/${videoId}?access_token=${accessToken}`, { method: "DELETE" });
+      } catch (e) { console.log(`[ig-video-upload] falha ao limpar vídeo ${videoId}: ${(e as Error).message}`); }
+    } else if (upd.error) {
+      console.log(`[ig-video-upload] file_url /advideos error (fallback buffered): ${JSON.stringify(upd.error)}`);
+    }
+  } catch (e) {
+    console.log(`[ig-video-upload] file_url path exception (fallback buffered): ${(e as Error).message}`);
+  }
+
+  // Fallback: baixa os bytes na edge e sobe via multipart source. Vídeo de IG/reel costuma ser
+  // pequeno (< ~100MB), então o risco de OOM aqui é baixo — e só chega aqui se o file_url falhou.
+  try {
+    const r = await fetch(videoUrl, { redirect: "follow" });
+    if (!r.ok) return { error: `download do vídeo IG falhou (HTTP ${r.status})` };
+    const blob = await r.blob();
+    const formData = new FormData();
+    formData.append("access_token", accessToken);
+    formData.append("source", blob, "ig_creative.mp4");
+    const uploadRes = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/advideos`, { method: "POST", body: formData });
+    const uploadData = await uploadRes.json();
+    if (uploadData.error) return { error: `${uploadData.error.message} | code=${uploadData.error.code}` };
+    const videoId = uploadData.id;
+    for (let i = 0; i < 4; i++) {
+      await new Promise((r) => setTimeout(r, 2500));
+      try {
+        const stRes = await fetch(`https://graph.facebook.com/v25.0/${videoId}?fields=status&access_token=${accessToken}`);
+        const stData = await stRes.json();
+        const vs = stData?.status?.video_status || stData?.status;
+        console.log(`[ig-video-upload] buffered video ${videoId} poll ${i + 1}: ${JSON.stringify(stData?.status)}`);
+        if (vs === "ready") return { video_id: videoId };
+        if (vs === "error") return { error: "Meta rejeitou o vídeo IG após processamento (arquivo corrompido?)." };
+      } catch (e) { console.log(`[ig-video-upload] buffered poll error: ${(e as Error).message}`); }
+    }
+    return { video_id: videoId }; // timeout polling → assume ok (ad creation reporta se ainda processa)
+  } catch (e) {
+    return { error: `upload do vídeo IG falhou: ${(e as Error).message}` };
+  }
+}
+
 // Vídeo recém-upado exige thumbnail (image_url/image_hash) no video_data, senão a Meta dá
 // erro 100/1443226 "anúncio precisa de miniatura de vídeo". Sobe a imagem (bytes já em mãos
 // via fetch) como adimage — image_hash é mais estável que image_url de CDN externa.
@@ -1170,8 +1245,10 @@ function buildPageWelcomeMessageJson(greetingText: string | undefined, readyMess
 
 // =====================================================================
 //  FASE 2 CREATIVE BUILDER — Engagement (vídeo Drive ou IG re-upload)
-//  Sempre produz spec com object_story_spec.video_data.video_id (precisamos
-//  do video_id pra criar a custom audience VV50% de exclusão).
+//  Objetivo: produzir spec com object_story_spec.video_data.video_id (video_id REAL da conta) —
+//  necessário pra popular o público VV50%/Balde. Drive: uploadDriveCreative. IG: baixa a media_url
+//  e sobe via uploadVideoFromUrl. Se o upload IG falhar, DEGRADA pro spec flat (source_instagram_
+//  media_id) com warning visível — o ad publica, mas sem video_id o VV50%/Balde é pulado.
 // =====================================================================
 
 async function buildFase2Creative(
@@ -1192,9 +1269,14 @@ async function buildFase2Creative(
   const isIgLink = creativeType === "instagram" || (!creativeType && creativeLink?.includes("instagram.com"));
   const isDriveLink = creativeType === "drive" || (!creativeType && (creativeLink?.includes("drive.google.com") || creativeLink?.includes("docs.google.com")));
 
-  // SIMPLIFICADO: pra IG, usa source_instagram_media_id direto (sem upload).
-  // Pra Drive, faz upload via uploadDriveCreative (que já existe no projeto).
-  // Audience exclusão é tentada DEPOIS — se falhar, segue sem ela.
+  // IG: resolve o media_id, PEGA a media_url do vídeo e SOBE pra biblioteca da conta (/advideos)
+  //   → ganha um video_id REAL. Isso é obrigatório pra popular o público VV50%/Balde: com só
+  //   source_instagram_media_id (referência), a Meta NÃO expõe video_id (readback volta null) e o
+  //   público nunca enchia. Com o video_id de verdade, o ad passa a SERVIR esse vídeo da conta
+  //   (object_story_spec), então as visualizações do próprio anúncio contam no VV50% — idêntico ao
+  //   caminho Drive logo abaixo. Se QUALQUER etapa do upload falhar, DEGRADA pro spec flat
+  //   (source_instagram_media_id) com um WARNING visível: o anúncio publica normal via IG, só o
+  //   público não é populado por este vídeo. Drive continua usando uploadDriveCreative.
   if (isIgLink) {
     const result = await resolveInstagramMediaId(accessToken, adAccountId, creativeLink, pageId, igActorId, logs, preResolvedMediaId, preResolvedIgAccountId);
     if (result.error) return { error: result.error };
@@ -1202,15 +1284,57 @@ async function buildFase2Creative(
     const resolvedIgActor = result.ig_account_id || igActorId;
     if (!resolvedIgActor) return { error: "instagram_user_id não disponível." };
 
-    // Spec flat (igual FASE 1 que já funciona) — sem upload, sem video_id.
-    const spec: Record<string, any> = {
+    // Spec flat de degradação (igual FASE 1 que já funciona) — mantém o ad publicando via IG mesmo
+    // se o upload do vídeo falhar. Sem video_id → VV50%/Balde ficam SKIP (mas o publish não quebra).
+    const flatSpec: Record<string, any> = {
       source_instagram_media_id: result.instagram_media_id,
       instagram_user_id: resolvedIgActor,
     };
-    console.log(`[FASE2-creative] IG flat spec: media=${result.instagram_media_id}, ig=${resolvedIgActor}`);
-    logs.push({ step: "fase2_creative", status: "success", ts: ts(), detail: `IG source_instagram_media_id=${result.instagram_media_id}` });
-    // Sem videoId disponível (IG media_id != FB video_id), audience VV50% será SKIP.
-    return { spec: { ...spec, ...enhSpec } };
+    const degradeFlat = (reason: string) => {
+      // WARNING (não console.log): o frontend re-exibe logs status="warning" com ⚠️ mesmo em
+      // sucesso (PublishForm softIssues) — então a degradação NÃO fica invisível pro gestor.
+      logs.push({ step: "fase2_creative", status: "warning", ts: ts(), detail: `⚠️ FASE 2 IG (vídeo do perfil): ${reason} O anúncio PUBLICA normal via IG, mas o público VV50%/Balde NÃO será populado por este vídeo.` });
+      logs.push({ step: "fase2_creative", status: "success", ts: ts(), detail: `IG source_instagram_media_id=${result.instagram_media_id} (flat/degradado — sem VV50%)` });
+      return { spec: { ...flatSpec, ...enhSpec } };
+    };
+
+    // Busca a URL do vídeo direto no nó da mídia (independe do fast-path do validate, que pode ter
+    // pré-resolvido o media_id SEM esses campos). media_type "VIDEO" cobre reel (a Graph reporta
+    // reel como VIDEO); IMAGE/CAROUSEL_ALBUM não têm vídeo → degrada com mensagem clara.
+    let mediaMeta: any = null;
+    try {
+      const mediaMetaRes = await fetch(`https://graph.facebook.com/v25.0/${result.instagram_media_id}?fields=media_type,media_url,thumbnail_url&access_token=${accessToken}`);
+      mediaMeta = await mediaMetaRes.json();
+    } catch (e) {
+      return degradeFlat(`não consegui ler a mídia p/ obter a URL do vídeo (${(e as Error).message}).`);
+    }
+    const igVideoUrl: string | undefined = mediaMeta?.media_url;
+    const mediaTypeResolved = String(mediaMeta?.media_type || result.media_type || "");
+    const looksVideo = mediaTypeResolved ? /VIDEO/i.test(mediaTypeResolved) : !!igVideoUrl;
+    if (mediaMeta?.error) return degradeFlat(`a Meta recusou ler a mídia (${mediaMeta.error.message}, code=${mediaMeta.error.code}). Se for vídeo/reel próprio, verifique o escopo instagram_basic da conexão.`);
+    if (!looksVideo) return degradeFlat(`a mídia não é vídeo (media_type=${mediaTypeResolved || "?"}); FASE 2 precisa de vídeo/reel pra montar o público VV50%.`);
+    if (!igVideoUrl) return degradeFlat(`a mídia é vídeo mas não expôs media_url (permissão/escopo). Verifique instagram_basic na conexão.`);
+
+    const upload = await uploadVideoFromUrl(accessToken, adAccountId, igVideoUrl);
+    if (upload.error || !upload.video_id) return degradeFlat(`falha ao subir o vídeo à biblioteca da conta (${upload.error || "sem video_id"}).`);
+
+    // Vídeo na conta → thumbnail obrigatória (senão Meta 100/1443226). Primário = thumbnail_url do
+    // próprio IG (rápido/confiável p/ VIDEO); fallback = polling da Meta (mesma mecânica do Drive).
+    let thumbnailField: Record<string, string> = {};
+    if (mediaMeta?.thumbnail_url) {
+      try {
+        const tr = await fetch(mediaMeta.thumbnail_url);
+        if (tr.ok) { const up = await uploadThumbnailAsAdimage(tr, accessToken, adAccountId); if (up) thumbnailField = up; }
+      } catch (e) { console.log(`[FASE2-creative] thumb IG falhou (cai pro polling Meta): ${(e as Error).message}`); }
+    }
+    if (Object.keys(thumbnailField).length === 0) thumbnailField = await resolveVideoThumbnailField(upload.video_id, accessToken, adAccountId);
+
+    const videoData: Record<string, any> = { video_id: upload.video_id, ...thumbnailField };
+    if (caption?.trim()) videoData.message = caption.trim();
+    const storySpec: Record<string, any> = { page_id: pageId, video_data: videoData, instagram_user_id: resolvedIgActor };
+    console.log(`[FASE2-creative] IG re-upload: media=${result.instagram_media_id} → video_id=${upload.video_id}`);
+    logs.push({ step: "fase2_creative", status: "success", ts: ts(), detail: `IG re-upload OK → video_id=${upload.video_id} (VV50%/Balde ativos; ad serve o vídeo da conta)` });
+    return { spec: { object_story_spec: storySpec, ...enhSpec }, videoId: upload.video_id };
   }
 
   if (isDriveLink) {
@@ -2863,8 +2987,11 @@ Deno.serve(async (req) => {
       creativesCreated = 1;
       logs.push({ step: "fase2_creative", status: "success", ts: ts(), detail: `id=${sharedCreativeId}` });
 
-      // 2. Extrai o video_id do creative. IG-source (source_instagram_media_id) TAMBÉM
-      // expõe video_id ao ler de volta — então VV50% agora funciona p/ IG e Drive.
+      // 2. Extrai o video_id do creative. Agora IG e Drive trazem o video_id REAL dentro de
+      // cr.spec.object_story_spec.video_data.video_id (IG passou a re-upar em buildFase2Creative),
+      // então o VV50%/Balde funciona pros dois. O readback abaixo fica só como rede defensiva —
+      // se a spec vier flat (degradação do upload IG), o GET ?fields=video_id volta null e o
+      // VV50% é pulado com warning (comportamento correto: não há video_id de conta pra usar).
       let vvVideoId: string | null = cr.spec?.object_story_spec?.video_data?.video_id || null;
       if (!vvVideoId) {
         try {
