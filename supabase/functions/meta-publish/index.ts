@@ -2958,7 +2958,14 @@ Deno.serve(async (req) => {
 
     // ── FASE 2 special flow: 1 creative + N adsets (one per audience) ──
     if (isVideoEngagementPreset && fase2AudienceIds.length > 0) {
-      if (resolvedCreatives.length !== 1) {
+      // COMPLETO: 1 criativo por chamada (o frontend fatia N criativos em N campanhas separadas).
+      // ADAPTADO: aceita N criativos numa ÚNICA chamada → N conjuntos (1 por criativo), cada
+      //           conjunto com o MESMO público combinado (loop mais abaixo).
+      if (fase2CombinedAdset) {
+        if (resolvedCreatives.length < 1) {
+          return respond({ ok: false, step: "publish", error_message: "FASE 2 ADAPTADO exige ao menos 1 criativo." });
+        }
+      } else if (resolvedCreatives.length !== 1) {
         return respond({ ok: false, step: "publish", error_message: "FASE 2 exige exatamente 1 criativo. Forneça 1 criativo." });
       }
       // ADAPTADO: re-checagem no backend (defesa real — frontend não é confiável). Roda ANTES
@@ -2969,9 +2976,18 @@ Deno.serve(async (req) => {
       }
       // FASE 2 cria N adsets (buildFase2Adset → applyDsa) → resolve DSA antes.
       await ensureDsaResolved();
-      const cr = resolvedCreatives[0];
 
-      // 1. Cria 1 creative compartilhado PRIMEIRO (precisamos do video_id dele p/ VV50%).
+      // prepareFase2Creative: por criativo, cria o adcreative, extrai o video_id, monta a audience
+      // de exclusão VV50% e soma o vídeo ao Balde. COMPLETO chama 1× (criativo compartilhado);
+      // ADAPTADO chama N× (1 por criativo) — cada chamada tem seu PRÓPRIO video_id/exclusão, nada
+      // é compartilhado entre criativos (vvVideoId/exclusionAudienceId são locais). Erro de creative
+      // volta como { creativeError } (o chamador decide abortar ou pular o criativo) em vez de
+      // respond() direto, pra o loop ADAPTADO seguir com os demais criativos.
+      const prepareFase2Creative = async (
+        cr: { spec: Record<string, any>; name: string },
+      ): Promise<{ creativeId?: string; exclusionAudienceId: string | null; creativeError?: any }> => {
+
+      // 1. Cria o creative (precisamos do video_id dele p/ VV50%).
       const creativePayload: Record<string, any> = { name: `Creative - ${cr.name}`, ...cr.spec, access_token };
       if (utm_template) creativePayload.url_tags = utm_template;
       logs.push({ step: "fase2_creative", status: "start", ts: ts() });
@@ -2981,11 +2997,11 @@ Deno.serve(async (req) => {
       const creativeData = await creativeRes.json();
       if (creativeData.error) {
         logs.push({ step: "fase2_creative", status: "error", ts: ts(), detail: `${creativeData.error.message} | code=${creativeData.error.code}` });
-        return respond({ ok: false, step: "creative", campaign_id: campaignId, ...formatMetaError(creativeData.error) });
+        return { creativeError: creativeData.error, exclusionAudienceId: null };
       }
-      const sharedCreativeId = creativeData.id;
-      creativesCreated = 1;
-      logs.push({ step: "fase2_creative", status: "success", ts: ts(), detail: `id=${sharedCreativeId}` });
+      const creativeId = creativeData.id;
+      creativesCreated++;
+      logs.push({ step: "fase2_creative", status: "success", ts: ts(), detail: `id=${creativeId}` });
 
       // 2. Extrai o video_id do creative. Agora IG e Drive trazem o video_id REAL dentro de
       // cr.spec.object_story_spec.video_data.video_id (IG passou a re-upar em buildFase2Creative),
@@ -2995,7 +3011,7 @@ Deno.serve(async (req) => {
       let vvVideoId: string | null = cr.spec?.object_story_spec?.video_data?.video_id || null;
       if (!vvVideoId) {
         try {
-          const vRes = await fetch(`https://graph.facebook.com/v25.0/${sharedCreativeId}?fields=video_id&access_token=${access_token}`);
+          const vRes = await fetch(`https://graph.facebook.com/v25.0/${creativeId}?fields=video_id&access_token=${access_token}`);
           const vData = await vRes.json();
           vvVideoId = vData.video_id || null;
         } catch (e) { logs.push({ step: "fase2_video_id", status: "warning", ts: ts(), detail: `falha lendo video_id: ${(e as Error).message}` }); }
@@ -3133,57 +3149,84 @@ Deno.serve(async (req) => {
         }
       }
 
-      // 3. ADAPTADO: 1 único adset com TODOS os públicos combinados (2-10). COMPLETO: loop
-      // existente (inalterado, byte-idêntico ao original — só movido pro else) — 1 adset/audience.
-      // Captura o 1º erro Meta (objeto) do fluxo FASE 2 pra surfacar error_code/is_transient na
-      // resposta — senão o frontend não detecta rate-limit (#4) e o auto-retry do publish não dispara.
+      return { creativeId, exclusionAudienceId };
+      };
+
+      // ADAPTADO (N criativos): 1 conjunto por criativo, todos apontando pro MESMO público
+      // combinado (2-10). Cada criativo roda prepareFase2Creative → seu próprio creative + VV50%
+      // + Balde. COMPLETO (else): 1 criativo compartilhado + N conjuntos (1 por público) — lógica
+      // original, só movida pro else. firstFase2Error surfaca error_code/is_transient (rate-limit
+      // #4) pra o auto-retry do frontend disparar.
       let firstFase2Error: any = null;
+      const fase2ExclusionAudienceIds: string[] = [];
       if (fase2CombinedAdset) {
         const combinedAudNamesRaw = fase2AudienceIds.map((id, i) => fase2AudienceNames[i] || id).join(" + ");
         // Meta limita nome de adset a 255 chars — trunca a lista de públicos se necessário.
         const combinedAudNames = combinedAudNamesRaw.length > 150 ? `${combinedAudNamesRaw.slice(0, 147)}...` : combinedAudNamesRaw;
-        const combinedName = `[${combinedAudNames}] - ${cr.name}`;
-        const adsetBuild = buildFase2AdsetCombined(combinedName, fase2AudienceIds, exclusionAudienceId);
-        if (adsetBuild.error) {
-          failures.push({ index: 1, name: "combined", step: "adset", reason: adsetBuild.error });
-        } else {
-          const adsetResult = await createAdset(adsetBuild.payload!, "adset_1");
+        for (let ci = 0; ci < resolvedCreatives.length; ci++) {
+          const cr = resolvedCreatives[ci];
+          const idx = ci + 1;
+          // Resolução independente por criativo (creative/VV50%/Balde próprios; nada compartilhado
+          // entre iterações). Erro de criativo NÃO aborta o lote: pula e segue pros demais.
+          const prep = await prepareFase2Creative(cr);
+          if (prep.creativeError) {
+            if (!firstFase2Error) firstFase2Error = prep.creativeError;
+            failures.push({ index: idx, name: cr.name, step: "creative", reason: `${prep.creativeError.message || JSON.stringify(prep.creativeError)} | code=${prep.creativeError.code ?? "-"}` });
+            continue;
+          }
+          if (prep.exclusionAudienceId) fase2ExclusionAudienceIds.push(prep.exclusionAudienceId);
+          const combinedName = `[${combinedAudNames}] - ${cr.name}`;
+          const adsetBuild = buildFase2AdsetCombined(combinedName, fase2AudienceIds, prep.exclusionAudienceId);
+          if (adsetBuild.error) {
+            failures.push({ index: idx, name: cr.name, step: "adset", reason: adsetBuild.error });
+            continue;
+          }
+          const adsetResult = await createAdset(adsetBuild.payload!, `adset_${idx}`);
           if (adsetResult.warning) {
             return respond({ ok: false, step: "idempotency", campaign_id: campaignId, warning: true, error_message: adsetResult.warning });
           }
           if (adsetResult.error) {
             if (!firstFase2Error) firstFase2Error = adsetResult.error;
-            failures.push({ index: 1, name: "combined", step: "adset", reason: adsetResult.error.message || JSON.stringify(adsetResult.error) });
-          } else {
-            const adsetId = adsetResult.id!;
-            adsetIds.push(adsetId);
-            adsetsCreated++;
-
-            const adPayload = {
-              adset_id: adsetId,
-              name: `${cr.name} - 01`,
-              status: "ACTIVE",
-              creative: { creative_id: sharedCreativeId },
-              access_token,
-            };
-            logs.push({ step: "ad_1", status: "start", ts: ts(), detail: `creative=${sharedCreativeId}, adset=${adsetId}` });
-            const adRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/ads`, {
-              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(adPayload),
-            });
-            const adData = await adRes.json();
-            if (adData.error) {
-              const errDetail = `${adData.error.message} | code=${adData.error.code} | subcode=${adData.error.error_subcode}`;
-              logs.push({ step: "ad_1", status: "error", ts: ts(), detail: errDetail });
-              if (!firstFase2Error) firstFase2Error = adData.error;
-              failures.push({ index: 1, name: "combined", step: "ad", reason: errDetail });
-            } else {
-              adIds.push(adData.id);
-              adsCreated++;
-              logs.push({ step: "ad_1", status: "success", ts: ts(), detail: `id=${adData.id}` });
-            }
+            failures.push({ index: idx, name: cr.name, step: "adset", reason: adsetResult.error.message || JSON.stringify(adsetResult.error) });
+            continue;
           }
+          const adsetId = adsetResult.id!;
+          adsetIds.push(adsetId);
+          adsetsCreated++;
+
+          const adPayload = {
+            adset_id: adsetId,
+            name: `${cr.name} - ${String(idx).padStart(2, "0")}`,
+            status: "ACTIVE",
+            creative: { creative_id: prep.creativeId },
+            access_token,
+          };
+          logs.push({ step: `ad_${idx}`, status: "start", ts: ts(), detail: `creative=${prep.creativeId}, adset=${adsetId}` });
+          const adRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/ads`, {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(adPayload),
+          });
+          const adData = await adRes.json();
+          if (adData.error) {
+            const errDetail = `${adData.error.message} | code=${adData.error.code} | subcode=${adData.error.error_subcode}`;
+            logs.push({ step: `ad_${idx}`, status: "error", ts: ts(), detail: errDetail });
+            if (!firstFase2Error) firstFase2Error = adData.error;
+            failures.push({ index: idx, name: cr.name, step: "ad", reason: errDetail });
+            continue;
+          }
+          adIds.push(adData.id);
+          adsCreated++;
+          logs.push({ step: `ad_${idx}`, status: "success", ts: ts(), detail: `id=${adData.id}` });
         }
       } else {
+        // COMPLETO: 1 criativo compartilhado + N conjuntos (1 por público). Lógica original.
+        const cr = resolvedCreatives[0];
+        const prep = await prepareFase2Creative(cr);
+        if (prep.creativeError) {
+          return respond({ ok: false, step: "creative", campaign_id: campaignId, ...formatMetaError(prep.creativeError) });
+        }
+        const sharedCreativeId = prep.creativeId!;
+        const exclusionAudienceId = prep.exclusionAudienceId;
+        if (exclusionAudienceId) fase2ExclusionAudienceIds.push(exclusionAudienceId);
       for (let i = 0; i < fase2AudienceIds.length; i++) {
         const audId = fase2AudienceIds[i];
         const audName = fase2AudienceNames[i] || audId;
@@ -3234,13 +3277,14 @@ Deno.serve(async (req) => {
       }
 
       // Skip o restante do fluxo CBO/ABO
-      logs.push({ step: "summary", status: failures.length === 0 ? "success" : "error", ts: ts(), detail: `preset=FASE 2${fase2CombinedAdset ? " ADAPTADO" : ""}, adsets=${adsetsCreated}, creatives=${creativesCreated}, ads=${adsCreated}, failures=${failures.length}, exclusion_audience=${exclusionAudienceId}` });
+      logs.push({ step: "summary", status: failures.length === 0 ? "success" : "error", ts: ts(), detail: `preset=FASE 2${fase2CombinedAdset ? " ADAPTADO" : ""}, adsets=${adsetsCreated}, creatives=${creativesCreated}, ads=${adsCreated}, failures=${failures.length}, exclusion_audiences=${fase2ExclusionAudienceIds.join(",") || "—"}` });
       return respond({
         ok: failures.length === 0,
         campaign_id: campaignId,
         adsets_created: adsetsCreated,
         ads_created: adsCreated,
-        exclusion_audience_id: exclusionAudienceId,
+        exclusion_audience_id: fase2ExclusionAudienceIds[0] ?? null,
+        exclusion_audience_ids: fase2ExclusionAudienceIds.length > 1 ? fase2ExclusionAudienceIds : undefined,
         failures: failures.length > 0 ? failures : undefined,
         // Surfaca o 1º erro Meta pro frontend detectar rate-limit (#4) e auto-retomar o publish.
         error_code: firstFase2Error?.code ?? undefined,

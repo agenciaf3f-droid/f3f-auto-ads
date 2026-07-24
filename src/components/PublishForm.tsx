@@ -1518,7 +1518,7 @@ export default function PublishForm() {
   // Structure descriptions
   const structureDescription = isFase2
     ? isFase2Adaptado
-      ? `1 Campanha → 1 Conjunto (${fase2Audiences.length || "N"} públicos combinados) → 1 Anúncio (criativo compartilhado)`
+      ? `1 Campanha → ${creatives.length} Conjunto(s), 1 por criativo (cada um: ${fase2Audiences.length || "N"} públicos combinados) → 1 Anúncio/conjunto${distributionStructure === "ABO" && creatives.length > 1 ? ` — gasto ${creatives.length}× o orçamento (1 por conjunto)` : ""}${creatives.length > 5 ? " — lotes grandes podem bater no limite da Meta (#4)" : ""}`
       : creatives.length > 1
         ? `${creatives.length} Campanhas (1 por criativo) → ${fase2Audiences.length || "N"} Conjunto(s) cada — ${fase2BudgetSplitMode === "split" ? `R$${fase2PerCampaignBudget.toFixed(2)}/dia por campanha (orçamento dividido)` : `R$${budget || "0"}/dia por campanha (gasto ${creatives.length}×)`}`
         : `1 Campanha → ${fase2Audiences.length || "N"} Conjunto(s) → 1 Ad/conjunto (criativo compartilhado)`
@@ -1571,13 +1571,10 @@ export default function PublishForm() {
     // num único conjunto; COMPLETO cria 1 conjunto por público), não na quantidade permitida.
     if (fase2Audiences.length < 2) errors.push("FASE 2 requer no mínimo 2 públicos selecionados.");
     if (fase2Audiences.length > 10) errors.push("FASE 2 aceita no máximo 10 públicos.");
-    // ADAPTADO: exatamente 1 criativo (1 conjunto combinado, criativo compartilhado).
-    // COMPLETO: N≥1 criativos — cada criativo vira 1 campanha própria (1 campanha por criativo).
-    if (isFase2Adaptado) {
-      if (creatives.length !== 1) errors.push("FASE 2 exige exatamente 1 criativo (vídeo).");
-    } else if (creatives.length < 1) {
-      errors.push("FASE 2 exige ao menos 1 criativo (vídeo).");
-    }
+    // ADAPTADO: N≥1 criativos — 1 conjunto por criativo, todos com o MESMO público combinado
+    // (backend monta N conjuntos numa única campanha). COMPLETO: N≥1 — cada criativo vira 1
+    // campanha própria (1 campanha por criativo). Ambos exigem ao menos 1 criativo.
+    if (creatives.length < 1) errors.push("FASE 2 exige ao menos 1 criativo (vídeo).");
     // COMPLETO + "dividir orçamento": cada campanha recebe budget/N. Se cair abaixo do mínimo
     // da Meta, bloqueia aqui (senão a Meta rejeita o adset com daily_budget inválido).
     if (!isFase2Adaptado && fase2BudgetSplitMode === "split" && creatives.length > 1) {
@@ -2693,8 +2690,9 @@ export default function PublishForm() {
                 Criativos ({creatives.length})
               </Label>
               <div className="flex flex-wrap items-center gap-2">
-                {!isFase2Adaptado && (
-                  <>
+                {/* ADAPTADO agora também usa múltiplos criativos (1 conjunto por criativo) — bulk/colar
+                    liberados pros dois presets FASE 2. */}
+                <>
                     <div className="flex items-center gap-1">
                       <Label htmlFor="bulk-count" className="text-[10px] text-muted-foreground shrink-0">Quantos?</Label>
                       <Input
@@ -2715,7 +2713,6 @@ export default function PublishForm() {
                       <Copy className="w-3.5 h-3.5" /> Colar
                     </Button>
                   </>
-                )}
                 {creatives.some(c => c.type === "drive") && (
                   <Button variant="outline" size="sm" className="gap-1 text-xs h-8" onClick={() => setCopyModalOpen(true)}>
                     <Pencil className="w-3.5 h-3.5" /> Adicionar copy
