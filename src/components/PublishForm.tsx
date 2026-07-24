@@ -393,7 +393,7 @@ export default function PublishForm() {
   // FASE 2 não tem dedupe lock no backend (é WhatsApp-only), então republicar um criativo
   // já publicado criaria campanha DUPLICADA (gasto dobrado). Este ref evita isso.
   const fase2MultiCampaignRef = useRef<{
-    campaigns: { name: string; key: string; campaignId: string; adsets: number; ads: number }[];
+    campaigns: { name: string; key: string; campaignId: string; adsets: number; ads: number; warnings?: string[] }[];
   } | null>(null);
 
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -2100,8 +2100,14 @@ export default function PublishForm() {
           addLog(`📦 [publish] criativo ${i + 1}/${total} — "${allCreatives[i].name}" (nova campanha)`);
           const ri = await publishWithRetry(() => callFor(i), `${i + 1}/${total}`);
           if (ri?.ok && ri.campaign_id) {
-            done.push({ name: allCreatives[i].name, key: creativeKey(allCreatives[i]), campaignId: ri.campaign_id, adsets: ri.adsets_created ?? 0, ads: ri.ads_created ?? 0 });
-            addLog(`✅ criativo ${i + 1}/${total} ok — campanha ${ri.campaign_id}`);
+            // Captura degradações "sucesso-com-warning" (ex: FASE 2 IG caiu no flat spec e NÃO
+            // populou o VV50%/Balde) pra não sumirem no sucesso: este loop limpa o log e só
+            // re-exibia logs de criativos que FALHARAM. Mesmo filtro do softIssues (warning|error).
+            const warns = ((ri.logs as any[]) || [])
+              .filter((l: any) => l.status === "warning" || l.status === "error")
+              .map((l: any) => `[${l.step}] ${l.detail || l.status}`);
+            done.push({ name: allCreatives[i].name, key: creativeKey(allCreatives[i]), campaignId: ri.campaign_id, adsets: ri.adsets_created ?? 0, ads: ri.ads_created ?? 0, warnings: warns.length ? warns : undefined });
+            addLog(`✅ criativo ${i + 1}/${total} ok — campanha ${ri.campaign_id}${warns.length ? ` (⚠️ ${warns.length} aviso(s) — veja o resumo)` : ""}`);
           } else {
             const errMsg = ri?.error_user_msg || ri?.error_message || ri?.error || "erro desconhecido";
             failNames.push(allCreatives[i].name);
@@ -2118,16 +2124,31 @@ export default function PublishForm() {
         const campaignIds = done.map(d => d.campaignId);
         const totalAdsets = done.reduce((s, d) => s + d.adsets, 0);
         const totalAds = done.reduce((s, d) => s + d.ads, 0);
+        // Re-exibe degradações "sucesso-com-warning" dos criativos publicados. No sucesso TOTAL o
+        // log é limpo (logRef.clear), então sem isso um criativo que publicou mas NÃO populou o
+        // VV50%/Balde (fallback flat do FASE 2 IG) sumiria — exatamente o silêncio que este fix mata.
+        const surfaceDegraded = () => {
+          let n = 0;
+          for (const d of done) {
+            if (!d.warnings?.length) continue;
+            n++;
+            for (const w of d.warnings) addLog(`⚠️ [${d.name}] ${w}`);
+          }
+          return n;
+        };
 
         if (stillPending.length === 0) {
           fase2MultiCampaignRef.current = null;
           setPublishResult({ ok: true, campaign_id: campaignIds[0], campaign_ids: campaignIds, adsets_created: totalAdsets, ads_created: totalAds });
           logRef.current?.clear();
+          const nDeg = surfaceDegraded();
           toast.success(`${total} campanhas publicadas (1 por criativo)!`);
+          if (nDeg > 0) toast.warning(`${nDeg} criativo(s) publicado(s) SEM popular o público VV50%/Balde — veja os ⚠️ no log.`, { duration: 9000 });
           setValidatedPayload(null);
         } else {
           fase2MultiCampaignRef.current = { campaigns: done };
           addLog(`⚠️ Parcial: ${done.length}/${total} campanhas criadas. Falharam: ${failNames.join(", ")}`);
+          surfaceDegraded();
           setPublishResult({ ok: false, step: "partial", campaign_id: campaignIds[0], campaign_ids: campaignIds, adsets_created: totalAdsets, ads_created: totalAds, error_message: `${failNames.length}/${total} criativos falharam`, creative_errors: creativeErrors });
           toast.error(`${failNames.length}/${total} criativos falharam — clique Publicar pra retomar os pendentes.`, { duration: 8000 });
         }
