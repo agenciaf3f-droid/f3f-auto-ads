@@ -29,3 +29,32 @@ export async function cacheDiscovery(kind: string, accountId: string, data: unkn
     console.log(`[discovery-cache] erro ${kind}/${accountId}: ${(e as Error).message}`);
   }
 }
+
+// Leitura best-effort do mesmo cache. Usado por edges que rodam N vezes num mesmo batch e
+// não podem re-consultar a Meta a cada vez (ex.: meta-publish resolve o beneficiário DSA 1×
+// por conta e reusa entre criativos). Lê via SERVICE_ROLE (ignora RLS). Retorna null em
+// miss/erro/stale (idade > maxAgeMs) — nunca lança, o caller cai no lookup normal.
+export async function readDiscovery<T = unknown>(
+  kind: string,
+  accountId: string,
+  maxAgeMs: number,
+): Promise<T | null> {
+  try {
+    const url = Deno.env.get("SUPABASE_URL");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!url || !serviceRoleKey) return null;
+    const client = createClient(url, serviceRoleKey);
+    const { data, error } = await client
+      .from("meta_discovery_cache")
+      .select("data, updated_at")
+      .eq("kind", kind)
+      .eq("account_id", accountId)
+      .maybeSingle();
+    if (error || !data) return null;
+    const ageMs = Date.now() - new Date(data.updated_at as string).getTime();
+    if (ageMs > maxAgeMs) return null;
+    return data.data as T;
+  } catch {
+    return null;
+  }
+}

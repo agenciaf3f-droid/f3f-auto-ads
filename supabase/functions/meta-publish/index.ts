@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { extractDriveFileId, buildDriveApiUrl } from "../_shared/drive.ts";
 import { assertSafeDriveUrl } from "../_shared/url-guard.ts";
+import { cacheDiscovery, readDiscovery } from "../_shared/discovery-cache.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -44,6 +45,14 @@ function formatMetaError(err: any) {
 const TRANSIENT_META_CODES = [1, 2, 4, 17, 32, 341, 613];
 const isTransientMeta = (err: any) =>
   !!err && (err.is_transient === true || TRANSIENT_META_CODES.includes(Number(err?.code)));
+
+// TTL do cache de beneficiário DSA (meta_discovery_cache, kind="dsa_beneficiary"). O
+// beneficiário/pagador verificado é NÍVEL-CONTA e estável (não muda minuto a minuto), então
+// resolvemos 1× por conta e reusamos. Sem isto, a publicação multi-criativo ABO dispara N
+// invocações separadas desta edge (1 por criativo, em paralelo), cada uma fazendo 2 lookups
+// Meta quase idênticos → burst throttlado → a resposta throttled ({error}) era lida como
+// "conta sem beneficiário" → adset sem DSA → erro 3858634 nos últimos criativos da fila.
+const DSA_CACHE_TTL_MS = 10 * 60_000;
 
 function normalizeForHash(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((item) => normalizeForHash(item));
@@ -1771,18 +1780,43 @@ Deno.serve(async (req) => {
     // dois callers concorrentes awaitam a MESMA promise → nenhum segue com beneficiário ainda vazio.
     let dsaPromise: Promise<void> | null = null;
     const ensureDsaResolved = (): Promise<void> => (dsaPromise ??= (async () => {
+      // Cache de conta (TTL curto): publicação multi-criativo ABO dispara N invocações SEPARADAS
+      // desta edge (1 por criativo, em paralelo no frontend), cada uma criando o próprio adset →
+      // cada uma resolvia DSA com até 2 chamadas Meta. 2×N lookups quase idênticos num intervalo
+      // curto → throttle no fim da fila → resposta throttled lida como "sem beneficiário" → 3858634
+      // nos ÚLTIMOS criativos. Resolvendo 1× por conta e reusando via cache, o burst some. (CBO já
+      // não sofria: criativos 2..N reusam o adset via existing_adset_id e nem chamam isto.)
+      const cached = await readDiscovery<{ universal_beneficiary: string | null; universal_payer: string | null; account_dsa_rec: string | null }>("dsa_beneficiary", ad_account_id, DSA_CACHE_TTL_MS);
+      if (cached) {
+        universalBeneficiary = cached.universal_beneficiary;
+        universalPayer = cached.universal_payer;
+        accountDsaRec = cached.account_dsa_rec;
+        dsaBeneficiary = userBenef || accountDsaRec || "";
+        console.log(`[publish] DSA (cache hit): universal_beneficiary="${universalBeneficiary}" universal_payer="${universalPayer}" | fallback_string="${dsaBeneficiary}"`);
+        return;
+      }
+      // Miss → lookup na Meta. lookupErrored distingue "conta sem beneficiário" (data vazio, SEM
+      // erro) de "chamada throttled/errou" (corpo {error}): o try/catch antigo só pegava exceção
+      // lançada; um {error} com HTTP 200 passava como data vazio, silenciosamente.
+      let lookupErrored = false;
       try {
         const aRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/adsets?fields=regional_regulation_identities&limit=50&access_token=${access_token}`);
         const aData = await aRes.json();
-        for (const it of (aData?.data || [])) {
-          const rri = it?.regional_regulation_identities;
-          if (rri?.universal_beneficiary) {
-            universalBeneficiary = String(rri.universal_beneficiary);
-            universalPayer = String(rri.universal_payer || rri.universal_beneficiary);
-            break;
+        if (aData?.error) {
+          lookupErrored = true;
+          console.log(`[publish] regional_regulation_identities Meta error: code=${aData.error.code} subcode=${aData.error.error_subcode ?? "-"} transient=${isTransientMeta(aData.error)} msg=${aData.error.message}`);
+        } else {
+          for (const it of (aData?.data || [])) {
+            const rri = it?.regional_regulation_identities;
+            if (rri?.universal_beneficiary) {
+              universalBeneficiary = String(rri.universal_beneficiary);
+              universalPayer = String(rri.universal_payer || rri.universal_beneficiary);
+              break;
+            }
           }
         }
       } catch (e) {
+        lookupErrored = true;
         console.log(`[publish] regional_regulation_identities lookup failed: ${(e as Error).message}`);
       }
       // dsa_recommendations (fallback string DSA) SÓ quando não há entidade verificada herdável
@@ -1792,16 +1826,41 @@ Deno.serve(async (req) => {
         try {
           const rRes = await fetch(`https://graph.facebook.com/v25.0/${ad_account_id}/dsa_recommendations?access_token=${access_token}`);
           const rData = await rRes.json();
-          const d = rData?.data?.[0];
-          // a API retorna {data:[{beneficiary, payor}]}; versões antigas usam {recommendations:[...]}
-          const benef = d?.beneficiary ?? (Array.isArray(d?.recommendations) ? d.recommendations[0] : null);
-          if (benef && String(benef).trim()) accountDsaRec = String(benef).trim();
+          if (rData?.error) {
+            lookupErrored = true;
+            console.log(`[publish] dsa_recommendations Meta error: code=${rData.error.code} subcode=${rData.error.error_subcode ?? "-"} transient=${isTransientMeta(rData.error)} msg=${rData.error.message}`);
+          } else {
+            const d = rData?.data?.[0];
+            // a API retorna {data:[{beneficiary, payor}]}; versões antigas usam {recommendations:[...]}
+            const benef = d?.beneficiary ?? (Array.isArray(d?.recommendations) ? d.recommendations[0] : null);
+            if (benef && String(benef).trim()) accountDsaRec = String(benef).trim();
+          }
         } catch (e) {
+          lookupErrored = true;
           console.log(`[publish] dsa_recommendations failed: ${(e as Error).message}`);
         }
       }
       dsaBeneficiary = userBenef || accountDsaRec || "";
-      console.log(`[publish] DSA resolvido: universal_beneficiary="${universalBeneficiary}" universal_payer="${universalPayer}" | fallback_string="${dsaBeneficiary}"`);
+      // Só cacheia resultado POSITIVO e DEFINITIVO. Dois casos NÃO cacheiam:
+      //  1) lookupErrored: um throttle-vazio ENVENENARIA as N chamadas paralelas seguintes (todas
+      //     leriam "sem beneficiário") → cascata de 3858634, pior que hoje.
+      //  2) sem beneficiário (data vazio, SEM erro): é JUSTAMENTE o estado que muda — conta
+      //     não-verificada falha 3858634, o gestor verifica no Business Manager e re-publica; um
+      //     negativo cacheado faria a retentativa falhar por até TTL numa conta JÁ verificada.
+      // O await garante o cache quente ANTES de a promise resolver: o frontend await-a o 1º criativo
+      // e SÓ então dispara o pool paralelo 2..N. Cacheamos só o NÍVEL-CONTA (universal_* + fallback
+      // string da conta); hoje o frontend nunca envia userBenef (body.dsa_beneficiary), então um
+      // cache hit recombina o mesmo valor — futuro caller que envie userBenef ainda o aplica acima.
+      const resolvedBeneficiary = !!(universalBeneficiary || accountDsaRec);
+      if (!lookupErrored && resolvedBeneficiary) {
+        await cacheDiscovery("dsa_beneficiary", ad_account_id, {
+          universal_beneficiary: universalBeneficiary,
+          universal_payer: universalPayer,
+          account_dsa_rec: accountDsaRec,
+        });
+      }
+      const cacheState = lookupErrored ? "skip(lookup_error)" : (resolvedBeneficiary ? "written" : "skip(no_beneficiary)");
+      console.log(`[publish] DSA resolvido: universal_beneficiary="${universalBeneficiary}" universal_payer="${universalPayer}" | fallback_string="${dsaBeneficiary}" | cache=${cacheState}`);
     })());
     const applyDsa = (p: Record<string, any>) => {
       if (universalBeneficiary) {
