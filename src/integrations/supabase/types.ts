@@ -12,31 +12,6 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.5"
   }
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          extensions?: Json
-          operationName?: string
-          query?: string
-          variables?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
   public: {
     Tables: {
       app_admins: {
@@ -206,71 +181,6 @@ export type Database = {
           whatsapp_group_id?: string | null
         }
         Relationships: []
-      }
-      dash: {
-        Row: {
-          caption: string | null
-          client_id: string
-          comments_count: number | null
-          created_at: string
-          id: string
-          ig_media_id: string
-          like_count: number | null
-          media_product_type: string | null
-          media_type: string | null
-          permalink: string | null
-          posted_at: string | null
-          student_name: string | null
-          synced_at: string
-          updated_at: string
-          user_id: string
-          views_count: number | null
-        }
-        Insert: {
-          caption?: string | null
-          client_id: string
-          comments_count?: number | null
-          created_at?: string
-          id?: string
-          ig_media_id: string
-          like_count?: number | null
-          media_product_type?: string | null
-          media_type?: string | null
-          permalink?: string | null
-          posted_at?: string | null
-          student_name?: string | null
-          synced_at?: string
-          updated_at?: string
-          user_id: string
-          views_count?: number | null
-        }
-        Update: {
-          caption?: string | null
-          client_id?: string
-          comments_count?: number | null
-          created_at?: string
-          id?: string
-          ig_media_id?: string
-          like_count?: number | null
-          media_product_type?: string | null
-          media_type?: string | null
-          permalink?: string | null
-          posted_at?: string | null
-          student_name?: string | null
-          synced_at?: string
-          updated_at?: string
-          user_id?: string
-          views_count?: number | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "dash_client_id_fkey"
-            columns: ["client_id"]
-            isOneToOne: false
-            referencedRelation: "clients"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       message_templates: {
         Row: {
@@ -589,9 +499,6 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
     Enums: {},
   },
