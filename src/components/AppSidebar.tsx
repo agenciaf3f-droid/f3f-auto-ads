@@ -1,6 +1,6 @@
 import { useEffect, useState, type MouseEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Megaphone, Users, Settings, Gauge, History, ShieldCheck, LayoutDashboard } from "lucide-react";
+import { Megaphone, Users, Settings, Gauge, History, ShieldCheck } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -25,7 +25,6 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Otimizações", to: "/otimizacoes", icon: Gauge },
   { label: "Histórico", to: "/historico", icon: History },
   { label: "Clientes", to: "/clientes", icon: Users },
-  { label: "Dash", to: "/dash", icon: LayoutDashboard },
   { label: "Config", to: "/settings", icon: Settings },
 ];
 
