@@ -12,6 +12,7 @@ const Index = lazy(() => import("./pages/Index"));
 const OtimizacoesPage = lazy(() => import("./pages/OtimizacoesPage"));
 const HistoricoPage = lazy(() => import("./pages/HistoricoPage"));
 const ClientesPage = lazy(() => import("./pages/ClientesPage"));
+const DashPage = lazy(() => import("./pages/DashPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage"));
@@ -35,6 +36,7 @@ const App = () => (
                   <Route path="/otimizacoes" element={<OtimizacoesPage />} />
                   <Route path="/historico" element={<HistoricoPage />} />
                   <Route path="/clientes" element={<ClientesPage />} />
+                  <Route path="/dash" element={<DashPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                   <Route path="/admin" element={<AdminPage />} />
                 </Route>
