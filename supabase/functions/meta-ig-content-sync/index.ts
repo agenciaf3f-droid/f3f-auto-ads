@@ -155,6 +155,46 @@ Deno.serve(async (req) => {
       page++;
     }
 
+    // 1b. Perfil (teste): dado de CONTA, não de post — só possível com o token do app separado
+    // (instagram_manage_insights). Campos básicos (`?fields=...`) + insights de conta
+    // (`/insights?metric=...&period=day`, soma últimos 7 dias) — os últimos são exatamente o que
+    // o app principal NÃO consegue puxar hoje. Falha aqui não aborta o sync de posts (best-effort,
+    // profile fica null se der erro — mesmo espírito de "não derruba o resto" do passo de views).
+    let profile: Record<string, unknown> | null = null;
+    try {
+      const profileFieldsUrl =
+        `https://graph.facebook.com/v25.0/${ig_account_id}?fields=username,name,biography,followers_count,follows_count,media_count,profile_picture_url&access_token=${access_token}`;
+      const profileRes = await fetch(profileFieldsUrl);
+      const profileData = await profileRes.json();
+      if (profileData.error) {
+        console.log("[meta-ig-content-sync] Profile fields error:", profileData.error?.code, profileData.error?.message);
+      } else {
+        profile = { ...profileData };
+      }
+
+      // Métricas de conta exigem instagram_manage_insights — nome/período não confirmados ao vivo
+      // nesta sessão (mesma ressalva do VIEWS_METRIC acima). reach/profile_views são os nomes mais
+      // estáveis historicamente pra período diário de conta profissional.
+      const since = Math.floor(Date.now() / 1000) - 7 * 86400;
+      const until = Math.floor(Date.now() / 1000);
+      const insightsUrl =
+        `https://graph.facebook.com/v25.0/${ig_account_id}/insights?metric=reach,profile_views,accounts_engaged&period=day&since=${since}&until=${until}&access_token=${access_token}`;
+      const acctInsightsRes = await fetch(insightsUrl);
+      const acctInsightsData = await acctInsightsRes.json();
+      if (acctInsightsData.error) {
+        console.log("[meta-ig-content-sync] Account insights error:", acctInsightsData.error?.code, acctInsightsData.error?.message);
+      } else {
+        const sums: Record<string, number> = {};
+        for (const m of (acctInsightsData.data || []) as any[]) {
+          const total = (m.values || []).reduce((s: number, v: any) => s + (typeof v.value === "number" ? v.value : 0), 0);
+          sums[m.name] = total;
+        }
+        profile = { ...(profile || {}), insights_7d: sums };
+      }
+    } catch (e) {
+      console.log("[meta-ig-content-sync] Profile fetch failed:", (e as Error).message);
+    }
+
     // 2. Views (só reels): 1 chamada de insights por reel. Erro TRANSIENTE aqui NÃO aborta o sync —
     // os posts são salvos com views_count null e o retorno sinaliza views_rate_limited + views_warning
     // pro front avisar o gestor (pedido explícito do usuário: não pode ser silencioso).
@@ -206,7 +246,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    return json({ ok: true, synced: rows.length, views_rate_limited: viewsRateLimited, views_warning: viewsWarning });
+    return json({ ok: true, synced: rows.length, views_rate_limited: viewsRateLimited, views_warning: viewsWarning, profile });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[meta-ig-content-sync] Unexpected error:", msg);

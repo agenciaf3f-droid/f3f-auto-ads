@@ -37,11 +37,24 @@ export async function updateStudentName(id: string, studentName: string): Promis
   if (error) throw new Error(error.message);
 }
 
+// Dado de CONTA (não de post) — só disponível via o token do app separado (instagram_manage_insights).
+// Teste: exibido acima da tabela de posts, não persistido (sem tabela própria, some ao recarregar).
+export interface DashProfile {
+  username?: string;
+  name?: string;
+  biography?: string;
+  followers_count?: number;
+  follows_count?: number;
+  media_count?: number;
+  profile_picture_url?: string;
+  insights_7d?: { reach?: number; profile_views?: number; accounts_engaged?: number };
+}
+
 export async function syncDashContent(
   clientId: string,
   accessToken: string,
   igAccountId: string,
-): Promise<{ ok: true; synced: number; views_rate_limited?: boolean; views_warning?: string | null }> {
+): Promise<{ ok: true; synced: number; views_rate_limited?: boolean; views_warning?: string | null; profile?: DashProfile | null }> {
   const { data, error } = await supabase.functions.invoke("meta-ig-content-sync", {
     body: { access_token: accessToken, client_id: clientId, ig_account_id: igAccountId },
   });
