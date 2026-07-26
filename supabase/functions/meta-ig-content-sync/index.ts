@@ -93,13 +93,22 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json();
-    const { access_token, client_id, ig_account_id } = body as {
-      access_token?: string;
+    const { client_id, ig_account_id } = body as {
       client_id?: string;
       ig_account_id?: string;
     };
-    if (!access_token || !client_id || !ig_account_id) {
-      return json({ error: "access_token, client_id e ig_account_id são obrigatórios" }, 400);
+    if (!client_id || !ig_account_id) {
+      return json({ error: "client_id e ig_account_id são obrigatórios" }, 400);
+    }
+
+    // App Meta SEPARADO, só pra este sync — já com BM verificada e instagram_manage_insights
+    // aprovado (o app principal do sistema não tem essa permissão; pedir revisão só pra isso
+    // travaria o resto do publish). ig_account_id ainda é resolvido pelo front via a conexão
+    // principal (precisa ads_management/pages_show_list, que só ela tem) — só a leitura de
+    // mídia/insights do Instagram em si usa este token à parte.
+    const access_token = Deno.env.get("DASH_META_ACCESS_TOKEN");
+    if (!access_token) {
+      return json({ error: "DASH_META_ACCESS_TOKEN não configurado" }, 500);
     }
 
     // 1. Posts/reels paginados (teto MAX_PAGES). views_count NÃO entra em MEDIA_FIELDS de propósito:
