@@ -128,9 +128,39 @@ export default function DashPage() {
             <div><span className="text-muted-foreground">Alcance (7d): </span>{fmtCount(profile.insights_7d?.reach ?? null)}</div>
             <div><span className="text-muted-foreground">Visitas ao perfil (7d): </span>{fmtCount(profile.insights_7d?.profile_views ?? null)}</div>
             <div><span className="text-muted-foreground">Contas engajadas (7d): </span>{fmtCount(profile.insights_7d?.accounts_engaged ?? null)}</div>
+            <div><span className="text-muted-foreground">Cliques no link (7d): </span>{fmtCount(profile.insights_7d?.website_clicks ?? null)}</div>
+            <div><span className="text-muted-foreground">Interações totais (7d): </span>{fmtCount(profile.insights_7d?.total_interactions ?? null)}</div>
           </div>
           {profile.insights_error && (
             <p className="text-xs text-destructive mt-3">⚠️ Insights de conta: {profile.insights_error}</p>
+          )}
+          {profile.demographics && (profile.demographics.age || profile.demographics.gender) && (
+            <div className="mt-3 pt-3 border-t grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {profile.demographics.age && (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Idade dos seguidores</p>
+                  <div className="space-y-0.5">
+                    {Object.entries(profile.demographics.age).sort((a, b) => b[1] - a[1]).map(([k, v]) => (
+                      <div key={k} className="flex justify-between text-xs">
+                        <span className="text-muted-foreground">{k}</span><span>{fmtCount(v)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {profile.demographics.gender && (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Gênero dos seguidores</p>
+                  <div className="space-y-0.5">
+                    {Object.entries(profile.demographics.gender).sort((a, b) => b[1] - a[1]).map(([k, v]) => (
+                      <div key={k} className="flex justify-between text-xs">
+                        <span className="text-muted-foreground">{k}</span><span>{fmtCount(v)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
           {profile.biography && <p className="text-xs text-muted-foreground mt-3 whitespace-pre-wrap">{profile.biography}</p>}
         </div>

@@ -181,8 +181,9 @@ Deno.serve(async (req) => {
       // reconfirmado ao vivo.
       const since = Math.floor(Date.now() / 1000) - 7 * 86400;
       const until = Math.floor(Date.now() / 1000);
+      const ACCOUNT_METRICS = "reach,profile_views,accounts_engaged,website_clicks,total_interactions";
       const insightsUrl =
-        `https://graph.facebook.com/v25.0/${ig_account_id}/insights?metric=reach,profile_views,accounts_engaged&metric_type=total_value&period=day&since=${since}&until=${until}&access_token=${access_token}`;
+        `https://graph.facebook.com/v25.0/${ig_account_id}/insights?metric=${ACCOUNT_METRICS}&metric_type=total_value&period=day&since=${since}&until=${until}&access_token=${access_token}`;
       const acctInsightsRes = await fetch(insightsUrl);
       const acctInsightsData = await acctInsightsRes.json();
       if (acctInsightsData.error) {
@@ -202,6 +203,37 @@ Deno.serve(async (req) => {
         }
         profile = { ...(profile || {}), insights_7d: sums };
       }
+
+      // Demografia de seguidor (idade/gênero) — dado mais "só-dono" de todos, ninguém vê isso nem
+      // no próprio app do Instagram além do dono/admin. Chamada SEPARADA por dimensão: a API não
+      // combina 2 breakdowns numa resposta só. period=lifetime é o exigido pra follower_demographics
+      // (não é métrica diária). Best-effort — cada dimensão falha independente, sem abortar o resto.
+      const demographics: Record<string, Record<string, number>> = {};
+      for (const breakdown of ["age", "gender"] as const) {
+        try {
+          const demoUrl =
+            `https://graph.facebook.com/v25.0/${ig_account_id}/insights?metric=follower_demographics&period=lifetime&metric_type=total_value&breakdown=${breakdown}&access_token=${access_token}`;
+          const demoRes = await fetch(demoUrl);
+          const demoData = await demoRes.json();
+          if (demoData.error) {
+            console.log(`[meta-ig-content-sync] follower_demographics(${breakdown}) error:`, demoData.error?.code, demoData.error?.message);
+            continue;
+          }
+          // Resposta: data[0].total_value.breakdowns[0].results[] = [{dimension_values:["25-34"], value}, ...]
+          const results = demoData.data?.[0]?.total_value?.breakdowns?.[0]?.results as any[] | undefined;
+          if (results?.length) {
+            const bucket: Record<string, number> = {};
+            for (const r of results) {
+              const key = r.dimension_values?.[0];
+              if (key && typeof r.value === "number") bucket[key] = r.value;
+            }
+            demographics[breakdown] = bucket;
+          }
+        } catch (e) {
+          console.log(`[meta-ig-content-sync] follower_demographics(${breakdown}) fetch failed:`, (e as Error).message);
+        }
+      }
+      if (Object.keys(demographics).length > 0) profile = { ...(profile || {}), demographics };
     } catch (e) {
       console.log("[meta-ig-content-sync] Profile fetch failed:", (e as Error).message);
     }

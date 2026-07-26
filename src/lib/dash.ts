@@ -47,8 +47,15 @@ export interface DashProfile {
   follows_count?: number;
   media_count?: number;
   profile_picture_url?: string;
-  insights_7d?: { reach?: number; profile_views?: number; accounts_engaged?: number };
+  insights_7d?: {
+    reach?: number;
+    profile_views?: number;
+    accounts_engaged?: number;
+    website_clicks?: number;
+    total_interactions?: number;
+  };
   insights_error?: string;
+  demographics?: { age?: Record<string, number>; gender?: Record<string, number> };
 }
 
 export async function syncDashContent(
