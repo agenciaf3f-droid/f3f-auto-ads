@@ -173,21 +173,32 @@ Deno.serve(async (req) => {
       }
 
       // Métricas de conta exigem instagram_manage_insights — nome/período não confirmados ao vivo
-      // nesta sessão (mesma ressalva do VIEWS_METRIC acima). reach/profile_views são os nomes mais
-      // estáveis historicamente pra período diário de conta profissional.
+      // nesta sessão (mesma ressalva do VIEWS_METRIC acima). reach/profile_views/accounts_engaged
+      // são os nomes mais estáveis historicamente. metric_type=total_value: mudança Meta ~2025 —
+      // sem isso, period=day + since/until num metric "totalizável" pode dar erro 100 (a API
+      // passou a exigir esse parâmetro explícito pra devolver 1 valor somado em vez de série
+      // temporal). primeira tentativa (sem esse param) veio vazia; ajustado aqui, ainda não
+      // reconfirmado ao vivo.
       const since = Math.floor(Date.now() / 1000) - 7 * 86400;
       const until = Math.floor(Date.now() / 1000);
       const insightsUrl =
-        `https://graph.facebook.com/v25.0/${ig_account_id}/insights?metric=reach,profile_views,accounts_engaged&period=day&since=${since}&until=${until}&access_token=${access_token}`;
+        `https://graph.facebook.com/v25.0/${ig_account_id}/insights?metric=reach,profile_views,accounts_engaged&metric_type=total_value&period=day&since=${since}&until=${until}&access_token=${access_token}`;
       const acctInsightsRes = await fetch(insightsUrl);
       const acctInsightsData = await acctInsightsRes.json();
       if (acctInsightsData.error) {
+        // Loga E devolve no payload — sem acesso a log de servidor nesta sessão, "—" sem
+        // explicação já se mostrou insuficiente pra diagnosticar (aconteceu no 1º teste real).
         console.log("[meta-ig-content-sync] Account insights error:", acctInsightsData.error?.code, acctInsightsData.error?.message);
+        profile = { ...(profile || {}), insights_error: `${acctInsightsData.error?.code ?? "-"}: ${acctInsightsData.error?.message ?? "erro desconhecido"}` };
       } else {
         const sums: Record<string, number> = {};
         for (const m of (acctInsightsData.data || []) as any[]) {
-          const total = (m.values || []).reduce((s: number, v: any) => s + (typeof v.value === "number" ? v.value : 0), 0);
-          sums[m.name] = total;
+          // total_value: {name, period, total_value:{value}}. Sem esse param (série temporal
+          // antiga): {name, period, values:[{value,end_time}, ...]} — soma os dois formatos.
+          const val = typeof m.total_value?.value === "number"
+            ? m.total_value.value
+            : (m.values || []).reduce((s: number, v: any) => s + (typeof v.value === "number" ? v.value : 0), 0);
+          sums[m.name] = val;
         }
         profile = { ...(profile || {}), insights_7d: sums };
       }

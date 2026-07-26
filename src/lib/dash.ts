@@ -48,6 +48,7 @@ export interface DashProfile {
   media_count?: number;
   profile_picture_url?: string;
   insights_7d?: { reach?: number; profile_views?: number; accounts_engaged?: number };
+  insights_error?: string;
 }
 
 export async function syncDashContent(

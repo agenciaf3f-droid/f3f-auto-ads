@@ -129,6 +129,9 @@ export default function DashPage() {
             <div><span className="text-muted-foreground">Visitas ao perfil (7d): </span>{fmtCount(profile.insights_7d?.profile_views ?? null)}</div>
             <div><span className="text-muted-foreground">Contas engajadas (7d): </span>{fmtCount(profile.insights_7d?.accounts_engaged ?? null)}</div>
           </div>
+          {profile.insights_error && (
+            <p className="text-xs text-destructive mt-3">⚠️ Insights de conta: {profile.insights_error}</p>
+          )}
           {profile.biography && <p className="text-xs text-muted-foreground mt-3 whitespace-pre-wrap">{profile.biography}</p>}
         </div>
       )}
