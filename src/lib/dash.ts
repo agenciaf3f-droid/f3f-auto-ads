@@ -23,11 +23,7 @@ export interface DashItem {
 }
 
 export async function listDashItems(clientId: string): Promise<DashItem[]> {
-  // TODO(dash): remover "as any" quando src/integrations/supabase/types.ts for regenerado com a
-  // tabela `dash` (depende da migration do backend já aplicada em prod). Cast no client (não só
-  // no nome da tabela) porque o postgrest-js ainda resolve um SelectQueryError de tipo mesmo com
-  // ("dash" as any) — só colapsa pra `any` de verdade castando o `supabase` inteiro.
-  const { data, error } = await (supabase as any) // eslint-disable-line @typescript-eslint/no-explicit-any
+  const { data, error } = await supabase
     .from("dash")
     .select("*")
     .eq("client_id", clientId)
@@ -37,11 +33,7 @@ export async function listDashItems(clientId: string): Promise<DashItem[]> {
 }
 
 export async function updateStudentName(id: string, studentName: string): Promise<void> {
-  // TODO(dash): remover "as any" quando os types regenerarem (mesmo motivo de listDashItems acima).
-  const { error } = await (supabase as any) // eslint-disable-line @typescript-eslint/no-explicit-any
-    .from("dash")
-    .update({ student_name: studentName || null })
-    .eq("id", id);
+  const { error } = await supabase.from("dash").update({ student_name: studentName || null }).eq("id", id);
   if (error) throw new Error(error.message);
 }
 

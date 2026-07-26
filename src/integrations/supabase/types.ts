@@ -91,7 +91,7 @@ export type Database = {
       }
       client_kpi_rules: {
         Row: {
-          campaign_name_filter: string | null
+          campaign_name_filter: string
           client_ad_account_id: string
           comparator: string
           created_at: string
@@ -106,7 +106,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
-          campaign_name_filter?: string | null
+          campaign_name_filter?: string
           client_ad_account_id: string
           comparator: string
           created_at?: string
@@ -121,7 +121,7 @@ export type Database = {
           user_id: string
         }
         Update: {
-          campaign_name_filter?: string | null
+          campaign_name_filter?: string
           client_ad_account_id?: string
           comparator?: string
           created_at?: string
@@ -206,6 +206,71 @@ export type Database = {
           whatsapp_group_id?: string | null
         }
         Relationships: []
+      }
+      dash: {
+        Row: {
+          caption: string | null
+          client_id: string
+          comments_count: number | null
+          created_at: string
+          id: string
+          ig_media_id: string
+          like_count: number | null
+          media_product_type: string | null
+          media_type: string | null
+          permalink: string | null
+          posted_at: string | null
+          student_name: string | null
+          synced_at: string
+          updated_at: string
+          user_id: string
+          views_count: number | null
+        }
+        Insert: {
+          caption?: string | null
+          client_id: string
+          comments_count?: number | null
+          created_at?: string
+          id?: string
+          ig_media_id: string
+          like_count?: number | null
+          media_product_type?: string | null
+          media_type?: string | null
+          permalink?: string | null
+          posted_at?: string | null
+          student_name?: string | null
+          synced_at?: string
+          updated_at?: string
+          user_id: string
+          views_count?: number | null
+        }
+        Update: {
+          caption?: string | null
+          client_id?: string
+          comments_count?: number | null
+          created_at?: string
+          id?: string
+          ig_media_id?: string
+          like_count?: number | null
+          media_product_type?: string | null
+          media_type?: string | null
+          permalink?: string | null
+          posted_at?: string | null
+          student_name?: string | null
+          synced_at?: string
+          updated_at?: string
+          user_id?: string
+          views_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dash_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       message_templates: {
         Row: {
@@ -366,6 +431,27 @@ export type Database = {
           response_json?: Json | null
           status?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      whatsapp_groups: {
+        Row: {
+          group_id: string
+          name: string
+          source: string
+          synced_at: string
+        }
+        Insert: {
+          group_id: string
+          name: string
+          source?: string
+          synced_at?: string
+        }
+        Update: {
+          group_id?: string
+          name?: string
+          source?: string
+          synced_at?: string
         }
         Relationships: []
       }
