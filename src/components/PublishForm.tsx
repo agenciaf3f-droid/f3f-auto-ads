@@ -723,6 +723,11 @@ export default function PublishForm() {
     setAudiences([]);
     setSelectedAudience("");
     setAudienceRows([{ id: nextAudienceRowId(), audienceId: "" }]);
+    // Reset campanha existente — sem isso a campanha selecionada fica da conta anterior; publish
+    // usaria /{campaign_id}/adsets, que a Meta resolve pela conta DONA do campaign_id, não pela
+    // selecionada na tela → risco real de publicar na conta errada ao trocar de conta.
+    setCampaigns([]);
+    setSelectedCampaign("");
     // Reset validation/publish state
     setValidationResult(null);
     setPublishResult(null);
@@ -881,6 +886,12 @@ export default function PublishForm() {
     const presetNeedsWhatsapp = PRESETS.find(p => p.id === preset)?.requires_whatsapp ?? false;
     if (resolvedPageId && presetNeedsWhatsapp) {
       tasks.push(loadFase3Resources(resolvedPageId));
+    }
+
+    // Campanha existente já era o modo ativo antes da troca de conta — recarrega a lista pra
+    // conta nova (senão fica vazia até o usuário alternar o toggle manualmente).
+    if (campaignStructure === "existing") {
+      tasks.push(loadCampaigns());
     }
 
     setLoadingPixels(true);
