@@ -723,11 +723,14 @@ export default function PublishForm() {
     setAudiences([]);
     setSelectedAudience("");
     setAudienceRows([{ id: nextAudienceRowId(), audienceId: "" }]);
-    // Reset campanha existente — sem isso a campanha selecionada fica da conta anterior; publish
-    // usaria /{campaign_id}/adsets, que a Meta resolve pela conta DONA do campaign_id, não pela
-    // selecionada na tela → risco real de publicar na conta errada ao trocar de conta.
+    // Reset campanha existente — sem isso o campaign_id fica da conta anterior. O publish
+    // manda POST /{ad_account_id}/adsets (ad_account_id = selectedAccount, sempre atual) com
+    // esse campaign_id no corpo — meta-publish não valida que a campanha pertence à conta;
+    // sem este reset, a tela podia mandar um par inconsistente (conta nova + campanha antiga).
     setCampaigns([]);
     setSelectedCampaign("");
+    // Mesmo motivo — públicos de FASE 2 (VV50%/Balde) já escolhidos são IDs da conta anterior.
+    setFase2Audiences([]);
     // Reset validation/publish state
     setValidationResult(null);
     setPublishResult(null);
