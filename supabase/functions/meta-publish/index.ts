@@ -2115,10 +2115,20 @@ Deno.serve(async (req) => {
     const buildFase1Adset = (name: string): Record<string, any> => {
       // FASE 1 adset:
       // - advantage_audience ESPELHA o público salvo (ver buildFase1Targeting abaixo)
-      // - promoted_object SÓ com page_id (formato historicamente funcional, conforme
-      //   commit e2da2d5). Adicionar instagram_profile_id causa #1346001 ao linkar o ad
-      //   quando user conectado não é admin direto da Page (cenário típico de agência via BM).
+      // - promoted_object = { page_id, instagram_actor_id }. O instagram_actor_id (ID da
+      //   conta IG, = igActorId) foi o campo que faltava: diagnóstico contra 3 adsets reais
+      //   da MESMA campanha (Graph API v25.0) mostrou que o adset feito À MÃO no Gerenciador
+      //   (ACTIVE, traz seguidor) tem instagram_actor_id no promoted_object; os feitos pelo
+      //   sistema NÃO tinham → erro #2016153 "not eligible for Profile Visit". A Meta ACEITA
+      //   esse campo neste preset (o gabarito manual está ACTIVE). Guardado por igActorId pra
+      //   não mandar undefined; em FASE 1 ele é sempre válido (validado no handler antes daqui).
+      // - NÃO confundir com instagram_profile_id: esse continua NÃO sendo enviado — causa
+      //   #1346001 ao linkar o ad quando o user conectado não é admin direto da Page (cenário
+      //   típico de agência via BM). São campos DIFERENTES (actor_id = conta IG; profile_id ≠).
+      // - smart_pse_enabled:false aparece no read-back do gabarito mas é default injetado pela
+      //   Meta no GET; o código nunca o envia e o read-back segue casando com o gabarito.
       const promotedObject: Record<string, any> = { page_id: pageId };
+      if (igActorId) promotedObject.instagram_actor_id = igActorId;
       const p: Record<string, any> = {
         name,
         campaign_id: campaignId,
