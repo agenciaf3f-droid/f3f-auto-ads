@@ -458,8 +458,8 @@ function buildTargeting(audienceType: string, audienceIds: string[], targetingSp
   // age_range só é válido com targeting_automation ativado (Advantage+ Audience).
   // Este é o default seguro: os presets que forçam advantage_audience=0 não podem mandar
   // age_range (Meta erro 100/1487079) — age_min/age_max cobrem a idade.
-  // Exceção: FASE 1 espelha o público e, quando ele traz advantage_audience=1, reintroduz o
-  // age_range a partir do targeting_spec cru (ver buildFase1Targeting).
+  // Exceção: FASE 1 força advantage_audience=1 por padrão e reintroduz o age_range como
+  // sugestão (do público salvo, ou derivado da idade escolhida) — ver buildFase1Targeting.
   delete base.age_range;
 
   if (locationTargeting?.included && locationTargeting.included.length > 0) {
@@ -2117,7 +2117,7 @@ Deno.serve(async (req) => {
     // === FASE 1 AdSet builder ===
     const buildFase1Adset = (name: string): Record<string, any> => {
       // FASE 1 adset:
-      // - advantage_audience ESPELHA o público salvo (ver buildFase1Targeting abaixo)
+      // - advantage_audience FIXO em 1 por padrão (ver buildFase1Targeting abaixo)
       // - promoted_object = { page_id, instagram_actor_id }. O instagram_actor_id (ID da
       //   conta IG, = igActorId) foi o campo que faltava: diagnóstico contra 3 adsets reais
       //   da MESMA campanha (Graph API v25.0) mostrou que o adset feito À MÃO no Gerenciador
