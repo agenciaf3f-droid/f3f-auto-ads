@@ -556,7 +556,11 @@ async function resolveInstagramMediaId(
   ): Promise<{ mediaId?: string; permalink?: string; pageId?: string; igActorId?: string; mediaType?: string; error?: string }> => {
     let url: string | null = `https://graph.facebook.com/v25.0/${igActorId}/media?fields=id,shortcode,permalink,media_type&limit=100&access_token=${accessToken}`;
     let scanned = 0;
-    while (url && scanned < 500) {
+    // Teto de varredura: 3000 posts (30 páginas de 100), do mais novo pro mais velho, procurando
+    // o shortcode. Era 500 — post antigo (ex: jul/2025) em conta ativa ficava além do teto e não
+    // publicava. O loop PARA assim que acha o post, então subir o teto só custa chamadas extras
+    // quando o alvo é realmente antigo — publicações de post recente não ficam mais lentas.
+    while (url && scanned < 3000) {
       const res = await fetch(url);
       const data = await res.json();
       if (data.error) {
