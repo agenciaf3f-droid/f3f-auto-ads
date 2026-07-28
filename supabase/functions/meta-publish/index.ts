@@ -2055,19 +2055,16 @@ Deno.serve(async (req) => {
     //  ADSET BUILDERS — completely isolated per preset
     // ══════════════════════════════════════════════════════════════════
 
-    // === FASE 1 targeting — ESPELHA o público salvo ===
+    // === FASE 1 targeting — advantage_audience=1 POR PADRÃO ===
     //
-    // Regra (2026-07-10): o adset FASE 1 reproduz o público selecionado. Se o público tem
-    // Advantage+ Audience LIGADO, o adset sai ligado; desligado/ausente → desligado (que é o
-    // comportamento anterior, preservado byte a byte).
+    // Regra (2026-07-28, decisão do usuário): o adset FASE 1 SEMPRE publica com Advantage+
+    // Audience LIGADO (adv=1), fixo — igual ao gabarito manual que entrega bem. Não é mais
+    // condicional ao público salvo: o espelhamento #77 (2026-07-10) saía adv=0 nos publishes
+    // do usuário (público salvo com adv=0) e não batia com a campanha feita à mão.
     //
-    // Evidência (conta act_778855945247317, público salvo "Fase 1" = 120238739454470495, que
-    // tem advantage_audience:1 + age_range [25,55] + age_min/max 25/65 + flexible_spec):
-    //   • adset do GERENCIADOR (120248252224090495) → advantage_audience:1, age_range [25,55],
-    //     age_min/max 18/65, flexible_spec MANTIDO. Entrega ótima.
-    //   • adset do APP (120248172461590495) → advantage_audience:0, sem age_range, 25/65
-    //     rígido. Entrega péssima.
-    // O app sobrescrevia o público. Aqui paramos de sobrescrever.
+    // Evidência (conta act_778855945247317): o adset do GERENCIADOR (120248252224090495) roda
+    // advantage_audience:1, age_range [25,55], age_min/max 18/65, flexible_spec MANTIDO —
+    // entrega ótima. O do APP com adv=0, sem age_range, 25/65 rígido — entrega péssima.
     //
     // Com adv=1, a idade muda de CANAL: `age_range` é a SUGESTÃO (a Meta pode expandir além
     // dela) e `age_min/age_max` viram o CONTROLE rígido. Por isso normalizamos o controle pra
@@ -2076,38 +2073,44 @@ Deno.serve(async (req) => {
     //
     // NÃO reconstruímos o targeting por whitelist como o L.T faz (~2045): o gabarito do
     // Gerenciador MANTÉM flexible_spec/genders com adv=1. Dropar interesses seria regressão.
+    // NÃO enviamos individual_setting{age,gender}: a Marketing API o descarta no create
+    // (artefato da UI, 7 create-tests) e ele não ajuda no 1870188 — o controle 18/65 é o que
+    // evita. Ver memória advantage_age_suggestion.
     const buildFase1Targeting = (): Record<string, any> => {
-      // O espelhamento só tem matéria-prima quando buildTargeting() usou o targeting_spec do
-      // público salvo (mesma condição de ~441): saved + público único. Nos demais casos o
-      // targeting é {custom_audiences, geo_locations} e não carrega targeting_automation → 0.
+      // adv=1 é fixo. A FONTE da idade-sugestão é o público salvo quando ele existe (mesma
+      // condição de ~450: saved + público único), SENÃO o próprio `targeting` (a idade que o
+      // usuário escolheu). savedSpec pode ser null (custom / multi-público) — por isso tudo
+      // abaixo é null-safe via `ageSrc`: nunca referencia savedSpec.x direto, nunca emite NaN.
       const savedSpec = (audience_type === "saved" && targeting_spec && audienceIdsArr.length <= 1)
         ? targeting_spec
         : null;
-      const adv = savedSpec?.targeting_automation?.advantage_audience === 1 ? 1 : 0;
 
-      const t: Record<string, any> = { ...targeting, targeting_automation: { advantage_audience: adv } };
-      if (adv === 0) return t; // caminho legado, intocado
+      const t: Record<string, any> = { ...targeting, targeting_automation: { advantage_audience: 1 } };
 
-      // buildTargeting() dropa age_range (~452) porque o resto dos presets força adv=0.
-      // Com adv=1 ele é o canal da idade-sugestão → recuperamos do spec, ou derivamos de
-      // age_min/age_max quando o público segmentou idade sem age_range.
-      // Só aceita age_range do spec se AMBOS os elementos forem numéricos — [null, 55] viraria
+      // buildTargeting() dropa age_range (~463) porque o resto dos presets força adv=0. Com
+      // adv=1 ele é o canal da idade-sugestão → recuperamos da fonte (age_range do público
+      // salvo), ou derivamos de age_min/age_max quando a fonte segmentou idade sem age_range.
+      const ageSrc: Record<string, any> = savedSpec ?? targeting;
+      // Só aceita age_range se AMBOS os elementos forem numéricos — [null, 55] viraria
       // [NaN, 55] e, array truthy, venceria o fallback validado. NaN no payload = lixo pra Meta.
-      const specRange = Array.isArray(savedSpec.age_range) && savedSpec.age_range.length === 2
-        ? savedSpec.age_range.map(Number)
+      const rawRange = Array.isArray(ageSrc.age_range) && ageSrc.age_range.length === 2
+        ? ageSrc.age_range.map(Number)
         : null;
-      const range = specRange && specRange.every((n: number) => Number.isFinite(n)) ? specRange : null;
-      const specMin = Number(savedSpec.age_min);
-      const specMax = Number(savedSpec.age_max);
-      const derived = (Number.isFinite(specMin) && specMin > 18) || (Number.isFinite(specMax) && specMax < 65)
-        ? [Number.isFinite(specMin) ? specMin : 18, Number.isFinite(specMax) ? specMax : 65]
+      const range = rawRange && rawRange.every((n: number) => Number.isFinite(n)) ? rawRange : null;
+      // Deriva a sugestão de age_min/age_max SÓ se a fonte estreitou a faixa (min>18 ou max<65).
+      // min<=18 && max>=65 (faixa cheia) → sem sugestão → omite age_range. undefined → NaN →
+      // não-finito → ignorado (fonte custom/multi não tem idade; não quebra, não vira NaN).
+      const srcMin = Number(ageSrc.age_min);
+      const srcMax = Number(ageSrc.age_max);
+      const derived = (Number.isFinite(srcMin) && srcMin > 18) || (Number.isFinite(srcMax) && srcMax < 65)
+        ? [Number.isFinite(srcMin) ? srcMin : 18, Number.isFinite(srcMax) ? srcMax : 65]
         : null;
       const ageRange = range ?? derived;
       if (ageRange) t.age_range = ageRange;
       t.age_min = 18;
       t.age_max = 65;
 
-      console.log(`[FASE1-adset] advantage_audience=${adv} (espelhado do público), age_range=${JSON.stringify(t.age_range ?? null)}, age_min/max=${t.age_min}/${t.age_max}`);
+      console.log(`[FASE1-adset] advantage_audience=1 (padrão), age_range=${JSON.stringify(t.age_range ?? null)}, age_min/max=${t.age_min}/${t.age_max}`);
       return t;
     };
 
@@ -2168,9 +2171,9 @@ Deno.serve(async (req) => {
       else p.start_time = new Date().toISOString();
       if (schedule?.end_time) p.end_time = schedule.end_time;
 
-      // advantage_audience NÃO é mais fixo — espelha o público (ver buildFase1Targeting).
+      // advantage_audience é FIXO em 1 por padrão (ver buildFase1Targeting).
       console.log(`[FASE1-adset] ── FIXED: destination=INSTAGRAM_PROFILE, optimization=PROFILE_VISIT`);
-      console.log(`[FASE1-adset] ── MIRRORED: advantage_audience=${p.targeting?.targeting_automation?.advantage_audience}`);
+      console.log(`[FASE1-adset] ── FIXED: advantage_audience=${p.targeting?.targeting_automation?.advantage_audience} (padrão)`);
       console.log(`[FASE1-adset] ── VARIABLE: name="${name}", page=${pageId}, budget=${p.daily_budget || "CBO"}`);
       return p;
     };
