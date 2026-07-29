@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { syncPasswordToCentral } from "@/lib/f3f-central";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,6 +34,8 @@ export default function FirstLoginPassword() {
         data: { must_change_password: false },
       });
       if (error) throw error;
+      // Propaga pro login central F3F (senha única entre os sistemas). Best-effort.
+      await syncPasswordToCentral(password);
       // Rede de segurança: força a re-hidratação do AuthContext em vez de depender só do evento
       // reativo USER_UPDATED. refreshSession traz o user já sem a flag → ProtectedRoute libera o app.
       const { error: refreshError } = await supabase.auth.refreshSession();

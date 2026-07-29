@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { isLoginActive } from "@/lib/f3f-central";
 import type { User, Session } from "@supabase/supabase-js";
 
 interface AuthContextType {
@@ -34,6 +35,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
+      // Login central F3F: desativado lá = fora daqui também. Uma checagem por
+      // boot de sessão (fail-open: indisponibilidade do central não derruba).
+      if (session?.user) {
+        isLoginActive().then((active) => {
+          if (!active) {
+            sessionStorage.removeItem("meta_status_cache");
+            void supabase.auth.signOut();
+          }
+        });
+      }
     });
 
     return () => subscription.unsubscribe();

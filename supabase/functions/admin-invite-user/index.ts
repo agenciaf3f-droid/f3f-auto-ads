@@ -1,10 +1,14 @@
 // Edge function: admin convida um novo gestor.
-// Cria o user no Supabase Auth (com senha provisória) e envia email com credenciais.
-// Acesso restrito: caller precisa estar em public.app_admins.
+// Desde o login central F3F (2026-07): NÃO cria mais a conta direto aqui.
+// Delega pra edge f3f-auth-provision do Supabase central (Agenciaf3f), que:
+//   1. cria a pessoa em auth.users do central (senha única F3F),
+//   2. registra em f3f_logins (system='console-ads'),
+//   3. cria a conta ESPELHO neste projeto (mesma senha; RLS/FKs locais intactas),
+//   4. envia o email de credenciais via Resend.
+// Acesso restrito: caller precisa estar em public.app_admins (gate local).
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { sendInviteEmail } from "../_shared/email.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -17,13 +21,6 @@ function json(body: unknown, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
-}
-
-function generateTempPassword(): string {
-  // 12 chars hex — suficientemente aleatório, fácil de copiar do email.
-  const bytes = new Uint8Array(6);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 Deno.serve(async (req) => {
@@ -75,38 +72,46 @@ Deno.serve(async (req) => {
       return json({ error: "Nome obrigatório" }, 400);
     }
 
-    // 4. Criar user.
-    const tempPassword = generateTempPassword();
-    const { data: created, error: createErr } = await adminClient.auth.admin.createUser({
-      email,
-      password: tempPassword,
-      email_confirm: true,
-      user_metadata: { name, invited_by: user.id, must_change_password: true },
+    // 4. Delegar pro central (service-to-service: Bearer = service_role do central).
+    const centralUrl = Deno.env.get("F3F_CENTRAL_URL");
+    const centralKey = Deno.env.get("F3F_CENTRAL_SERVICE_ROLE_KEY");
+    if (!centralUrl || !centralKey) {
+      return json({ error: "Login central não configurado (F3F_CENTRAL_URL/KEY)" }, 500);
+    }
+
+    // Pré-checagem local: espelho já existe? (mantém o 409 claro de antes)
+    const { data: existing } = await adminClient.auth.admin.listUsers({ page: 1, perPage: 200 });
+    if (existing?.users.some((u) => (u.email ?? "").toLowerCase() === email)) {
+      return json({ error: "Já existe um usuário com este email" }, 409);
+    }
+
+    const res = await fetch(`${centralUrl}/functions/v1/f3f-auth-provision`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${centralKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        email,
+        name,
+        systems: ["console-ads"],
+        invited_by: `console-ads:${user.id}`,
+      }),
     });
-
-    if (createErr) {
-      console.log("[admin-invite-user] createUser error:", createErr.message);
-      const lower = createErr.message.toLowerCase();
-      if (lower.includes("already") || lower.includes("registered")) {
-        return json({ error: "Já existe um usuário com este email" }, 409);
-      }
-      return json({ error: createErr.message }, 500);
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok || result.error) {
+      console.error("[admin-invite-user] provision central falhou:", result.error ?? res.status);
+      return json({ error: result.error ?? `Central retornou HTTP ${res.status}` }, 502);
+    }
+    if (result.warning) {
+      // Conta criada mas email falhou — repassa como erro acionável (reenviar o
+      // convite reaproveita a conta central e reenvia credenciais).
+      console.error("[admin-invite-user] warning do central:", result.warning);
+      return json({ error: result.warning }, 502);
     }
 
-    if (!created.user) {
-      return json({ error: "Falha ao criar usuário" }, 500);
-    }
-
-    // 5. Enviar email de convite. Se falhar, rollback do user.
-    const sent = await sendInviteEmail({ toEmail: email, toName: name, tempPassword });
-    if (!sent.ok) {
-      console.error("[admin-invite-user] Email falhou, fazendo rollback do user:", created.user.id);
-      await adminClient.auth.admin.deleteUser(created.user.id);
-      return json({ error: `Email falhou: ${sent.reason}` }, 502);
-    }
-
-    console.log("[admin-invite-user] Convite enviado:", email, "user_id:", created.user.id);
-    return json({ ok: true, user_id: created.user.id });
+    console.log("[admin-invite-user] Convite via central:", email, "espelho:", result.mirror_console_ads_user_id);
+    return json({ ok: true, user_id: result.mirror_console_ads_user_id ?? result.auth_user_id });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[admin-invite-user] Unexpected error:", msg);

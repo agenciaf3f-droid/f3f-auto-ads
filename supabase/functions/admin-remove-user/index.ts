@@ -70,11 +70,35 @@ Deno.serve(async (req) => {
       return json({ error: "Você não pode remover a própria conta" }, 400);
     }
 
-    // 5. Apagar do Auth. app_admins + tabelas com FK ON DELETE CASCADE somem junto.
+    // 5. Guardar o email ANTES de apagar (necessário pra desativar no central).
+    const { data: target } = await adminClient.auth.admin.getUserById(userId);
+    const targetEmail = target?.user?.email?.toLowerCase() ?? null;
+
+    // 6. Apagar do Auth. app_admins + tabelas com FK ON DELETE CASCADE somem junto.
     const { error: delErr } = await adminClient.auth.admin.deleteUser(userId);
     if (delErr) {
       console.error("[admin-remove-user] deleteUser error:", delErr.message);
       return json({ error: delErr.message }, 500);
+    }
+
+    // 7. Desativar o acesso 'console-ads' no login central F3F (f3f_logins).
+    // Best-effort: falha aqui não desfaz a remoção local (o acesso local já morreu).
+    const centralUrl = Deno.env.get("F3F_CENTRAL_URL");
+    const centralKey = Deno.env.get("F3F_CENTRAL_SERVICE_ROLE_KEY");
+    if (targetEmail && centralUrl && centralKey) {
+      try {
+        const res = await fetch(`${centralUrl}/functions/v1/f3f-auth-deactivate`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${centralKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ email: targetEmail, systems: ["console-ads"] }),
+        });
+        if (!res.ok) console.error("[admin-remove-user] deactivate central HTTP", res.status);
+      } catch (err) {
+        console.error("[admin-remove-user] deactivate central falhou:", err);
+      }
     }
 
     console.log("[admin-remove-user] Gestor removido:", userId, "por:", user.id);
