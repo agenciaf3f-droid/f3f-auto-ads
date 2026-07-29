@@ -43,6 +43,7 @@ import LocationSelector, { type LocationItem } from "@/components/LocationSelect
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { supabase } from "@/integrations/supabase/client";
 import { usePublishing } from "@/contexts/PublishingContext";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface AdAccount { id: string; name: string }
 interface Audience { id: string; name: string; type: "custom" | "saved"; targeting_spec?: any }
@@ -111,6 +112,9 @@ function applyCreativeValidation(c: CreativeItem, r: any): CreativeItem {
 function resolveCreativeCaption(c: CreativeItem, captionAll: string): string | undefined {
   return c.caption?.trim() ? c.caption.trim() : (captionAll.trim() || undefined);
 }
+
+// FASE 1 em acesso restrito — só este email vê/seleciona o preset.
+const FASE1_ALLOWED_EMAIL = "rdlecal342@gmail.com";
 
 const PRESETS = [
   {
@@ -427,6 +431,20 @@ export default function PublishForm() {
   const [loading, setLoading] = useState(false);
   // Sinal global de publicação em andamento (guard de navegação + beforeunload no AppLayout).
   const { setPublishing } = usePublishing();
+  // FASE 1 em acesso restrito — só FASE1_ALLOWED_EMAIL vê/seleciona o preset.
+  const { user, loading: authLoading } = useAuth();
+  const canUseFase1 = (user?.email ?? "").trim().toLowerCase() === FASE1_ALLOWED_EMAIL;
+  const visiblePresets = useMemo(
+    () => (canUseFase1 ? PRESETS : PRESETS.filter((p) => p.id !== "fase1-trafego")),
+    [canUseFase1]
+  );
+  // Estado inicia em "fase1-trafego" (default do preset) — se o user resolvido não tem
+  // acesso, tira ele desse preset proibido assim que soubermos quem ele é.
+  useEffect(() => {
+    if (!authLoading && !canUseFase1 && preset === "fase1-trafego") {
+      setPreset("fase2-publico-completo");
+    }
+  }, [authLoading, canUseFase1, preset]);
   const [loadingAudiences, setLoadingAudiences] = useState(false);
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [validatedPayload, setValidatedPayload] = useState<Record<string, unknown> | null>(null);
@@ -2526,7 +2544,7 @@ export default function PublishForm() {
                 <SelectValue placeholder="Selecione o preset" />
               </SelectTrigger>
               <SelectContent>
-                {PRESETS.map((p) => (
+                {visiblePresets.map((p) => (
                   <SelectItem key={p.id} value={p.id}>
                     {p.label}{p.not_implemented ? " (em breve)" : ""}
                   </SelectItem>
