@@ -86,6 +86,11 @@ Deno.serve(async (req) => {
       if (err) { notes.push(err); if (looksScope(err)) scopeIssue = true; }
     };
 
+    // Mensagem acionável: distingue "vinculada na BM" de "conectada à Página".
+    // Na prática o que falta é conectar o número à Página (edge whatsapp_business_account
+    // ausente = #100). Vincular a WABA como ativo na BM NÃO cria esse edge.
+    const PAGE_CONNECT_HINT = `A Página vinculada${page_id ? ` (id ${page_id})` : ""} não tem número de WhatsApp CONECTADO. Se a WABA já está vinculada na Business Manager, falta CONECTAR o número à Página: Configurações da Página → WhatsApp (ou Business Settings → WhatsApp Accounts → a WABA → Connected assets → adicionar a Página). Vincular como ativo na BM não basta.`;
+
     // === STRATEGY 1: Page → whatsapp_business_account → phone_numbers ===
     if (page_id) {
       console.log(`[whatsapp] Strategy 1: Page ${page_id} → whatsapp_business_account`);
@@ -107,13 +112,13 @@ Deno.serve(async (req) => {
           // Não é erro de permissão nem falha — é ausência de WhatsApp. Tratar como tal.
           const emsg = String(data.error.message || "");
           if (Number(data.error.code) === 100 && /whatsapp_business_account/i.test(emsg)) {
-            notes.push("A página vinculada não tem WhatsApp Business conectado.");
+            notes.push(PAGE_CONNECT_HINT);
           } else {
             recordWabaError(`Página: ${emsg}`);
           }
           console.log(`[whatsapp] Strategy 1 page error: ${emsg}`);
         } else {
-          notes.push("A página vinculada não tem WhatsApp Business conectado.");
+          notes.push(PAGE_CONNECT_HINT);
           console.log(`[whatsapp] Strategy 1: no whatsapp_business_account on page.`);
         }
       } catch (e) {
@@ -267,7 +272,7 @@ Deno.serve(async (req) => {
         else console.log(`[whatsapp] Strategy 3 WABA fetch failed: ${r.reason?.message || r.reason}`);
       });
       if (candidatePages.length === 0) notes.push("Nenhuma página acessível encontrada pela conexão Meta (admin sem acesso às páginas dessa conta).");
-      else if (pagesWithWaba.length === 0) notes.push("Nenhuma das páginas dessa conta tem WhatsApp Business conectado.");
+      else if (pagesWithWaba.length === 0) notes.push("Nenhuma das páginas dessa conta tem WhatsApp Business conectado. Se a WABA existe na BM, falta conectar o número a uma Página (Config. da Página → WhatsApp).");
       console.log(`[whatsapp] Strategy 3 found ${numbers.length} numbers`);
     }
 
