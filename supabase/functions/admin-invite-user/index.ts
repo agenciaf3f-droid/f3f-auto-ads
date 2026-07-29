@@ -99,7 +99,9 @@ Deno.serve(async (req) => {
       }),
     });
     const result = await res.json().catch(() => ({}));
-    if (!res.ok || result.error) {
+    // result.ok !== true cobre também body inválido/vazio (json() falhou) —
+    // sem isso, HTTP 200 com body quebrado viraria sucesso com user_id undefined.
+    if (!res.ok || result.error || result.ok !== true) {
       console.error("[admin-invite-user] provision central falhou:", result.error ?? res.status);
       return json({ error: result.error ?? `Central retornou HTTP ${res.status}` }, 502);
     }
