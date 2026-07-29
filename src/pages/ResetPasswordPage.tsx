@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { syncPasswordToCentral } from "@/lib/f3f-central";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,6 +42,8 @@ export default function ResetPasswordPage() {
     try {
       const { error } = await supabase.auth.updateUser({ password });
       if (error) throw error;
+      // Propaga pro login central F3F (senha única entre os sistemas). Best-effort.
+      await syncPasswordToCentral(password);
       toast.success("Senha redefinida! Você já está logado.");
       navigate("/", { replace: true });
     } catch (err: unknown) {
