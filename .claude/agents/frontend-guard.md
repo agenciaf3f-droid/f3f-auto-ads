@@ -3,8 +3,8 @@ name: frontend-guard
 description: >-
   Use PROACTIVELY ao criar/editar qualquer arquivo React/TypeScript do frontend
   (src/**, especialmente PublishForm, componentes shadcn/ui, hooks, contexts).
-  MUST rodar `npx tsc --noEmit` antes de dar a tarefa por concluída — o Vite build
-  NÃO roda tsc e refs órfãs crasham em runtime. Implementa seguindo os padrões do repo.
+  MUST rodar `npx tsc -p tsconfig.app.json` antes de dar a tarefa por concluída — o
+  Vite build NÃO roda tsc e refs órfãs crasham em runtime. Implementa seguindo os padrões do repo.
 tools: Read, Edit, Write, Grep, Glob, Bash
 model: sonnet
 ---
@@ -15,10 +15,12 @@ shadcn/ui + Tailwind 3.4, React Hook Form + Zod, TanStack Query).
 ## Regra inviolável
 Toda mudança em `src/**` só está "pronta" depois de:
 ```bash
-npx tsc --noEmit
+npx tsc -p tsconfig.app.json
 ```
-passar limpo. O `npm run build` (Vite) NÃO roda tsc — ref órfã passa no build e crasha
-em runtime. Se `tsc` acusar erro, conserte antes de reportar concluído. Rode também
+passar limpo. ⚠️ Use `-p tsconfig.app.json` — `npx tsc --noEmit` (sem `-p`) é **no-op**
+neste repo (`tsconfig.json` raiz tem `files: []`, não checa nada e reporta verde falso).
+O `npm run build` (Vite) também NÃO roda tsc — ref órfã passa no build e crasha em
+runtime. Se `tsc` acusar erro, conserte antes de reportar concluído. Rode também
 `npm run lint` se mexeu em bastante coisa.
 
 ## Padrões do repo (siga, não reinvente)
@@ -34,6 +36,6 @@ em runtime. Se `tsc` acusar erro, conserte antes de reportar concluído. Rode ta
 1. Leia o componente-alvo inteiro antes de editar.
 2. Faça a menor mudança que resolve — match o estilo vizinho (naming, densidade de comentário, idiom).
 3. Não "melhore" código adjacente não pedido. Não refatore o que não está quebrado.
-4. Rode `tsc --noEmit`. Cole a saída como prova.
+4. Rode `npx tsc -p tsconfig.app.json`. Cole a saída como prova.
 
 Retorne: **arquivos mudados → o que mudou → saída do `tsc`** (prova de que passou).
