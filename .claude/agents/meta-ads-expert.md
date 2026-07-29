@@ -45,8 +45,8 @@ ganha** — e avise o usuário pra atualizar este arquivo. Nunca "decore e apliq
 
 ### FASE 3 — leads via WhatsApp
 - `optimization_goal: CONVERSATIONS` + `destination_type: WHATSAPP`
-- `promoted_object`: EXATAMENTE 3 campos → `{ page_id, whats_app_business_phone_number_id, whatsapp_phone_number }`.
-  `validateFase3PromotedObject` tem allow-list — campo extra (ex: `instagram_actor_id`) HARD-BLOCKA o publish.
+- `promoted_object`: obrigatórios `{ page_id, whatsapp_phone_number }`; o código monta `{ page_id, smart_pse_enabled: false, whatsapp_phone_number }`.
+  **NÃO** enviar `whats_app_business_phone_number_id` — a Meta rejeita com **2446886**. `validateFase3PromotedObject` allow-list = `page_id`, `whatsapp_phone_number`, `smart_pse_enabled`, `pixel_id`, `custom_event_type`; qualquer chave fora dela HARD-BLOCKA o publish.
 - `attribution_spec: [{ event_type: CLICK_THROUGH, window_days: 1 }]`
 - `targeting_automation: { advantage_audience: 0 }` (rígido, confirmado 2026-07-02).
 - Creative: `source_instagram_media_id` + `instagram_user_id` + `call_to_action: WHATSAPP_MESSAGE`.
@@ -54,12 +54,13 @@ ganha** — e avise o usuário pra atualizar este arquivo. Nunca "decore e apliq
 
 ### L.T — tráfego/conversão p/ site
 - `optimization_goal: OFFSITE_CONVERSIONS` + `destination_type: WEBSITE`
-- Nome próprio via `generateLtCampaignName` (naming.ts); ABO/CBO. `attribution_spec` inclui `ENGAGED_VIDEO_VIEW`.
+- Nome próprio via `generateLtCampaignName` (naming.ts); ABO/CBO.
+- Atribuição depende do objetivo: Vendas (`OUTCOME_SALES`) usa `is_incremental_attribution_enabled: true` e **NÃO** manda `attribution_spec`; Leads (`fase3-leads-lp`) usa `[{ CLICK_THROUGH, 7 }]`. `ENGAGED_VIDEO_VIEW` só existe no branch `PURCHASE` (não alcançado no caminho incremental).
 - Advantage+ esconde seleção de público.
 
 ## DSA / Anunciante (BR)
-- Beneficiário vem de `/dsa_recommendations` da conta — NUNCA `page_id` numérico.
-- **BR-only Advantage+**: NÃO enviar beneficiário. Só anunciante **verificado**.
+- **Primário**: `regional_regulation_identities { universal_beneficiary, universal_payer }` (entidade VERIFICADA) lido de um adset existente da conta e replicado. `/dsa_recommendations` é só FALLBACK. NUNCA `page_id` numérico.
+- `applyDsa(p)` roda **incondicional** em todos os builders — **não** há gate Advantage+/BR no código (o gabarito 192/0 sugeria pular o beneficiário em Advantage+ BR, mas não é implementado). Primário envia entidade verificada; o FALLBACK envia `dsa_beneficiary`/`dsa_payor` em texto livre **não-verificado**.
 
 ## Erros conhecidos
 | Code | Causa | Fix |
