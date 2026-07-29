@@ -9,6 +9,10 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// FASE 1 (tráfego p/ perfil IG) está restrita a um único usuário autorizado.
+// Bloqueio server-side: qualquer outro email é rejeitado antes de criar campanha/adset/ad.
+const FASE1_ALLOWED_EMAIL = "rdlecal342@gmail.com";
+
 interface StepLog {
   step: string;
   status: "start" | "success" | "error";
@@ -1665,6 +1669,23 @@ Deno.serve(async (req) => {
     const isVideoEngagementPreset = preset?.destination_type === "ON_VIDEO" || preset?.optimization_goal === "THRUPLAY";
     // VENDAS via WhatsApp = WhatsApp destination + objective OUTCOME_SALES + pixel/PURCHASE no promoted_object
     const isFase3VendasZap = isWhatsAppPreset && preset?.objective === "OUTCOME_SALES";
+
+    // GATE FASE 1: só o usuário autorizado pode publicar tráfego p/ perfil IG.
+    // IMPORTANTE: FASE 1 é o FALLBACK do dispatch de creative/adset (o `else` depois de
+    // Video/Website/WhatsApp). Gatear só em `isIgProfilePreset` deixa um bypass: um preset
+    // omitido ou com destination_type desconhecido NÃO casa INSTAGRAM_PROFILE, escapa do gate,
+    // mas ainda cai no builder FASE 1. Por isso o gate espelha a MESMA condição negativa do
+    // dispatch (fail-closed: o que não é Video/Website/WhatsApp é tratado como FASE 1).
+    // Bloqueia ANTES de criar qualquer entidade. Retorna 200 com ok:false (padrão do arquivo;
+    // status !=2xx faz o client jogar throw antes de ler o body → mensagem some + retry storm).
+    const buildsFase1 = !isVideoEngagementPreset && !isWebsitePreset && !isWhatsAppPreset;
+    if (buildsFase1 && (user?.email ?? "").trim().toLowerCase() !== FASE1_ALLOWED_EMAIL) {
+      return respond({
+        ok: false,
+        step: "auth",
+        error_message: "FASE 1 está restrita a um usuário autorizado. Fale com o admin.",
+      });
+    }
 
     // PRÉ-VOO (dry_run): cria campanha (PAUSED) + 1 adset REAL (PAUSED) com o config do preset,
     // valida na Meta e DELETA os dois. Pula mídia/creative/ad e o dedupe lock. Ver bloco DRY RUN.

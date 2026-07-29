@@ -75,7 +75,7 @@ supabase/functions/   # 21 functions + _shared/
 2. Resolver mídia por criativo → buildOne() mapeado em paralelo (1 chamada cada)
 3. Criar Campaign (ACTIVE) — checkpoint manual removido (2026-07-06); entrega imediata ao publicar
 4. Criar Adset (ACTIVE) — com promoted_object correto por preset
-   (FASE 2: 1 criativo + N adsets, um por audiência)
+   (FASE 2 Completo: 1 criativo + N adsets, um por audiência; FASE 2 Adaptado: N criativos + 1 adset por criativo, cada um combinando 2-10 públicos)
 5. Criar Adcreative
 6. Criar Ad (ACTIVE)
 ```
@@ -83,7 +83,7 @@ supabase/functions/   # 21 functions + _shared/
 ### Resolução de mídia
 
 - **IG shortcode/reel** → `source_instagram_media_id` (query direta na media do IG account)
-- **Drive vídeo** → **primário**: `GOOGLE_DRIVE_API_KEY` + `file_url` no FormData → **Meta baixa o arquivo direto** (evita OOM 546 na edge). Faz poll do status do vídeo até 10x.
+- **Drive vídeo** → **primário**: `GOOGLE_DRIVE_API_KEY` + `file_url` no FormData → **Meta baixa o arquivo direto** (evita OOM 546 na edge). Faz poll do status do vídeo **5x** no fast-path `file_url` (index.ts:687) / **4x** no fallback multipart (index.ts:807).
   **Fallback** (sem API key ou `file_url` falha): edge bufferiza os bytes e sobe via multipart `source`.
   O arquivo do Drive precisa estar **público** ("qualquer pessoa com o link"); senão `meta-validate-creative` barra antes de publicar.
 
@@ -93,43 +93,49 @@ supabase/functions/   # 21 functions + _shared/
 - Adset: `optimization_goal: PROFILE_VISIT` + `destination_type: INSTAGRAM_PROFILE` — **NÃO** `VISIT_INSTAGRAM_PROFILE` (revertido 2026-07-04: diagnóstico contra campanha gabarito real mostrou que a Meta só anexa o `tracking_specs` `action.type=visit_instagram_profile` no ad — sinal de reconhecimento do goal — sob `PROFILE_VISIT`; `VISIT_INSTAGRAM_PROFILE` faz o sistema entregar pior sem erro nenhum, silenciosamente)
 - `promoted_object`: `{ page_id, instagram_actor_id }` — o `instagram_actor_id` (= `igActorId` resolvido por conta) foi adicionado em 2026-07-27: diff de 3 adsets reais mostrou que o gabarito manual (ACTIVE) tinha esse campo e os do sistema não → causava #2016153 "not eligible for Profile Visit". **NÃO** enviar `instagram_profile_id` (campo diferente; causa #1346001). Ver comentário em `buildFase1Adset`.
 - `attribution_spec: [{ event_type: CLICK_THROUGH, window_days: 1 }]` (presente no gabarito; sem isso a Meta usa janela default)
-- `targeting_automation`: **espelha o público salvo** — `advantage_audience` vem do `targeting_spec` do público (1 → publica com Advantage+ ligado, `age_range` preservado como sugestão + controle `age_min`/`age_max` normalizado p/ 18/65; 0/ausente → comportamento rígido anterior, byte a byte). Decisão do usuário 2026-07-10, motivada por dump real (Gerenciador espelha o público e entrega melhor; o app sobrescrevia). Ver `buildFase1Targeting` em `meta-publish`.
+- `targeting_automation: { advantage_audience: 1 }` — **fixo, sempre, incondicional** (`buildFase1Targeting`, index.ts:~2092). Decisão do usuário 2026-07-28 REVOGOU o espelhamento do público salvo (#77, 2026-07-10): o mirror saía `adv=0` nos publishes reais (público salvo com adv=0) e não batia com o gabarito manual, que roda `adv=1` e entrega melhor. Com `adv=1` a idade muda de canal: `age_range` é a SUGESTÃO (fonte = público salvo quando único/`saved`, senão o próprio `targeting`) e `age_min`/`age_max` viram o CONTROLE rígido, normalizado p/ **18/65** (evita 100/1870188). Ver comentário index.ts:2062-2082.
 - Creative: `source_instagram_media_id` + `instagram_user_id` + `call_to_action: VIEW_INSTAGRAM_PROFILE`
 
 ### FASE 2 (engajamento de vídeo)
 - `optimization_goal: THRUPLAY` + `destination_type: ON_VIDEO`
-- **1 criativo + N adsets** — um adset por audiência; cada adset exige `audience_id` de inclusão
+- Dois modos (dispatch por `body.fase2_combined_adset`, index.ts:3040):
+  - **COMPLETO** (`fase2_combined_adset` ausente/false): **1 criativo + N adsets** — um adset por audiência; cada adset exige `audience_id` de inclusão (`buildFase2Adset`, `custom_audiences` com 1 id).
+  - **ADAPTADO** (`fase2_combined_adset === true`): **N criativos + 1 adset por CRIATIVO** — cada adset combina **2-10 públicos** no MESMO conjunto (`buildFase2AdsetCombined`, index.ts:2506; `custom_audiences` com N ids = a Meta combina como OR).
+- Campos do adset FASE 2 (ambos os modos): `attribution_spec: [{ CLICK_THROUGH, 1 }]` (index.ts:2482), `targeting_automation: { advantage_audience: 0 }` (2467), `targeting_relaxation_types: { lookalike: 0, custom_audience: 0 }` (2468), `geo_locations: { countries: ["BR"], location_types: ["home","recent"] }` (2464).
 - Usa audiências VV50% criadas por `meta-create-video-audience`
 - Creative: vídeo do Drive (re-upload) ou post/reel do IG
 
 ### FASE 3 (leads via WhatsApp)
 - `optimization_goal: CONVERSATIONS` + `destination_type: WHATSAPP`
-- `promoted_object`: `{ page_id, whats_app_business_phone_number_id, whatsapp_phone_number }` — exatamente 3 campos
+- `promoted_object`: obrigatórios `{ page_id, whatsapp_phone_number }`; o código monta `{ page_id, smart_pse_enabled: false, whatsapp_phone_number }` (index.ts:2202-2206). **NÃO** enviar `whats_app_business_phone_number_id` — a Meta rejeita com **2446886**. `validateFase3PromotedObject` tem allow-list de 5 chaves (index.ts:404-406): `page_id`, `whatsapp_phone_number`, `smart_pse_enabled`, `pixel_id`, `custom_event_type` — qualquer chave fora dela HARD-BLOCKA o publish. Variante Vendas ZAP soma `pixel_id` + `custom_event_type` (2208-2211)
 - `attribution_spec: [{ event_type: CLICK_THROUGH, window_days: 1 }]`
-- `targeting_automation: { advantage_audience: 0 }` (desativado — confirmado com usuário 2026-07-02; público rígido, sem sugestão da Meta)
-- Creative: `source_instagram_media_id` + `instagram_user_id` + `call_to_action: WHATSAPP_MESSAGE`
+- `targeting_automation: { advantage_audience: 0, individual_setting: { age: 0, gender: 0 } }` (desativado — confirmado com usuário 2026-07-02; público rígido, sem sugestão da Meta; index.ts:2295-2298)
+- Creative: `source_instagram_media_id` + `instagram_user_id` + `call_to_action: WHATSAPP_MESSAGE` + `page_welcome_message` (JSON de autofill da conversa WhatsApp; index.ts:1516)
 - Ad: inclui `tracking_specs` para onsite_conversion, messenger e whatsapp
 - **Variante Vendas**: `objective: OUTCOME_SALES` + pixel/`PURCHASE` no `promoted_object`
 
 ### L.T (tráfego/conversão p/ site)
 - `optimization_goal: OFFSITE_CONVERSIONS` + `destination_type: WEBSITE`
 - Nome de campanha próprio (`generateLtCampaignName` em `naming.ts`); suporta ABO/CBO
-- `attribution_spec` inclui `ENGAGED_VIDEO_VIEW`
+- Atribuição depende do objetivo do preset:
+  - **L.T Vendas** (`fase3-vendas-lp`, `OUTCOME_SALES`) → `is_incremental_attribution_enabled: true` e **NÃO** manda `attribution_spec` (são mutuamente exclusivos; index.ts:2412, 2427-2431).
+  - **WEBSITE/LEAD** (`fase3-leads-lp`, `OUTCOME_LEADS`) → `attribution_spec: [{ CLICK_THROUGH, 7 }]` (index.ts:2407).
+  - O modelo rico `[CT7, VT1, ENGAGED_VIDEO_VIEW 1]` só existe no branch `custom_event_type === "PURCHASE"` (index.ts:2401-2406), que o caminho `OUTCOME_SALES` (incremental) não usa.
 - Advantage+ esconde a seleção de público (Meta acha sozinho)
 
 ## DSA / Anunciante (campanhas BR)
 
-- Beneficiário/pagador é buscado via `/dsa_recommendations` da conta — **nunca** usar `page_id` numérico.
-- **BR-only Advantage+**: NÃO enviar beneficiário (gabarito: 192 adsets Advantage+, 0 com DSA).
-- Só envia anunciante **verificado**.
+- Fonte **PRIMÁRIA** do beneficiário/pagador: `regional_regulation_identities { universal_beneficiary, universal_payer }` (ID da entidade VERIFICADA) lido de um adset já existente da conta e replicado (index.ts:1807, 1813-1817, 1872-1875). `/dsa_recommendations` é só **FALLBACK**, buscado apenas quando não há entidade verificada herdável nem beneficiário informado pelo usuário (index.ts:1829-1846). Nunca usar `page_id` numérico.
+- `applyDsa(p)` roda **incondicionalmente** em TODOS os builders de adset (index.ts:2164/2322/2432/2485/2536) — **não** existe gate por Advantage+/BR no código. (O dump de gabarito mostrava 192 adsets Advantage+ / 0 com DSA, o que sugeria pular o beneficiário em Advantage+ BR, mas o código não implementa esse gate.)
+- Caminho primário envia só anunciante **verificado** (por ID). O **FALLBACK**, porém, envia `dsa_beneficiary`/`dsa_payor` em **texto livre não-verificado** (index.ts:1876-1879).
 
 ## Erros Meta conhecidos
 
 | Code | Subcode | Causa | Fix |
 |------|---------|-------|-----|
 | 100 | 2446391 | Ad rejeitado — creative incompatível com adset | Causa não é `instagram_profile_id` ausente (gabarito real funciona sem ele) — investigar CTA/goal/destination_type coerentes antes de mexer no `promoted_object` |
-| 3858634 | — | "Anunciante ausente" (DSA, BR) | Verificação de anunciante no Business Manager — **não resolve por API** |
-| 1,2,4,17,32,341,613 | — | Rate-limit / transiente Meta | `isTransient()` → falha rápido com "Limite de requisições da Meta atingido… aguarde ~15 min" + retry com backoff (2s/6s/15s) |
+| 100 | 3858634 | "Anunciante ausente" (DSA, BR) — é `error_subcode` do code **100** (index.ts:2952), não um code de topo | Verificação de anunciante no Business Manager — **não resolve por API** |
+| 1,2,4,17,32,341,613 | — | `TRANSIENT_META_CODES` (index.ts:45): `isTransientMeta()` marca TODOS como transiente/`rate_limited` (o **frontend** usa isso p/ decidir retry) | Mas o loop de criação de adset na edge (index.ts:2877) só REtenta **[2, 4, 17]** com backoff `[2s, 6s, 15s]` (index.ts:2591); os demais (1, 32, 341, 613) só marcam `rate_limited`/mensagem e **NÃO** retentam (`break`) |
 
 ## Variáveis de ambiente
 
