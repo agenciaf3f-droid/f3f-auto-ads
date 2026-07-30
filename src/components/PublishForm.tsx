@@ -1144,11 +1144,12 @@ export default function PublishForm() {
       // explicitPageId vem direto da resolução de identidade (state ainda pode estar
       // stale aqui). Sem isso, Strategy 1 (page→WABA, a mais confiável) era pulada.
       const pageId = explicitPageId || identityPageId;
-      // Cache compartilhado (kind=whatsapp_numbers): se houver números, usa; senão busca da Meta.
-      // Os números do cache passam pela MESMA lógica de seleção abaixo (identidade/seed).
+      // Cache compartilhado (kind=whatsapp_numbers_v2 — v2 = união BM+página; o kind
+      // antigo era page-scoped e serviria lista incompleta). Os números do cache
+      // passam pela MESMA lógica de seleção abaixo (identidade/seed).
       let nums: WhatsAppNumber[];
       let error_summary: string | undefined;
-      const cachedNums = adAccId ? await readDiscoveryCache<WhatsAppNumber[]>("whatsapp_numbers", adAccId) : null;
+      const cachedNums = adAccId ? await readDiscoveryCache<WhatsAppNumber[]>("whatsapp_numbers_v2", adAccId) : null;
       if (cachedNums) {
         nums = cachedNums;
         addLog(`✅ ${nums.length} número(s) de WhatsApp do cache (0 chamada Meta)`);
@@ -1157,6 +1158,13 @@ export default function PublishForm() {
         const res = await fetchWhatsAppNumbers(accessToken, adAccId || undefined, pageId || undefined);
         nums = res.numbers;
         error_summary = res.error_summary;
+      }
+      // Ordena aqui (não confia na ordem da edge): o cache é neutro por ad_account,
+      // e nums[0] é o fallback de auto-select — número da página da identidade primeiro.
+      if (pageId && nums.length > 1) {
+        nums = [...nums].sort(
+          (a, b) => Number(b.page_id === pageId) - Number(a.page_id === pageId),
+        );
       }
       setWhatsappNumbers(nums);
       if (nums.length > 0) {

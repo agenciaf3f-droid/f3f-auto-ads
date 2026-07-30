@@ -84,7 +84,11 @@ export function WhatsAppNumberSelector({
           <SelectTrigger><SelectValue placeholder="Selecione o número" /></SelectTrigger>
           <SelectContent>
             {numbers.map((n) => (
-              <SelectItem key={n.id} value={n.id}>{n.display}</SelectItem>
+              <SelectItem key={n.id} value={n.id}>
+                {/* Origem (página/WABA) no label: com a lista unificada da BM, o
+                    gestor precisa distinguir números de páginas diferentes. */}
+                {n.page_name && !n.display.includes(n.page_name) ? `${n.display} · ${n.page_name}` : n.display}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
