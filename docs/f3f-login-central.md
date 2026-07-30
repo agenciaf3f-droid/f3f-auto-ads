@@ -43,3 +43,5 @@ F3F_CENTRAL_SERVICE_ROLE_KEY=...   # service_role do central; NUNCA no frontend
 - [ ] `active=false` no central → próximo boot desloga.
 - [ ] `meta-status` continua devolvendo token Meta válido (falha silenciosa conhecida).
 - [ ] `npx tsc -p tsconfig.app.json` limpo (`tsc --noEmit` é no-op neste repo).
+
+> **Conceder acesso ≠ resetar senha (2026-07-30):** quem JÁ tem login F3F e ganha acesso a um sistema novo mantém a senha de sempre — o `f3f-auth-provision` copia o hash bcrypt pro espelho (rpc `f3f_get_password_hash`, service_role only) e manda email de notificação SEM senha. Senha provisória só existe pra quem nunca teve login F3F. Chamadas service-to-service autenticam com header `x-f3f-service-secret` (= `F3F_SERVICE_SECRET`, secret nos dois projetos).
