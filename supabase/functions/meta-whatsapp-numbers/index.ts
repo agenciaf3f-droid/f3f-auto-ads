@@ -149,17 +149,29 @@ Deno.serve(async (req) => {
     // União: todos os números aos quais a BM da conta tem acesso, não só o da página.
     if (ad_account_id) {
       try {
-        const bizRes = await timedFetch(
-          `https://graph.facebook.com/v25.0/${ad_account_id}?fields=business{id,name},owner_business{id,name}&access_token=${access_token}`
-        );
-        const bizData = await bizRes.json();
-        console.log(`[whatsapp] Fonte 2 business:`, JSON.stringify(bizData));
-
+        // business e owner_business em requests SEPARADOS: pedir um campo que não
+        // existe no node (#100) derruba o request inteiro e levaria o outro junto.
         const businessIds = new Map<string, string>(); // id → name
-        if (bizData.business?.id) businessIds.set(bizData.business.id, bizData.business.name || "");
-        if (bizData.owner_business?.id) businessIds.set(bizData.owner_business.id, bizData.owner_business.name || "");
-        if (businessIds.size === 0 && bizData.error) {
-          recordWabaError(`Conta de anúncios: ${bizData.error.message}`);
+        let bizErr: string | null = null;
+        for (const field of ["business", "owner_business"] as const) {
+          try {
+            const res = await timedFetch(
+              `https://graph.facebook.com/v25.0/${ad_account_id}?fields=${field}{id,name}&access_token=${access_token}`
+            );
+            const data = await res.json();
+            const biz = data?.[field];
+            if (biz?.id) businessIds.set(biz.id, biz.name || "");
+            else if (data?.error && Number(data.error.code) !== 100) {
+              // #100 = campo inexistente nessa conta — normal, não é erro.
+              bizErr = String(data.error.message || "");
+            }
+          } catch (e) {
+            console.log(`[whatsapp] Fonte 2 ${field} error: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+        console.log(`[whatsapp] Fonte 2 businesses:`, JSON.stringify([...businessIds]));
+        if (businessIds.size === 0 && bizErr) {
+          recordWabaError(`Conta de anúncios: ${bizErr}`);
         }
 
         for (const [businessId, businessName] of businessIds) {
