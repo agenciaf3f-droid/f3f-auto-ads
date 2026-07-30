@@ -91,6 +91,7 @@ Deno.serve(async (req) => {
           method: "POST",
           headers: {
             Authorization: `Bearer ${centralKey}`,
+            "x-f3f-service-secret": Deno.env.get("F3F_SERVICE_SECRET") ?? "",
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ email: targetEmail, systems: ["console-ads"] }),
