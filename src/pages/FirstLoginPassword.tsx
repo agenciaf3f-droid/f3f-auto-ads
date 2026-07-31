@@ -35,7 +35,7 @@ export default function FirstLoginPassword() {
       });
       if (error) throw error;
       // Propaga pro login central F3F (senha única entre os sistemas). Best-effort.
-      await syncPasswordToCentral(password);
+      const synced = await syncPasswordToCentral(password);
       // Rede de segurança: força a re-hidratação do AuthContext em vez de depender só do evento
       // reativo USER_UPDATED. refreshSession traz o user já sem a flag → ProtectedRoute libera o app.
       const { error: refreshError } = await supabase.auth.refreshSession();
@@ -45,7 +45,8 @@ export default function FirstLoginPassword() {
         toast.error("Senha salva, mas a sessão não atualizou. Recarregue a página para entrar.");
         return;
       }
-      toast.success("Senha criada! Bem-vindo(a).");
+      if (synced) toast.success("Senha criada! Bem-vindo(a).");
+      else toast.warning("Senha criada, mas não propagou para os outros sistemas F3F. Avise o admin.");
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Erro ao criar senha");
     } finally {

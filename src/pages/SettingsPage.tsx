@@ -6,6 +6,7 @@ import { CheckCircle2, AlertCircle, Loader2, LogIn, Unplug, RefreshCw, AlertTria
 import { fetchMetaStatus, getMetaLoginUrl, disconnectMeta } from "@/lib/meta-api";
 import { isCurrentUserAdmin } from "@/lib/admin";
 import { supabase } from "@/integrations/supabase/client";
+import { syncPasswordToCentral } from "@/lib/f3f-central";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 
@@ -72,9 +73,13 @@ export default function SettingsPage() {
     try {
       const { error } = await supabase.auth.updateUser({ password: newPassword });
       if (error) throw error;
+      // Propaga pro login central F3F (senha única entre os sistemas). Sem isto a
+      // senha muda só aqui e diverge do KPI/Tasks — era o caso desta tela até 07-2026.
+      const synced = await syncPasswordToCentral(newPassword);
       setNewPassword("");
       setConfirmPassword("");
-      toast.success("Senha alterada com sucesso");
+      if (synced) toast.success("Senha alterada com sucesso");
+      else toast.warning("Senha alterada aqui, mas não propagou para os outros sistemas F3F. Avise o admin.");
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Erro ao alterar senha");
     } finally {
