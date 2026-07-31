@@ -16,10 +16,11 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Loader2, UserPlus, Mail, ShieldCheck, Users, Trash2, RefreshCw, Send, MessageCircle } from "lucide-react";
+import { Loader2, UserPlus, Mail, ShieldCheck, Users, Trash2, Pencil, RefreshCw, Send, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { isCurrentUserAdmin, inviteUser, listAppUsers, removeAppUser, sendWhatsappTest, type AppUser } from "@/lib/admin";
+import EditUserDialog from "@/components/admin/EditUserDialog";
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
@@ -40,6 +41,7 @@ export default function AdminPage() {
   const [users, setUsers] = useState<AppUser[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<AppUser | null>(null);
   const [testGroupId, setTestGroupId] = useState("");
   const [testMessage, setTestMessage] = useState("");
   const [sendingTest, setSendingTest] = useState(false);
@@ -255,51 +257,64 @@ export default function AdminPage() {
                       </p>
                     </div>
 
-                    {isSelf ? (
-                      <span className="text-[11px] text-muted-foreground shrink-0 px-2">—</span>
-                    ) : (
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            disabled={removingId === u.id}
-                            className="text-destructive hover:text-destructive gap-1.5 h-8 shrink-0"
-                          >
-                            {removingId === u.id ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Trash2 className="w-3.5 h-3.5" />
-                            )}
-                            Remover
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Remover gestor?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              Remover <strong>{label}</strong>? Isso apaga o acesso dele à plataforma. Ação irreversível.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={() => handleRemove(u.id, label)}
-                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEditing(u)}
+                        className="gap-1.5 h-8"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                        Editar
+                      </Button>
+
+                      {!isSelf && (
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              disabled={removingId === u.id}
+                              className="text-destructive hover:text-destructive gap-1.5 h-8"
                             >
+                              {removingId === u.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Trash2 className="w-3.5 h-3.5" />
+                              )}
                               Remover
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    )}
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Remover gestor?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Remover <strong>{label}</strong>? Isso apaga o acesso dele à plataforma. Ação irreversível.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => handleRemove(u.id, label)}
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                              >
+                                Remover
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      )}
+                    </div>
                   </li>
                 );
               })}
             </ul>
           )}
         </div>
+
+        <EditUserDialog user={editing} onClose={() => setEditing(null)} onSaved={loadUsers} />
 
         {/* ── Seção Teste de integração WhatsApp ── */}
         <div className="mt-10 fade-in-up" style={{ animationDelay: "240ms" }}>

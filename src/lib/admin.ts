@@ -61,6 +61,20 @@ export async function removeAppUser(userId: string) {
   return data as { ok: true };
 }
 
+// Atualiza nome e/ou senha de um gestor (só admin). Email não é editável aqui.
+export async function updateAppUser(input: {
+  user_id: string;
+  name?: string;
+  password?: string;
+}): Promise<{ ok: boolean; central_synced?: boolean; warning?: string }> {
+  const { data, error } = await supabase.functions.invoke("admin-update-user", {
+    body: input,
+  });
+  if (error) throw new Error(await edgeErrorMessage(error));
+  if (data?.error) throw new Error(data.error);
+  return data as { ok: boolean; central_synced?: boolean; warning?: string };
+}
+
 // Dispara um envio de TESTE via UAZAPI pro grupo informado (só admin). A edge devolve falha de envio
 // como { ok:false, reason } com status 200, então o motivo REAL (token/instância/grupo) chega aqui
 // em `data.reason` — não jogamos throw nesse caso pra o chamador poder mostrar o reason no toast.
