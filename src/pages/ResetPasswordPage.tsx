@@ -43,8 +43,9 @@ export default function ResetPasswordPage() {
       const { error } = await supabase.auth.updateUser({ password });
       if (error) throw error;
       // Propaga pro login central F3F (senha única entre os sistemas). Best-effort.
-      await syncPasswordToCentral(password);
-      toast.success("Senha redefinida! Você já está logado.");
+      const synced = await syncPasswordToCentral(password);
+      if (synced) toast.success("Senha redefinida! Você já está logado.");
+      else toast.warning("Senha redefinida aqui, mas não propagou para os outros sistemas F3F. Avise o admin.");
       navigate("/", { replace: true });
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Erro ao redefinir senha");
